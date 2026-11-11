@@ -1,0 +1,28 @@
+{
+  "project": "wasm-probe",
+  "codebase": {
+    "harness": "wasm",
+    "command": [
+      "target/release/afz-wasm",
+      "targets/wasm-probe/target/wasm32-unknown-unknown/release/wasm_probe.wasm"
+    ],
+    "include": [
+      "**/*.wasm"
+    ]
+  },
+  "oracles": {},
+  "budget": {
+    "invocations": 20000,
+    "wallClockMs": 900000,
+    "workers": 0,
+    "maxCorpus": 2048,
+    "strategy": "guided"
+  },
+  "output": {
+    "dir": ".autofuzz",
+    "renderers": [
+      "json",
+      "markdown"
+    ]
+  }
+}

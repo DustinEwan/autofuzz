@@ -70,7 +70,7 @@ flowchart LR
   end
   subgraph Plugins["Harness plugins (out of process)"]
     JS["js-ts: in-process Node, V8 precise coverage"]
-    WASM["wasm: generated driver, instrumented module, host coverage import"]
+    WASM["wasm: rewritten module, direct export call, host-read counter table"]
     HTTP["http: route discovery, request build, response observe"]
   end
   EX -->|JSON-RPC over stdio| Plugins
@@ -182,7 +182,7 @@ Coverage is a capability. When `coverage` is present, every invocation returns a
 
 When `coverage` is absent, novelty is computed from the observable outcome tuple: status class or error class, response shape, latency bucket, and whether the target crossed a deadline. The loop is unchanged; only the novelty function differs.
 
-Mutation operates on `ValueTree`, not on bytes. Every node records its type and generation provenance, which is what makes type-aware mutation and later minimization possible across languages.
+Mutation operates on `ValueTree`, not on bytes. Every node records its type and generation provenance, which is what makes type-aware mutation and later minimization possible across languages. One execution applies a short run of node-level operators, and the set includes a copy from one node of an input to another, because a gate that compares two independently generated fields is otherwise unreachable however long the scan runs: Decision 2.
 
 ## Outcome classification
 
@@ -276,7 +276,7 @@ One JSON document per scan, written once, never edited in place. Renderers read 
     "materializationCounts": { "constructible": 287, "fixture-required": 61, "opaque": 64 }
   },
   "execution": { "invocations": 184320, "corpusSize": 1204, "coverageEdges": 8312,
-                 "coverageRatio": 0.41, "deadlineExceeded": 3 },
+                 "coverageRatio": 0.41, "deadlineExceeded": 3, "deadlineCuts": 41 },
   "findings": [{
     "findingId": "afz:f:7a41c2e0",
     "identity": "sha256:...",
@@ -305,7 +305,7 @@ One 32-bit seed per scan drives every random choice: corpus selection, mutation,
 | Harness | Discovery | Invocation | Coverage |
 |---|---|---|---|
 | `js-ts` (design-time, first) | Static declaration analysis. `typescript@7` ships no JavaScript compiler API — its exports map is `./lib/version.cjs` plus `./unstable/*` — so the classic API comes from `@typescript/typescript6@6.0.2`, installed under the `typescript` alias | Node worker thread calls the symbol; `Profiler.takePreciseCoverage` over `node:inspector`, which is exposed in worker threads since Node 18.10.0 | Yes, per invocation |
-| `wasm` (design-time, generalization proof) | Exported functions of a core wasm module; a generated driver constructs arguments from the same IR | `WebAssembly.instantiate` in the engine process, one instance per worker | Yes: `-fsanitize-coverage=trace-pc-guard` inserts `__sanitizer_cov_trace_pc_guard(&guard)` per edge and `__sanitizer_cov_trace_pc_guard_init(start, stop)` in a module constructor, with those symbols defined by the host as wasm imports; post-hoc Binaryen instrumentation is the fallback for toolchains that cannot emit pcguard |
+| `wasm` (design-time, generalization proof) | Exported functions of a core wasm module; the engine materializes arguments from the same IR and the plugin calls the export directly, so the module's own signature is the only type information involved | one wasmtime instance per worker, in a plugin process per worker as with every other harness | Yes: the harness rewrites the module it is handed - one counter byte per function entry and per structured block head, in a memory of its own that it exports as `__afz_counters`. The guard is `i32.const <edge>; i32.store`, and the table is read back after the call, including after a trap. Compile-time pcguard stays available to a target that wants finer edges: Decision 3 |
 | `http` (runtime) | Route table from framework metadata, or an OpenAPI document | fetch against a user-declared base URL, under the side-effect policy | Only if the serving process is instrumented |
 | Later: Python, JVM, Go | Same contract, different discovery and coverage probe | | |
 
