@@ -46,7 +46,11 @@ fn a_codebase_block_loads_with_design_defaults() {
     let scope = loaded.discovery_scope().expect("scope");
     assert_eq!(scope.root, loaded.root);
     assert_eq!(scope.include.as_deref(), Some(&["src/**/*.ts".to_string()][..]));
-    assert_eq!(scope.exclude.as_deref(), Some(&["**/*.test.ts".to_string()][..]));
+    assert_eq!(
+        scope.exclude.as_deref(),
+        Some(&["**/*.test.ts".to_string(), "**/.autofuzz/**".to_string()][..]),
+        "the scan's own output directory must not be discovery input"
+    );
 
     let hash = loaded.config_hash().expect("hash");
     assert!(hash.starts_with("sha256:") && hash.len() == 71, "hash was {hash}");
@@ -255,4 +259,20 @@ fn validate_is_callable_on_an_in_memory_project() {
     project.output.renderers = vec!["sarif".into(), "docx".into()];
     project.codebase = Some(config::CodebaseBlock { harness: "js-ts".into(), ..Default::default() });
     assert_eq!(message(&project.validate().unwrap_err()), "renderer \"docx\" is not implemented in this version");
+}
+
+/// A scan writes generated reproducers into the tree it scans, so its own output directory is
+/// never discovery input. A project scanning `.` had been fuzzing the `.ts` reproducers its
+/// previous run wrote under `.autofuzz/`.
+#[test]
+fn the_scan_output_directory_is_never_discovered() {
+    let dir = tmp("output-excluded");
+    let path = write(
+        &dir,
+        r#"{ "project": "p", "codebase": { "harness": "js-ts" },
+             "output": { "dir": "results", "renderers": ["json"] } }"#,
+    );
+    let loaded = config::load(&path).expect("loads");
+    let scope = loaded.discovery_scope().expect("scope");
+    assert_eq!(scope.exclude.as_deref(), Some(&["**/results/**".to_string()][..]));
 }

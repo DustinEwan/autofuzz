@@ -363,6 +363,10 @@ impl LoadedConfig {
     }
 
     /// Discovery scope for a codebase block: root plus include and exclude globs.
+    ///
+    /// The scan's own output directory is always excluded. A scan writes generated `.ts`
+    /// reproducers into the tree it scans, so a second scan of the same project would otherwise
+    /// discover its previous run's output as targets.
     pub fn discovery_scope(&self) -> Result<DiscoveryScope, ConfigError> {
         let codebase = self
             .project
@@ -373,8 +377,27 @@ impl LoadedConfig {
             Some(root) => self.root.join(root),
             None => self.root.clone(),
         };
-        Ok(DiscoveryScope { root, include: codebase.include.clone(), exclude: codebase.exclude.clone() })
+        let mut exclude = codebase.exclude.clone().unwrap_or_default();
+        let output = scan_output_glob(&self.project.output.dir);
+        if !output.is_empty() {
+            exclude.push(output);
+        }
+        Ok(DiscoveryScope { root, include: codebase.include.clone(), exclude: Some(exclude) })
     }
+}
+
+/// The exclude glob for the directory a scan writes its results into. A relative directory is
+/// matched wherever it appears, because a scan project can sit above the tree it scans and each
+/// nested project writes its own copy; an absolute one is matched as itself.
+fn scan_output_glob(dir: &str) -> String {
+    let dir = dir.trim_matches('/');
+    if dir.is_empty() {
+        return String::new();
+    }
+    if Path::new(dir).is_absolute() {
+        return format!("{dir}/**");
+    }
+    format!("**/{dir}/**")
 }
 
 /// The directory and globs a `discover` request walks.
