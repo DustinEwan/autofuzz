@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// The `js-ts` harness plugin: a JSON-RPC server over stdio that answers the six protocol
-// methods and runs every invocation in its own worker thread.
+// The `js-ts` harness plugin: a JSON-RPC server over stdio that answers the six protocol methods.
+//
+// One warm worker thread per plugin process runs the invocations, and each invocation gets a fresh
+// realm inside it (docs/decisions/0006). This file owns the thread's life: what it is given, when
+// its answer is accepted, and when it is retired so the next call starts from a clean isolate.
 //
 // Nothing in this file decides whether a target is broken. It loads code, calls it, reports
 // `ok`, `rejected`, or `failed`, and lets the engine apply the oracles.
 
 import { createInterface } from "node:readline";
-import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -41,29 +43,11 @@ import {
   success,
   writeLine,
 } from "./protocol.js";
-import {
-  DEFAULT_REJECT_CLASSES,
-  failureWithCause,
-  VIA_MODULE_LOAD,
-  VIA_WORKER_DEAD,
-} from "./classify.js";
+import { DEFAULT_REJECT_CLASSES, failureWithCause, VIA_MODULE_LOAD, VIA_WORKER_DEAD } from "./classify.js";
 import { isRecord } from "./guards.js";
 import { discover } from "./discover.js";
-import { LOAD_MODULE_NOT_FOUND, LOAD_UNSUPPORTED_TYPESCRIPT_SYNTAX, type WorkerJob, type WorkerReply } from "./invoke.js";
-
-/**
- * Load failures that say the loader is wrong rather than the target unreachable. `tsx` is a
- * full TypeScript loader, so it accepts `enum` and namespace syntax and resolves a `./x.js`
- * specifier that names an `x.ts` file; a failure after the retry is the target's, not the loader's.
- */
-const LOADER_RETRY_CODES = new Set<string>([LOAD_UNSUPPORTED_TYPESCRIPT_SYNTAX, LOAD_MODULE_NOT_FOUND]);
-
-/**
- * The `tsx` entry resolved against this package rather than by name. A worker thread resolves
- * `--import` from the working directory, and the engine starts this plugin from the scan
- * project's directory, where a bare `tsx` would not be found.
- */
-const TSX_ENTRY = createRequire(import.meta.url).resolve("tsx");
+import { Transpiler, type ModuleGraph } from "./transpile.js";
+import type { WorkerJob, WorkerReply, WorkerRequest } from "./invoke.js";
 
 export const HARNESS_NAME = "js-ts";
 export const HARNESS_VERSION = "0.1.0";
@@ -74,44 +58,58 @@ export const HARNESS_VERSION = "0.1.0";
  */
 export const CAPABILITIES: Capability[] = ["coverage", "stateful", "concurrent"];
 
-type LoaderMode = "strip" | "tsx";
+/**
+ * A live worker thread and what it currently holds. One job runs at a time on a thread; a second
+ * job that arrives while one is in flight gets its own thread rather than sharing this one.
+ */
+interface WarmWorker {
+  thread: Worker;
+  /** Module graphs this thread has been given, by key. */
+  primed: Set<string>;
+  busy: boolean;
+  /** Jobs this thread has answered; the thread is retired at `INVOCATIONS_PER_WORKER`. */
+  calls: number;
+}
 
+/**
+ * How many invocations one warm worker serves before it is replaced by a fresh thread.
+ *
+ * A fresh realm per invocation is the isolation the design asks for, and V8 does not give the
+ * memory back: `vm.createContext` plus `SourceTextModule` retains ~0.2 MB of the thread's heap per
+ * invocation on the billing fixture, measured as heap 21 MB to 101 MB over 400 invocations with no
+ * plateau across 3000 realms in a bare V8 loop, and no garbage collection inside the thread can be
+ * asked to fix it — a worker rejects `--expose-gc` and every heap flag in `execArgv`. The drift
+ * shows up as latency too: building the realm went from 1.0 ms to 1.8 ms and the coverage report
+ * from 2.4 ms to 5.3 ms over the same 400 calls.
+ *
+ * Terminating the thread is the only release there is, so it is done on a schedule as well as after
+ * a fault. 128 invocations keeps a worker near 45 MB and inside the flat part of the drift, and
+ * costs the 24 ms of a fresh thread once per 128 calls, ~0.2 ms amortized.
+ */
+const INVOCATIONS_PER_WORKER = 128;
+
+/** A job's answer: the worker's reply, or why there will not be one. */
 interface RunResult {
   reply: WorkerReply | null;
-  exitCode: number;
-  error: Error | null;
+  detail: string;
 }
 
-/** Spawn one worker for one job and wait for its single reply. */
-function runJob(job: WorkerJob, mode: LoaderMode): Promise<RunResult> {
-  const { promise, resolve } = Promise.withResolvers<RunResult>();
-  const worker = new Worker(new URL("./invoke.js", import.meta.url), {
-    workerData: job,
-    // The flag is per thread: the plugin process stays a plain Node process, and only the
-    // thread that imports the target needs a TypeScript loader. `tsx` is the fallback for
-    // syntax strip-only mode rejects and for a `./x.js` specifier that names `x.ts`.
-    execArgv: mode === "tsx" ? ["--import", TSX_ENTRY] : ["--experimental-strip-types"],
-  });
-  let settled = false;
-  const finish = (result: RunResult): void => {
-    if (settled) return;
-    settled = true;
-    // A worker thread outlives its reply unless it is terminated: it keeps its isolate, its
-    // module registry and its inspector session, so every invocation would add another live
-    // thread to the process and the next invocation would cost more than the last.
-    void worker.terminate().catch(() => undefined);
-    resolve(result);
+interface Pending {
+  entry: WarmWorker;
+  settle: (result: RunResult) => void;
+}
+
+function moduleLoadFailure(detail: string): Outcome {
+  return {
+    kind: "failed",
+    durationMs: 0,
+    via: VIA_MODULE_LOAD,
+    fault: { class: "ModuleLoadError", message: detail },
   };
-  worker.once("message", (reply: WorkerReply) => finish({ reply, exitCode: 0, error: null }));
-  worker.once("error", (error: Error) => finish({ reply: null, exitCode: 1, error }));
-  worker.once("exit", (code) => finish({ reply: null, exitCode: code, error: null }));
-  return promise;
 }
 
-function moduleUrlOf(target: TargetDescriptor): string {
-  const file = target.origin.file;
-  if (!file) throw new Error(`target ${target.id} has no source file to load`);
-  return pathToFileURL(file).href;
+function failureDetail(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
 /** `codebase.rejectClasses` from the scan project, when the project declares it. */
@@ -134,7 +132,10 @@ export class Harness {
   private root: string | null = null;
   private rejectClasses: string[] = [...DEFAULT_REJECT_CLASSES];
   private targets = new Map<string, TargetDescriptor>();
-  private loaderModes = new Map<string, LoaderMode>();
+  private transpiler = new Transpiler();
+  private workers = new Set<WarmWorker>();
+  private pending = new Map<number, Pending>();
+  private nextJobId = 1;
   private edges = new Map<number, CoverageEntry>();
 
   handshake(): Handshake {
@@ -169,11 +170,30 @@ export class Harness {
     return this.root;
   }
 
-  private job(target: TargetDescriptor, values: ValueTree[], mode: "prepare" | "invoke", collectCoverage: boolean): WorkerJob {
+  /**
+   * The target module and its whole import closure, transpiled once per plugin process. The realm
+   * the worker builds is made from this text, so no loader runs on the invoke path.
+   */
+  private async graph(target: TargetDescriptor): Promise<ModuleGraph> {
+    const file = target.origin.file;
+    if (!file) throw new Error(`target ${target.id} has no source file to load`);
+    return await this.transpiler.graph(file);
+  }
+
+  private job(
+    target: TargetDescriptor,
+    graph: ModuleGraph,
+    values: ValueTree[],
+    mode: "prepare" | "invoke",
+    collectCoverage: boolean,
+  ): WorkerJob {
     return {
+      type: "job",
+      id: this.nextJobId++,
       mode,
       root: this.scanRoot(),
-      moduleUrl: moduleUrlOf(target),
+      graphKey: graph.key,
+      moduleUrl: graph.entryUrl,
       name: target.name,
       values,
       guardSites: target.guardSites ?? [],
@@ -183,30 +203,107 @@ export class Harness {
     };
   }
 
-  /** Run one job, switching the thread's loader if the target needs more than type stripping. */
-  private async run(job: WorkerJob): Promise<RunResult> {
-    const mode = this.loaderModes.get(job.moduleUrl) ?? "strip";
-    const first = await runJob(job, mode);
-    const loadError = first.reply?.type === "load-error" ? first.reply : null;
-    if (mode === "strip" && loadError !== null && LOADER_RETRY_CODES.has(loadError.code)) {
-      this.loaderModes.set(job.moduleUrl, "tsx");
-      const retry = await runJob(job, "tsx");
-      if (retry.reply?.type === "load-error") {
-        this.loaderModes.set(job.moduleUrl, "strip");
-      }
-      return retry;
+  /**
+   * A thread to run one job on, holding `graph`. An idle thread that already has the closure is
+   * preferred; a busy one is never used, because a thread runs one invocation at a time and the
+   * realm is what isolates calls from each other, not the scheduler.
+   */
+  private acquire(graph: ModuleGraph): WarmWorker {
+    let fallback: WarmWorker | null = null;
+    for (const candidate of this.workers) {
+      if (candidate.busy) continue;
+      if (candidate.primed.has(graph.key)) return candidate;
+      fallback ??= candidate;
     }
-    return first;
+    const entry = fallback ?? this.spawn();
+    this.prime(entry, graph);
+    return entry;
+  }
+
+  private spawn(): WarmWorker {
+    const entry: WarmWorker = {
+      thread: new Worker(new URL("./invoke.js", import.meta.url), {
+        // `vm.SourceTextModule` gives each invocation its fresh realm, and the flag is per thread:
+        // the plugin process itself stays a plain Node process. The experimental warning is turned
+        // off because this plugin's stderr is the engine's log, and the warning says nothing the
+        // handshake does not.
+        execArgv: ["--experimental-vm-modules", "--disable-warning=ExperimentalWarning"],
+      }),
+      primed: new Set<string>(),
+      busy: false,
+      calls: 0,
+    };
+    entry.thread.on("message", (reply: WorkerReply) => this.accept(reply));
+    entry.thread.once("error", (error: Error) => this.lost(entry, error.message));
+    entry.thread.once("exit", (code: number) => this.lost(entry, `invoke worker exited with code ${code}`));
+    this.workers.add(entry);
+    return entry;
+  }
+
+  private prime(entry: WarmWorker, graph: ModuleGraph): void {
+    if (entry.primed.has(graph.key)) return;
+    entry.primed.add(graph.key);
+    entry.thread.postMessage({ type: "prime", graph } satisfies WorkerRequest);
+  }
+
+  /** Post one job and wait for the reply that carries its id. */
+  private async run(entry: WarmWorker, job: WorkerJob): Promise<RunResult> {
+    const { promise, resolve } = Promise.withResolvers<RunResult>();
+    entry.busy = true;
+    this.pending.set(job.id, { entry, settle: resolve });
+    entry.thread.postMessage({ ...job } satisfies WorkerRequest);
+    const result = await promise;
+    entry.calls += 1;
+    // Retired only now, with nothing in flight: the reply for this job has been answered, and the
+    // next `acquire` finds no idle thread and spawns one.
+    if (entry.calls >= INVOCATIONS_PER_WORKER) this.retire(entry);
+    return result;
+  }
+
+  private accept(reply: WorkerReply): void {
+    const waiting = this.pending.get(reply.id);
+    if (waiting === undefined) return;
+    // A warm worker can still be sending an answer to a call this plugin already settled, such as
+    // a rejection that surfaced after the reply for the call that raised it. The first answer wins.
+    this.pending.delete(reply.id);
+    waiting.entry.busy = false;
+    waiting.settle({ reply, detail: "" });
+  }
+
+  /** A thread that died or exited: nothing more will be heard about its job, or from it. */
+  private lost(entry: WarmWorker, detail: string): void {
+    this.workers.delete(entry);
+    for (const [id, waiting] of this.pending) {
+      if (waiting.entry !== entry) continue;
+      this.pending.delete(id);
+      waiting.settle({ reply: null, detail });
+    }
+  }
+
+  /**
+   * Retire a thread so the next invocation starts from a clean isolate: a call that failed, a
+   * module that did not load, or a thread that stopped answering may have left state behind that
+   * the next call should not inherit.
+   */
+  private retire(entry: WarmWorker): void {
+    if (!this.workers.delete(entry)) return;
+    void entry.thread.terminate().catch(() => undefined);
   }
 
   async prepare(req: PrepareReq): Promise<PrepareResp> {
     const target = this.target(req.targetId);
-    const result = await this.run(this.job(target, req.values, "prepare", false));
+    let graph: ModuleGraph;
+    try {
+      graph = await this.graph(target);
+    } catch (error) {
+      process.stderr.write(`prepare ${req.targetId}: ${failureDetail(error)}\n`);
+      return { ok: false, reason: "discovery-error" };
+    }
+    const entry = this.acquire(graph);
+    const result = await this.run(entry, this.job(target, graph, req.values, "prepare", false));
     if (result.reply?.type === "prepared") return result.reply.state;
-    const detail =
-      result.reply?.type === "load-error"
-        ? result.reply.message
-        : `prepare worker exited with code ${result.exitCode}`;
+    this.retire(entry);
+    const detail = result.reply?.type === "load-error" ? result.reply.message : result.detail;
     // The wire skip carries only a reason, so the explanation goes to stderr, where
     // `afz probe-plugin` and the engine's log show it.
     process.stderr.write(`prepare ${req.targetId}: ${detail}\n`);
@@ -215,33 +312,32 @@ export class Harness {
 
   async invoke(req: InvokeCall): Promise<Outcome> {
     const target = this.target(req.targetId);
-    const result = await this.run(
-      this.job(target, req.values, "invoke", req.collectCoverage),
-    );
-    if (result.reply?.type === "outcome") {
-      // `reachable` is the whole block table of the modules this process has loaded, a superset
-      // of the blocks this call hit; the map answers with all of it, so the engine can divide by
-      // the edges that exist rather than only the ones already seen.
-      for (const entry of result.reply.reachable) this.edges.set(entry.edge, entry);
-      const coverage = result.reply.entries.map((entry) => entry.edge);
-      const outcome = result.reply.outcome;
-      if (req.collectCoverage) outcome.coverage = coverage;
+    let graph: ModuleGraph;
+    try {
+      graph = await this.graph(target);
+    } catch (error) {
+      return moduleLoadFailure(failureDetail(error));
+    }
+    const entry = this.acquire(graph);
+    const result = await this.run(entry, this.job(target, graph, req.values, "invoke", req.collectCoverage));
+    const reply = result.reply;
+    if (reply?.type === "outcome") {
+      // `reachable` is the whole block table of the modules this call compiled, a superset of the
+      // blocks the call hit; the map answers with all of it, so the engine can divide by the edges
+      // that exist rather than only the ones already seen.
+      for (const entry of reply.reachable) this.edges.set(entry.edge, entry);
+      const outcome = reply.outcome;
+      if (req.collectCoverage) outcome.coverage = reply.entries.map((edge) => edge.edge);
+      if (outcome.kind === "failed") this.retire(entry);
       return outcome;
     }
-    if (result.reply?.type === "load-error") {
-      return {
-        kind: "failed",
-        durationMs: 0,
-        via: VIA_MODULE_LOAD,
-        fault: { class: "ModuleLoadError", message: result.reply.message },
-      };
-    }
-    const detail = result.error?.message ?? `invoke worker exited with code ${result.exitCode}`;
+    this.retire(entry);
+    if (reply?.type === "load-error") return moduleLoadFailure(reply.message);
     return {
       kind: "failed",
       durationMs: 0,
       via: VIA_WORKER_DEAD,
-      fault: failureWithCause(VIA_WORKER_DEAD, detail),
+      fault: failureWithCause(VIA_WORKER_DEAD, result.detail),
     };
   }
 
@@ -255,7 +351,6 @@ export class Harness {
     return { entries };
   }
 }
-
 
 
 // ---------------------------------------------------------------- transport

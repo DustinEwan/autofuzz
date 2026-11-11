@@ -3,10 +3,13 @@
 // `NODE_V8_COVERAGE` is not used: it is inconsistent with worker threads (nodejs/node#46378),
 // and every invocation runs in a worker. An `inspector.Session()` created inside the worker
 // attaches to that worker's own V8 isolate, which is the thread that actually runs the target.
+//
+// One session serves the whole life of a warm worker; `CoverageProbe` is the reset around a call.
 
 import { Session } from "node:inspector";
 import { pathToFileURL } from "node:url";
 
+import { sourceOffsetAt, type SourceMap } from "./sourcemap.js";
 import type { CoverageEntry } from "./protocol.js";
 
 const FNV_OFFSET_BASIS = 0xcbf29ce484222325n;
@@ -46,6 +49,8 @@ interface V8FunctionCoverage {
 }
 
 interface V8ScriptCoverage {
+  /** Unique per compiled script, which is what identifies the invocation that compiled it. */
+  scriptId: string;
   url: string;
   functions: V8FunctionCoverage[];
 }
@@ -70,29 +75,89 @@ export function underRoot(url: string, root: string): boolean {
 }
 
 /**
- * Runs the callback with precise block coverage enabled, and returns the edges whose blocks
- * executed at least once. `callCount: false` because only the set of hit edges is reported;
- * `detailed: true` because block granularity is what distinguishes guard branches.
+ * One `node:inspector` session for the life of a worker, scoped to one invocation at a time.
+ *
+ * Two measured facts about V8 decide the shape here.
+ *
+ * A `stopPreciseCoverage` plus `startPreciseCoverage` cycle on a live session drops every script
+ * compiled before it from the report, and costs milliseconds that grow with the isolate. That
+ * means the window has to be open *before* `src/realm.ts` compiles the invocation's modules, so
+ * the cycle cannot be paid at the start of a call, and paying it per call is the most expensive
+ * thing an invocation does.
+ *
+ * `detailed: true` block counts describe each function's *most recent* execution, not a running
+ * total, and `takePreciseCoverage` reports every script the isolate still holds rather than only
+ * the ones that ran since the last take. So a session that stays armed hands an invocation the
+ * blocks of the invocation before it — the exact failure mode of a pooled module graph.
+ *
+ * Coverage stays armed across calls anyway, because the two facts have a consistent reading: a
+ * script's counts describe the call that ran it, and every invocation compiles its own module
+ * graph. So the scoping rule is that a script belongs to the invocation that first reports it, and
+ * `reported` is the filter that enforces it. It holds for the life of the worker, which is why
+ * `src/server.ts` retires a worker on a schedule instead of letting the table and V8's report grow
+ * without bound.
  */
-export async function withCoverage<T>(
-  root: string,
-  run: () => Promise<T>,
-): Promise<{ value: T; entries: CoverageEntry[]; all: CoverageEntry[] }> {
-  const session = new Session();
-  session.connect();
-  try {
-    await post(session, "Profiler.enable", {});
-    await post(session, "Profiler.startPreciseCoverage", { callCount: false, detailed: true });
-    const value = await run();
-    const { result } = await post<{ result: V8ScriptCoverage[] }>(
-      session,
-      "Profiler.takePreciseCoverage",
-      {},
-    );
-    return { value, entries: collectEntries(result, root), all: allEntries(result, root) };
-  } finally {
-    session.post("Profiler.disable", {}, () => undefined);
-    session.disconnect();
+export class CoverageProbe {
+  private readonly session = new Session();
+  private running = false;
+  /**
+   * The arming of the window the next call compiles into. Nothing may compile before it settles:
+   * a script compiled while coverage is off is dropped from the report, so the ordering is the
+   * difference between a small digest and an empty one.
+   */
+  private window: Promise<void>;
+  /** Scripts already attributed to an invocation. V8 keeps reporting a live script every take. */
+  private readonly reported = new Set<string>();
+
+  constructor() {
+    this.session.connect();
+    this.window = post(this.session, "Profiler.enable", {})
+      .then(() => this.arm())
+      .catch(() => undefined);
+  }
+
+  /** Start block coverage. Armed once per worker; a worker is replaced rather than re-armed. */
+  private async arm(): Promise<void> {
+    if (this.running) return;
+    await post<void>(this.session, "Profiler.startPreciseCoverage", { callCount: false, detailed: true });
+    this.running = true;
+  }
+
+  /**
+   * Keep the window open for the next call. With no reset between calls this settles immediately;
+   * it is still awaited by the next call, because the first call of a fresh worker must not
+   * compile its modules before the profiler is running.
+   */
+  rear(): Promise<void> {
+    this.window = this.arm();
+    return this.window;
+  }
+
+  /** Settles once the window this call's modules will be compiled into is open. */
+  armed(): Promise<void> {
+    return this.window;
+  }
+
+  /** The blocks this invocation's own scripts ran; earlier invocations' scripts are not its report. */
+  async take(
+    root: string,
+    maps: ReadonlyMap<string, SourceMap> = new Map(),
+  ): Promise<{ entries: CoverageEntry[]; all: CoverageEntry[] }> {
+    await this.window.catch(() => undefined);
+    const { result } = await post<{ result: V8ScriptCoverage[] }>(this.session, "Profiler.takePreciseCoverage", {});
+    const fresh: V8ScriptCoverage[] = [];
+    for (const script of result) {
+      if (!underRoot(script.url, root)) continue;
+      if (this.reported.has(script.scriptId)) continue;
+      this.reported.add(script.scriptId);
+      fresh.push(script);
+    }
+    return { entries: collectEntries(fresh, root, maps), all: allEntries(fresh, root, maps) };
+  }
+
+  close(): void {
+    this.session.post("Profiler.disable", {}, () => undefined);
+    this.session.disconnect();
   }
 }
 
@@ -100,39 +165,62 @@ export async function withCoverage<T>(
  * The blocks that ran: the edges one invocation's digest reports. Each is a positive range with
  * its skipped sub-ranges cut out, so a guard branch and the path it guards report different sets.
  */
-export function collectEntries(report: V8ScriptCoverage[], root: string): CoverageEntry[] {
-  return entriesFor(report, root, executedSegments);
+export function collectEntries(
+  report: readonly V8ScriptCoverage[],
+  root: string,
+  maps: ReadonlyMap<string, SourceMap> = new Map(),
+): CoverageEntry[] {
+  return entriesFor(report, root, executedSegments, maps, false);
 }
 
 /**
- * Every block V8 knows about in in-root code, run or not. This is what `coverageMap` answers
+ * Every block of every function this call entered, run or not. This is what `coverageMap` answers
  * with: its size is the reachable-edge count the scan result divides covered edges by, and each
  * entry names the source range behind an edge id in a digest.
+ *
+ * A function the call never entered is left out. A realm compiles its whole module graph inside
+ * the coverage window, so V8 has a record for every function in the closure, entered or not;
+ * counting the unentered ones would add one whole-body range per function to the denominator of
+ * `coverageRatio` and make it depend on how eagerly this runtime compiled the file.
  */
-export function allEntries(report: V8ScriptCoverage[], root: string): CoverageEntry[] {
-  return entriesFor(report, root, allSegments);
+export function allEntries(
+  report: readonly V8ScriptCoverage[],
+  root: string,
+  maps: ReadonlyMap<string, SourceMap> = new Map(),
+): CoverageEntry[] {
+  return entriesFor(report, root, allSegments, maps, true);
 }
 
 function entriesFor(
-  report: V8ScriptCoverage[],
+  report: readonly V8ScriptCoverage[],
   root: string,
   segmentsOf: (ranges: readonly V8Range[]) => Segment[],
+  maps: ReadonlyMap<string, SourceMap>,
+  enteredOnly: boolean,
 ): CoverageEntry[] {
   const entries: CoverageEntry[] = [];
   const seen = new Set<number>();
   for (const script of report) {
     if (!underRoot(script.url, root)) continue;
+    const map = maps.get(script.url);
     for (const fn of script.functions) {
+      // V8 reports the module's own top level as a function with no name whose only range is the
+      // whole script. It is not an edge: it is the same range for every call that evaluates the
+      // module, and it contains every real edge in the file, so reporting it would count the same
+      // code twice and add nothing a digest could use as novelty.
+      if (fn.functionName === "") continue;
+      if (enteredOnly && fn.ranges.every((range) => range.count <= 0)) continue;
       for (const segment of segmentsOf(fn.ranges)) {
-        const id = edgeId(script.url, segment.startOffset, segment.endOffset);
+        // A realm script is the transpiled text, so its offsets are emitted ones. The edge id
+        // and the reported range are both about the source, so both ends are mapped first, and a
+        // range with no source position — compiler-synthesized text — reports nothing.
+        const start = map === undefined ? segment.startOffset : sourceOffsetAt(map, segment.startOffset);
+        const end = map === undefined ? segment.endOffset : sourceOffsetAt(map, segment.endOffset);
+        if (start === null || end === null || end <= start) continue;
+        const id = edgeId(script.url, start, end);
         if (seen.has(id)) continue;
         seen.add(id);
-        entries.push({
-          edge: id,
-          url: script.url,
-          start: segment.startOffset,
-          end: segment.endOffset,
-        });
+        entries.push({ edge: id, url: script.url, start, end });
       }
     }
   }

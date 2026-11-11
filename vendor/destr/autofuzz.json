@@ -16,7 +16,7 @@
   "budget": {
     "invocations": 20000,
     "wallClockMs": 900000,
-    "workers": 12,
+    "workers": 0,
     "maxCorpus": 2048,
     "strategy": "guided"
   },

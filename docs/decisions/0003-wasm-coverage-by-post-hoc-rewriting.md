@@ -18,8 +18,8 @@ Three facts about that path made it the wrong instrument for this job:
   `dist/app.instr.wasm`, built by a toolchain the target's own team may not use, and a bug that only
   appears in the shipped artifact would be missed.
 - It needs a toolchain per producer. A module emitted by Rust, by Emscripten, by AssemblyScript, or
-  by a bundler cannot all be asked to re-emit with the same flag, and the harness would depend on a native toolchain that it does not
-  otherwise need and cannot assume a target CI provides.
+  by a bundler cannot all be asked to re-emit with the same flag, and the harness would then depend
+  on a native toolchain that it does not otherwise need and cannot assume a target's CI provides.
 - The callbacks are host imports, so a module that imports nothing gains them, and a scan of a
   module that already imports `env.__sanitizer_cov_trace_pc_guard` for another reason reports edges
   the harness did not record.
@@ -74,8 +74,8 @@ Three facts about that path made it the wrong instrument for this job:
 
 ## Reconsidered
 
-- **The `binaryen` crate.** Its build needs a C++ toolchain, which the engine deliberately does not, and it
-  would still rewrite the artifact. Rejected for the same reason as pcguard.
+- **The `binaryen` crate.** Its build needs a C++ toolchain, which the engine deliberately does not
+  take on, and it would still rewrite the artifact. Rejected for the same reason as pcguard.
 - **Compiling a driver into the probe and calling that.** It would let the probe take structured
   arguments instead of one `i32`, at the cost of testing the driver rather than the module. Rejected.
 - **Reading coverage through an imported callback.** It needs the module to import a symbol, which a

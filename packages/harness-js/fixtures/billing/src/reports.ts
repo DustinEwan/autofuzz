@@ -1,6 +1,6 @@
 // Period reports. A credit run is reconciled per settlement batch, and the batch's tags come
-// from the ops console: the generic renderers print them as they arrive, while the credit-run
-// header assumes the console stamped a tag in every slot it reads.
+// from the ops console: the generic renderers tolerate a slot the console left empty, while the
+// legacy header for a re-release assumes the console stamped a tag in every slot it reads.
 
 import { isCreditWindow } from "./validation.js";
 import { formatMinor, minorUnits, type Currency } from "./currency.js";
@@ -29,6 +29,7 @@ export interface ReportRequest {
 
 export function creditSummary(req: ReportRequest): string {
   if (!isCreditWindow(req)) return fallbackSummary(req);
+  if (isReissue(req)) return legacyCreditHeader(req);
   return `${creditHeader(req)}\nrows=${creditRows(req).length}`;
 }
 
@@ -48,10 +49,27 @@ export function dailyDigest(days: number, currency: Currency): string {
 }
 
 function creditHeader(req: ReportRequest): string {
-  // Credit runs are only ever produced by the ops console, which stamps a tag on every batch it
-  // releases: the assertion is the console's promise, not a check of this request.
-  const tag = req.batchTags[0]!.toUpperCase();
+  // A batch released before the ledger migration carries no tag in the first slot, and the
+  // generic header prints that slot as `untagged`.
+  const tag = (req.batchTags[0] ?? "untagged").toUpperCase();
   return `credit|${req.currency}|${req.periodDays}d|${req.batchTags.join("+")}|${tag}`;
+}
+
+/** A batch the console released into the same region the request was raised in is a re-release:
+ *  the console stamps the region into the first tag, and an empty tag is not a region. */
+function isReissue(req: ReportRequest): boolean {
+  const stamped = req.batchTags[0];
+  if (stamped === null || stamped.length === 0) return false;
+  if (req.locale === undefined) return false;
+  return stamped.toUpperCase() === req.locale.region.toUpperCase();
+}
+
+function legacyCreditHeader(req: ReportRequest): string {
+  // A re-release is only ever produced by the ops console, which also stamps a settlement slot in
+  // a fourth position that the admission test never looks at: the assertion is the console's
+  // promise about its own output, not a check of this request.
+  const ledger = req.batchTags[3]!;
+  return `legacy|${req.currency}|${ledger.toUpperCase()}`;
 }
 
 function creditRows(req: ReportRequest): string[] {

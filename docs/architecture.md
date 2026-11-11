@@ -306,7 +306,7 @@ One 32-bit seed per scan drives every random choice: corpus selection, mutation,
 
 | Harness | Discovery | Invocation | Coverage |
 |---|---|---|---|
-| `js-ts` (design-time, first) | Static declaration analysis. `typescript@7` ships no JavaScript compiler API — its exports map is `./lib/version.cjs` plus `./unstable/*` — so the classic API comes from `@typescript/typescript6@6.0.2`, installed under the `typescript` alias | Node worker thread calls the symbol; `Profiler.takePreciseCoverage` over `node:inspector`, which is exposed in worker threads since Node 18.10.0 | Yes, per invocation |
+| `js-ts` (design-time, first) | Static declaration analysis. `typescript@7` ships no JavaScript compiler API — its exports map is `./lib/version.cjs` plus `./unstable/*` — so the classic API comes from `@typescript/typescript6@6.0.2`, installed under the `typescript` alias | One warm Node worker thread per plugin process serves many invocations. Each invocation runs in a fresh `vm` realm built from text the plugin transpiled itself, so module-level state resets per call and one call remains a complete reproducer: Decision 6 | Yes, per invocation: one armed `Profiler.takePreciseCoverage` window per worker, with an invocation's digest scoped to the scripts it first reported. Ranges are mapped back to `.ts` source positions through the transpile source map |
 | `wasm` (design-time, generalization proof) | Exported functions of a core wasm module; the engine materializes arguments from the same IR and the plugin calls the export directly, so the module's own signature is the only type information involved | one wasmtime instance per worker, in a plugin process per worker as with every other harness | Yes: the harness rewrites the module it is handed - one counter byte per function entry and per structured block head, in a memory of its own that it exports as `__afz_counters`. The guard is `i32.const <edge>; i32.store`, and the table is read back after the call, including after a trap. Compile-time pcguard stays available to a target that wants finer edges: Decision 3 |
 | `http` (runtime) | Route table from framework metadata, or an OpenAPI document | fetch against a user-declared base URL, under the side-effect policy | Only if the serving process is instrumented |
 | Later: Python, JVM, Go | Same contract, different discovery and coverage probe | | |
@@ -315,7 +315,7 @@ One 32-bit seed per scan drives every random choice: corpus selection, mutation,
 
 ## Environment
 
-The js-ts plugin needs Node 24 or newer and runs with --experimental-vm-modules. The engine needs a stable Rust toolchain, and the wasm harness needs the wasm32-unknown-unknown target to build probe modules. Neither needs a C or C++ toolchain, Binaryen, wasi-sdk, or wasm-opt: coverage instrumentation for wasm is a post-hoc rewrite of a core wasm module using wasmparser and wasm-encoder, both compiled into the engine.
+The `js-ts` plugin needs Node 24 or newer and runs with `--experimental-vm-modules`: each invocation is a `vm.SourceTextModule` realm, and coverage comes from `Profiler.takePreciseCoverage`, which is exposed in worker threads from Node 18.10.0. The engine needs a stable Rust toolchain. The wasm harness additionally needs the `wasm32-unknown-unknown` target to build probe modules, and needs no C or C++ toolchain, no Binaryen, no wasi-sdk, and no wasm-opt, because coverage instrumentation is a post-hoc rewrite of a core wasm module using `wasmparser` and `wasm-encoder`, both compiled into the engine. A target that wants compile-time pcguard brings its own toolchain; the engine never requires one.
 
 ## Implementation language
 
@@ -330,7 +330,7 @@ Four reasons the engine is Rust rather than Node:
 
 The cost is a slower edit-compile loop in the parts that iterate most: generation, mutation, and scheduling policy. Accepted, because those modules are small and pure, and their tests are golden-file comparisons that catch a regression on one `cargo test`.
 
-Pinned dependencies: `clap` 4.6.7 for the CLI, `serde_json` 1.0.154, `schemars` 1.2.3, `rand_chacha` 0.10.0, `wasmparser` and `wasm-encoder` 0.263.0, `wasmtime` 50.0.1. The plugin side pins `@typescript/typescript6@^6.0.2` under the npm alias `typescript`, and `tsx` 4.23.15 as the loader fallback.
+Pinned dependencies: `clap` 4.6.7 for the CLI, `serde_json` 1.0.154, `schemars` 1.2.3, `rand_chacha` 0.10.0, `wasmparser` and `wasm-encoder` 0.263.0, `wasmtime` 50.0.1. The plugin side pins `@typescript/typescript6@^6.0.2` under the npm alias `typescript` and needs no loader package, because the plugin transpiles the targets it is pointed at rather than asking Node's module system to read them.
 
 Deliberately not used: the `binaryen` crate 0.13.0, because its build needs a C++ toolchain; `wasm-instrument` 0.4.0, whose last release predates the current wasm proposal set; LibAFL, because the engine is ours by requirement, and the two pcguard callbacks we need are about thirty lines rather than a framework dependency.
 

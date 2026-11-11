@@ -1,11 +1,12 @@
-// Step 6 acceptance: a target that Node's strip-only type removal cannot run.
+// Step 6 acceptance, re-asserted through the realm: a target whose syntax Node's type stripping
+// refuses to run.
 //
-// `fixtures/legacy/src/kind.ts` declares an `enum`, which `--experimental-strip-types` refuses
-// to load (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`). Discovery still works, because discovery reads
-// the source with the TypeScript compiler and never executes the module. The call must succeed
-// anyway: the worker reports the unsupported-syntax error and the server re-runs the invocation
-// in a thread whose loader is `tsx`. Without that fallback the second test would see a `failed`
-// outcome instead of `ok`.
+// `fixtures/legacy/src/kind.ts` declares an `enum`, which `--experimental-strip-types` refuses to
+// load (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`). Discovery works because it reads the source with the
+// TypeScript compiler and never executes the module. The call must succeed anyway, and it does
+// because the harness compiles the module itself: the realm runs the emitted text, so there is no
+// loader mode to fail and no second loader to fall back to. Without that the second test would see
+// a `failed` outcome instead of `ok`.
 
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -34,7 +35,7 @@ test("discovery reads an enum-typed module without running it", async () => {
   }
 });
 
-test("the call runs after the loader falls back to tsx", async () => {
+test("the enum module runs because the harness compiles it, not a loader", async () => {
   const plugin = startPlugin();
   try {
     const discovery = await discover(plugin);

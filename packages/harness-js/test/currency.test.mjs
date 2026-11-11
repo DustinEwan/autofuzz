@@ -1,6 +1,6 @@
 // Step 6 acceptance, run against the built plugin as a real subprocess over real stdio. This
-// is the path the engine takes, so it also proves the framing, the worker-thread loader choice,
-// and the coverage mapping rather than a unit-level stand-in for them.
+// is the path the engine takes, so it also proves the framing, the warm worker and its per-call
+// realm, and the coverage mapping rather than a unit-level stand-in for them.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
