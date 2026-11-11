@@ -18,6 +18,16 @@ import type { Blocker, Field, Materialization, TypeNode } from "./protocol.js";
 /** Structural expansion cap from the plan; deeper types emit `ref` or `opaque`. */
 export const MAX_TYPE_DEPTH = 12;
 
+/**
+ * How many composite expansions one `lower()` call may perform. The depth cap bounds the height of
+ * a type graph and nothing else: an interface whose members are themselves large interfaces is
+ * walked once per path, and a declaration file that models a whole runtime fills the heap with
+ * `TypeNode` objects before discovery answers. Past this budget a position lowers to `opaque` with
+ * the budget in its type name, so the inventory reports a shape that was too large rather than
+ * claiming a shape it never built.
+ */
+const MAX_EXPANSIONS = 200_000;
+
 /** One lowered type: the wire node plus the honest reachability accounting. */
 export interface LoweredType {
   type: TypeNode;
@@ -129,11 +139,24 @@ function isFromLib(symbol: ts.Symbol | undefined, fragment: string): boolean {
  * exactly one object over the whole graph. Depth is threaded as a parameter, never
  * copied, so a deeper node's floor can never be lost.
  */
+/** A composite shape already lowered, reusable at the same depth from any path. */
+interface LoweredShape {
+  node: TypeNode;
+  /** The path the shape was lowered at, so its blockers can be re-based on the replay path. */
+  path: string;
+  /** Blockers the subtree produced, recorded with the path they were produced at. */
+  blockers: Blocker[];
+  /** The floor the subtree raised, or `null` when it raised none. */
+  floor: Materialization | null;
+}
+
 interface Ctx {
   /** Object types currently being lowered, mapped to their `ref` name (recursion guard). */
   active: Map<ts.Type, string>;
   blockers: Blocker[];
   materialization: Materialization;
+  /** Composite expansions charged so far, against [`MAX_EXPANSIONS`]. */
+  expansions: number;
 }
 
 export class TypeLowerer {
@@ -145,6 +168,16 @@ export class TypeLowerer {
   private readonly shapes = new Map<string, TypeNode>();
   /** Claimed names, so two distinct types called `Node` get distinct ref names. */
   private readonly nameOwners = new Map<string, ts.Type>();
+  /**
+   * Composite shapes by type and depth. The same interface reached from two parameters is lowered
+   * once rather than once per path: a declaration file whose interfaces reference each other is a
+   * DAG, and re-walking a DAG per path is exponential in depth. A shape is stored only when its
+   * subtree emitted no `ref`, because a `ref` names a type that has to sit above the position for
+   * the shape it points at to be registered there.
+   */
+  private readonly lowered = new WeakMap<ts.Type, Map<number, LoweredShape>>();
+  /** `ref` nodes emitted so far, which is how a subtree is known to depend on its ancestors. */
+  private refsEmitted = 0;
 
   constructor(checker: ts.TypeChecker, maxDepth: number = MAX_TYPE_DEPTH) {
     this.checker = checker;
@@ -153,7 +186,7 @@ export class TypeLowerer {
 
   /** Lower one type. `path` seeds blocker paths, e.g. `arguments[0]` or `receiver.db`. */
   lower(type: ts.Type, path: string): LoweredType {
-    const ctx: Ctx = { active: new Map(), blockers: [], materialization: "constructible" };
+    const ctx: Ctx = { active: new Map(), blockers: [], materialization: "constructible", expansions: 0 };
     const node = this.lowerType(type, path, ctx, 0);
     return { type: node, materialization: ctx.materialization, blockers: ctx.blockers };
   }
@@ -190,11 +223,48 @@ export class TypeLowerer {
     // array element recurses back through this function, and a check that sits below the
     // object's collection branches is never reached by a type such as `type Json = Json[] | string`.
     if (depth >= this.maxDepth) return this.capped(type, path, ctx);
-    if (flags & ts.TypeFlags.Intersection) return this.lowerIntersection(type as ts.IntersectionType, path, ctx, depth);
-    if (flags & ts.TypeFlags.Union) return this.lowerUnion(type as ts.UnionType, path, ctx, depth);
-    if (flags & ts.TypeFlags.Object) return this.lowerObject(type, path, ctx, depth);
+    if (flags & ts.TypeFlags.Intersection) return this.memoized(type, path, ctx, depth, () => this.lowerIntersection(type as ts.IntersectionType, path, ctx, depth));
+    if (flags & ts.TypeFlags.Union) return this.memoized(type, path, ctx, depth, () => this.lowerUnion(type as ts.UnionType, path, ctx, depth));
+    if (flags & ts.TypeFlags.Object) return this.memoized(type, path, ctx, depth, () => this.lowerObject(type, path, ctx, depth));
 
     return this.opaque(ctx, path, this.checker.typeToString(type), null, "opaque");
+  }
+
+  /**
+   * Lower one composite type through `build`, reusing the shape a previous path produced for the
+   * same type at the same depth. Blockers and the materialization floor are replayed rather than
+   * skipped, so the honest accounting still names every path that reaches an unconstructible node:
+   * a memo that dropped blockers would turn a reported `fixture-required` parameter into a
+   * constructible one, which is the failure this whole record exists to prevent.
+   */
+  private memoized(type: ts.Type, path: string, ctx: Ctx, depth: number, build: () => TypeNode): TypeNode {
+    const byDepth = this.lowered.get(type);
+    const hit = byDepth?.get(depth);
+    if (hit !== undefined) {
+      for (const blocker of hit.blockers) {
+        ctx.blockers.push({ ...blocker, path: `${path}${blocker.path.slice(hit.path.length)}` });
+      }
+      if (hit.floor !== null && WORST[hit.floor] > WORST[ctx.materialization]) ctx.materialization = hit.floor;
+      return hit.node;
+    }
+    if (ctx.expansions >= MAX_EXPANSIONS) {
+      const symbol = type.getSymbol() ?? type.aliasSymbol;
+      return this.opaque(ctx, path, `expansion-budget-exceeded:${this.checker.typeToString(type)}`, this.moduleOf(symbol), "opaque");
+    }
+    ctx.expansions += 1;
+    const refsBefore = this.refsEmitted;
+    const blockersBefore = ctx.blockers.length;
+    const floorBefore = ctx.materialization;
+    const node = build();
+    if (this.refsEmitted !== refsBefore) {
+      return node;
+    }
+    const floor = WORST[ctx.materialization] > WORST[floorBefore] ? ctx.materialization : null;
+    const blockers = ctx.blockers.slice(blockersBefore).map((blocker) => ({ ...blocker, path }));
+    const table = byDepth ?? new Map<number, LoweredShape>();
+    table.set(depth, { node, path, blockers, floor });
+    this.lowered.set(type, table);
+    return node;
   }
 
   // ------------------------------------------------------------------ literals
@@ -435,6 +505,9 @@ export class TypeLowerer {
         type: this.lowerType(stringIndex, `${path}{value}`, ctx, depth + 1),
       };
     }
+    // Width is charged per property, because resolving a member's type is the work the budget is
+    // there to bound.
+    ctx.expansions += 1 + properties.length;
 
     const shapeName = refName;
     if (shapeName !== undefined) ctx.active.set(type, shapeName);
@@ -531,6 +604,7 @@ export class TypeLowerer {
 
   private ref(name: string): TypeNode {
     this.referenced.add(name);
+    this.refsEmitted += 1;
     const shape = this.shapes.get(name);
     if (shape !== undefined && shape.kind === "object" && shape.id === undefined) shape.id = name;
     return { kind: "ref", name };
