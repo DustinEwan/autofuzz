@@ -1,5 +1,5 @@
 {
-  "project": "billing-fixture",
+  "project": "billing-test-target",
   "codebase": {
     "harness": "js-ts",
     "include": ["src/**/*.ts"],

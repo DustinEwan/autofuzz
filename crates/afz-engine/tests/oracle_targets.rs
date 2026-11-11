@@ -1,6 +1,6 @@
-//! Step 7 acceptance: four JavaScript fixtures, the real `js-ts` plugin, the real supervisor.
+//! Step 7 acceptance: four JavaScript test targets, the real `js-ts` plugin, the real supervisor.
 //!
-//! Each fixture is one exported function and one input that drives it down a different channel.
+//! Each target is one exported function and one input that drives it down a different channel.
 //! Nothing here is stubbed: the plugin classifies the call, the engine enforces the deadline by
 //! killing and restarting a process, and the oracles decide what becomes a finding. The expected
 //! result is the plan's own list — 0 findings, then one each of `failed`, `deadline`, and
@@ -31,8 +31,8 @@ fn harness_package() -> PathBuf {
     repo_root().join("packages/harness-js")
 }
 
-fn fixture_root() -> PathBuf {
-    harness_package().join("fixtures/oracles")
+fn target_root() -> PathBuf {
+    harness_package().join("test-targets/oracles")
 }
 
 fn launch() -> Launch {
@@ -51,14 +51,14 @@ fn launch() -> Launch {
 /// The scope every plugin process is started with, so `prepare` can resolve the ids below.
 fn discovery_req() -> DiscoverReq {
     DiscoverReq {
-        root: fixture_root().display().to_string(),
+        root: target_root().display().to_string(),
         include: Some(vec!["**/*.ts".to_string()]),
         exclude: None,
         config_path: None,
     }
 }
 
-/// The four fixture targets by exported name, which is how the test says which input belongs to
+/// The four test targets by exported name, which is how the test says which input belongs to
 /// which channel without hard-coding the ids discovery derives from the file contents.
 fn discover_targets() -> BTreeMap<String, String> {
     let launch = launch();
@@ -68,7 +68,7 @@ fn discover_targets() -> BTreeMap<String, String> {
             &discovery_req(),
             Duration::from_secs(120),
         )
-        .expect("discover the oracle fixtures");
+        .expect("discover the oracle targets");
     let mut names: Vec<&str> = discovery.targets.iter().map(|t| t.name.as_str()).collect();
     names.sort_unstable();
     assert_eq!(names, vec!["drain", "expand", "normalize", "priced"], "unexpected inventory: {names:?}");
@@ -80,7 +80,7 @@ fn job(invocation_id: u64, target_id: String, values: Vec<ValueTree>) -> Job {
 }
 
 #[test]
-fn the_four_fixtures_produce_the_four_verdicts() {
+fn the_four_targets_produce_the_four_verdicts() {
     let targets = discover_targets();
     let id = |name: &str| targets.get(name).unwrap_or_else(|| panic!("discovery reported no {name}; got {targets:?}")).clone();
 
@@ -96,7 +96,7 @@ fn the_four_fixtures_produce_the_four_verdicts() {
     let report = supervisor.run(jobs, Duration::from_secs(240));
 
     assert_eq!(report.completed.len(), 4, "every invocation must be accounted for: {:?}", report.completed.iter().map(|c| (c.invocation_id, c.outcome.kind())).collect::<Vec<_>>());
-    // The spinning fixture is stopped by the engine, which costs one plugin process.
+    // The spinning target is stopped by the engine, which costs one plugin process.
     assert!(report.restarts >= 1, "the deadline must restart a process, restarts={}", report.restarts);
 
     let engine = Oracles::new(&OraclesConfig::default());
@@ -154,7 +154,7 @@ fn the_four_fixtures_produce_the_four_verdicts() {
         Outcome::Ok(ok) => ok.memory_bytes.expect("the plugin reports a heap delta"),
         other => panic!("expected an ok outcome, got {other:?}"),
     };
-    assert!(memory > 256 * 1024 * 1024, "the fixture allocated {memory} bytes");
+    assert!(memory > 256 * 1024 * 1024, "the target allocated {memory} bytes");
     assert_eq!(oracle_names(3), vec!["memoryGrowth".to_string()]);
 
     // One finding per channel, and no oracle reporting twice.

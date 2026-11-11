@@ -1,6 +1,6 @@
 //! The oracle decision table, on outcomes built by hand.
 //!
-//! `oracle_fixtures.rs` proves the plugin produces these outcomes; this file proves what the
+//! `oracle_targets.rs` proves the plugin produces these outcomes; this file proves what the
 //! engine makes of them. Together they are Step 7: an outcome is a finding, a silence, or one of
 //! exactly four oracles, and the `via` the plugin reported decides which.
 

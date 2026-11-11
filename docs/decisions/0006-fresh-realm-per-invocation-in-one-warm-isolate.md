@@ -4,7 +4,7 @@ Status: accepted. Corrects an earlier draft of this record, which attributed the
 
 ## Context
 
-Measured on Linux x86-64 with Node 24, `invoke` of the billing fixture's `creditSummary` through an already-warm plugin process, single process, 30 sequential calls: median **90 ms**, min 88 ms, p90 92 ms. Through the engine with 8 workers the same call reports a median of 217 ms, so worker contention roughly doubles per-call cost.
+Measured on Linux x86-64 with Node 24, `invoke` of the billing test target's `creditSummary` through an already-warm plugin process, single process, 30 sequential calls: median **90 ms**, min 88 ms, p90 92 ms. Through the engine with 8 workers the same call reports a median of 217 ms, so worker contention roughly doubles per-call cost.
 
 | component | measured |
 |---|---|
@@ -18,7 +18,7 @@ Measured on Linux x86-64 with Node 24, `invoke` of the billing fixture's `credit
 | of which V8 compiling the target inside the coverage window | ~8 ms |
 | `vm.createContext` | 0.44 ms |
 | fresh realm, link and evaluate a two-module graph | 0.57 ms |
-| transpile all 12 fixture files, once | 125.5 ms |
+| transpile all 12 target files, once | 125.5 ms |
 | `child_process.fork`, child replies | 25.9 ms |
 
 The two largest per-call items are worker-thread creation (24 ms) and the coverage session (14 ms). The loader is either 3 ms in strip mode or 37 ms in tsx mode. At 90 ms single-process and roughly 2x that under 8-worker contention, the Step 10 acceptance test — 50,000 invocations, guided against random, run repeatedly — costs hours per pair, which is why the search's own behaviour could not be evaluated.
@@ -29,7 +29,7 @@ The two largest per-call items are worker-thread creation (24 ms) and the covera
 
 2. **Each invocation runs in a fresh realm inside that worker.** The harness creates a `vm.createContext` and instantiates the target's module graph with `vm.SourceTextModule`, so module-level state is reset for every call. Linking resolves `./x.js` specifiers to the cached transpiled text of `./x.ts` in the linker function; no Node module hook is registered.
 
-3. **The harness transpiles the target itself and caches the text.** Each `.ts` file in the target's import closure is transpiled once per plugin process with the `typescript` compiler, which the plugin process already loads for discovery. 125.5 ms once per fixture, then free. This removes both loader modes: strip-types and the `tsx` fallback are no longer needed on the invoke path, because the harness controls compilation. The realm is given the real source URL as its module identifier.
+3. **The harness transpiles the target itself and caches the text.** Each `.ts` file in the target's import closure is transpiled once per plugin process with the `typescript` compiler, which the plugin process already loads for discovery. 125.5 ms once per target, then free. This removes both loader modes: strip-types and the `tsx` fallback are no longer needed on the invoke path, because the harness controls compilation. The realm is given the real source URL as its module identifier.
 
 4. **Coverage uses one armed inspector window per worker, and an invocation's digest is the set of scripts that invocation first reported.** Resetting coverage around each call was implemented and rejected: a `Profiler.stopPreciseCoverage` plus `Profiler.startPreciseCoverage` cycle costs 8 to 20 ms and has to finish before the realm compiles its modules, because a script compiled while coverage is off is dropped from the report, and that put the call back at 15 ms. Starting without stopping is cheaper but asymmetric - 13 blocks reported for one input and 3 for another across alternating calls - which is broken scoping. Script identity is what makes a single window safe: every invocation instantiates its own `vm.SourceTextModule`, so every invocation compiles its own scripts, and a script is attributed to the invocation that first reports it. Measured over 600 sequential invocations: no empty digest, and the digest stable at 23 edges for the same input.
 
@@ -52,6 +52,6 @@ The two largest per-call items are worker-thread creation (24 ms) and the covera
 - **A pool of reused worker threads that cache the target module graph.** Cheapest to implement. Rejected twice over: module state persists across calls, which breaks the single-call reproducer, and the coverage trap above turns every digest after the first into an empty set.
 - **`fork` per invocation, the AFL forkserver or Android zygote shape.** Measured 25.9 ms against 24.2 ms for a worker thread, and Node's `child_process.fork` execs a new binary, so the child re-imports the target anyway. Node gives no supported way to fork a process that has already initialised V8 and libuv, so the shared-initial-state half of the pattern is unavailable; a fresh realm gives the same property inside one isolate at 0.57 ms.
 - **JavaScriptCore.** The measured cost is engine-side setup and coverage instrumentation, not interpretation of the target's code. The guide's only signal is V8's `Profiler.takePreciseCoverage` block report, and `src/classify.ts` decides guard site versus engine error from V8 parse positions. A second engine would have to replace both.
-- **Ahead-of-time compilation through V8's module compile cache.** Measured no gain: a fresh worker importing a fixture `.ts` file cost 0.6 ms cold and 0.6 ms warm with `NODE_COMPILE_CACHE` set. Compilation was never the cost.
+- **Ahead-of-time compilation through V8's module compile cache.** Measured no gain: a fresh worker importing a target `.ts` file cost 0.6 ms cold and 0.6 ms warm with `NODE_COMPILE_CACHE` set. Compilation was never the cost.
 - **Resetting precise coverage around each call.** 8 to 20 ms for the cycle, and it must complete before the realm compiles, which put the call back at 15 ms. Superseded by decision 4's script-identity scoping, which is free.
-- **Replacing `--import tsx` with `--experimental-strip-types` plus a resolve hook, or with `--experimental-transform-types`.** Measured 52.9 ms against 60.2 ms, and 57.0 ms against 59.4 ms on the enum fixture. A few milliseconds on one loader mode, and it does not touch the 24 ms of thread creation. Superseded by decision 3, which removes loader modes from the invoke path entirely.
+- **Replacing `--import tsx` with `--experimental-strip-types` plus a resolve hook, or with `--experimental-transform-types`.** Measured 52.9 ms against 60.2 ms, and 57.0 ms against 59.4 ms on the enum target. A few milliseconds on one loader mode, and it does not touch the 24 ms of thread creation. Superseded by decision 3, which removes loader modes from the invoke path entirely.

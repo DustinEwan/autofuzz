@@ -1,7 +1,7 @@
 // Step 6 acceptance, re-asserted through the realm: a target whose syntax Node's type stripping
 // refuses to run.
 //
-// `fixtures/legacy/src/kind.ts` declares an `enum`, which `--experimental-strip-types` refuses to
+// `test-targets/legacy/src/kind.ts` declares an `enum`, which `--experimental-strip-types` refuses to
 // load (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`). Discovery works because it reads the source with the
 // TypeScript compiler and never executes the module. The call must succeed anyway, and it does
 // because the harness compiles the module itself: the realm runs the emitted text, so there is no
@@ -14,10 +14,10 @@ import test from "node:test";
 
 import { packageRoot, startPlugin } from "./support/plugin.mjs";
 
-const fixtureRoot = join(packageRoot, "fixtures", "legacy");
+const targetRoot = join(packageRoot, "test-targets", "legacy");
 
 async function discover(plugin) {
-  return plugin.call("discover", { root: fixtureRoot, include: ["**/*.ts"], exclude: [] });
+  return plugin.call("discover", { root: targetRoot, include: ["**/*.ts"], exclude: [] });
 }
 
 test("discovery reads an enum-typed module without running it", async () => {

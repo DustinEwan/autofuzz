@@ -1,4 +1,4 @@
-// Currency registry and conversion for the billing fixture.
+// Currency registry and conversion for the billing test target.
 //
 // Supported currencies are a closed literal union so the ledger, invoices, and reports all
 // agree on which three-letter codes exist. Minor-unit counts follow ISO 4217.
@@ -18,7 +18,7 @@ const MINOR_UNITS: Record<string, number> = {
   BRL: 2,
 };
 
-// Reference rates against USD, good enough for a fixture ledger.
+// Reference rates against USD, good enough for a test ledger.
 const RATES_VS_USD: Record<string, number> = {
   USD: 1,
   EUR: 0.92,

@@ -10,7 +10,7 @@ import test from "node:test";
 
 import { packageRoot, startPlugin } from "./support/plugin.mjs";
 
-const fixtureRoot = join(packageRoot, "fixtures", "currency");
+const targetRoot = join(packageRoot, "test-targets", "currency");
 
 const number = (value) => ({ node: "number", value });
 const text = (value) => ({ node: "string", value });
@@ -32,10 +32,10 @@ test("handshake declares the js-ts capabilities", async () => {
   }
 });
 
-test("discover reports the fixture inventory without importing it", async () => {
+test("discover reports the target inventory without importing it", async () => {
   const plugin = startPlugin();
   try {
-    const discovery = await plugin.call("discover", { root: fixtureRoot });
+    const discovery = await plugin.call("discover", { root: targetRoot });
     assert.equal(discovery.skipped.length, 0, JSON.stringify(discovery.skipped));
     const byName = new Map(discovery.targets.map((target) => [target.name, target]));
     assert.deepEqual([...byName.keys()].sort(), ["convert", "convertBulk"]);
@@ -51,7 +51,7 @@ test("discover reports the fixture inventory without importing it", async () => 
     assert.deepEqual([...convert.parameters[1].type.values].sort(), ["EUR", "GBP", "USD"]);
     assert.deepEqual(convert.guardSites, [5]);
     assert.equal(convert.effects.throws, true);
-    assert.ok(convert.origin.file.startsWith(fixtureRoot), convert.origin.file);
+    assert.ok(convert.origin.file.startsWith(targetRoot), convert.origin.file);
     assert.equal(convert.returns.kind, "scalar");
 
     const bulk = byName.get("convertBulk");
@@ -70,7 +70,7 @@ test("discover reports the fixture inventory without importing it", async () => 
 test("prepare accepts a constructible target", async () => {
   const plugin = startPlugin();
   try {
-    const discovery = await plugin.call("discover", { root: fixtureRoot });
+    const discovery = await plugin.call("discover", { root: targetRoot });
     const convert = discovery.targets.find((target) => target.name === "convert");
     const prepared = await plugin.call("prepare", { targetId: convert.id, values: [] });
     assert.equal(prepared.ok, true);
@@ -84,7 +84,7 @@ test("prepare accepts a constructible target", async () => {
 test("a guard throw is rejected through the guard-site rule", async () => {
   const plugin = startPlugin();
   try {
-    const discovery = await plugin.call("discover", { root: fixtureRoot });
+    const discovery = await plugin.call("discover", { root: targetRoot });
     const convert = discovery.targets.find((target) => target.name === "convert");
     const outcome = await plugin.call("invoke", {
       invocationId: 1,
@@ -104,7 +104,7 @@ test("a guard throw is rejected through the guard-site rule", async () => {
 test("an accepted call returns ok with the value as a value tree", async () => {
   const plugin = startPlugin();
   try {
-    const discovery = await plugin.call("discover", { root: fixtureRoot });
+    const discovery = await plugin.call("discover", { root: targetRoot });
     const convert = discovery.targets.find((target) => target.name === "convert");
     const outcome = await plugin.call("invoke", {
       invocationId: 2,
@@ -115,8 +115,8 @@ test("an accepted call returns ok with the value as a value tree", async () => {
     });
     assert.equal(outcome.kind, "ok");
     assert.equal(outcome.value.node, "number");
-    // The fixture's table is `{ USD: 1, EUR: 0.9, GBP: 0.75 }` and `convert` divides by the
-    // target rate, so 10 USD is 11.111… EUR. Pinned rather than recomputed: a changed fixture
+    // The target's table is `{ USD: 1, EUR: 0.9, GBP: 0.75 }` and `convert` divides by the
+    // target rate, so 10 USD is 11.111… EUR. Pinned rather than recomputed: a changed target
     // must fail here instead of drifting silently under the fuzzer.
     assert.equal(outcome.value.value, 10 / 0.9);
     assert.ok(outcome.memoryBytes >= 0);
@@ -128,7 +128,7 @@ test("an accepted call returns ok with the value as a value tree", async () => {
 test("an unguarded dereference in the deep path is a failure", async () => {
   const plugin = startPlugin();
   try {
-    const discovery = await plugin.call("discover", { root: fixtureRoot });
+    const discovery = await plugin.call("discover", { root: targetRoot });
     const bulk = discovery.targets.find((target) => target.name === "convertBulk");
     const outcome = await plugin.call("invoke", {
       invocationId: 3,
@@ -150,10 +150,10 @@ test("an unguarded dereference in the deep path is a failure", async () => {
   }
 });
 
-test("coverage ids resolve through coverageMap to fixture source", async () => {
+test("coverage ids resolve through coverageMap to target source", async () => {
   const plugin = startPlugin();
   try {
-    const discovery = await plugin.call("discover", { root: fixtureRoot });
+    const discovery = await plugin.call("discover", { root: targetRoot });
     const convert = discovery.targets.find((target) => target.name === "convert");
     const invoke = (to) =>
       plugin.call("invoke", {
@@ -173,16 +173,16 @@ test("coverage ids resolve through coverageMap to fixture source", async () => {
     const map = await plugin.call("coverageMap", {});
     const byEdge = new Map(map.entries.map((entry) => [entry.edge, entry]));
     // The map names a source range rather than a function, so the check is that the range sits
-    // inside the target's own declaration in the fixture source.
-    const source = readFileSync(join(fixtureRoot, "src", "convert.ts"), "utf8");
+    // inside the target's own declaration in its source.
+    const source = readFileSync(join(targetRoot, "src", "convert.ts"), "utf8");
     const convertStart = source.indexOf("export function convert");
-    assert.ok(convertStart >= 0, "the fixture declares convert");
+    assert.ok(convertStart >= 0, "the target declares convert");
     const nextExport = source.indexOf("\nexport ", convertStart + 1);
     const convertEnd = nextExport === -1 ? source.length : nextExport;
     for (const id of good.coverage) {
       assert.ok(byEdge.has(id), `edge ${id} was reported but is not in the coverage map`);
       const entry = byEdge.get(id);
-      assert.ok(entry.url.startsWith(pathToFileURL(fixtureRoot).href), entry.url);
+      assert.ok(entry.url.startsWith(pathToFileURL(targetRoot).href), entry.url);
       assert.ok(entry.end > entry.start, JSON.stringify(entry));
       assert.ok(
         entry.start >= convertStart && entry.end <= convertEnd,

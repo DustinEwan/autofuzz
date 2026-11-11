@@ -22,7 +22,7 @@ export function balanceOf(db: Db, account: string): number {
   return total;
 }
 
-/** Reachable without the database, so the fixture still has a target the engine can fuzz. */
+/** Reachable without the database, so this target still has an entry point the engine can fuzz. */
 export function formatAmount(amount: number): string {
   return amount.toFixed(2);
 }

@@ -76,7 +76,7 @@ interface WarmWorker {
  *
  * A fresh realm per invocation is the isolation the design asks for, and V8 does not give the
  * memory back: `vm.createContext` plus `SourceTextModule` retains ~0.2 MB of the thread's heap per
- * invocation on the billing fixture, measured as heap 21 MB to 101 MB over 400 invocations with no
+ * invocation on the billing test target, measured as heap 21 MB to 101 MB over 400 invocations with no
  * plateau across 3000 realms in a bare V8 loop, and no garbage collection inside the thread can be
  * asked to fix it — a worker rejects `--expose-gc` and every heap flag in `execArgv`. The drift
  * shows up as latency too: building the realm went from 1.0 ms to 1.8 ms and the coverage report

@@ -1,4 +1,4 @@
-// Oracle fixture 4 of 4 — the `memoryGrowth` oracle.
+// Oracle test target 4 of 4 — the `memoryGrowth` oracle.
 //
 // `held` keeps every block alive, so the plugin's `heapUsed` delta around the call is the
 // allocation itself rather than something the garbage collector already reclaimed. The engine

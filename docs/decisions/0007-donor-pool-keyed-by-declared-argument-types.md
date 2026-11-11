@@ -4,7 +4,7 @@ Status: accepted, 2026-11-11.
 
 ## Context
 
-The billing fixture hides a crash behind a conjunction: `currency == "BRL"`, `kind == "credit"`,
+The billing test target hides a crash behind a conjunction: `currency == "BRL"`, `kind == "credit"`,
 `batchTags.length === 3`, a non-empty first tag, `locale` present, and `locale.region` equal to that
 first tag apart from case. Two runs of 250 000 invocations at the same seed found nothing, guided
 reaching 206 of 328 blocks and random 198 of 317.
@@ -21,7 +21,7 @@ plugin actually reports for `creditSummary`:
 So from a usable parent the bug is easy to reach: the copy-within-input operator lands on
 `locale.region` 12 800 times and the equality follows about a quarter of the time. The engine simply
 never obtained that parent, and the corpus said why. `creditSummary` is the only entry point in the
-fixture that calls `isReissue`, and it retained exactly one entry, an input that failed the admission
+target that calls `isReissue`, and it retained exactly one entry, an input that failed the admission
 test. Its siblings `creditManifest` and `exportCreditLedger` take the same `ReportRequest` and were
 the entries that got past `isCreditWindow` into `validation.ts:917`. The engine had solved the hard
 part on one entry point and could not hand it to the neighbour, because donor selection filtered
@@ -62,16 +62,16 @@ corpus entries by `target_id`.
   demonstration trivially and prove nothing about guidance.
 - **Raising the budget.** From fresh generation plus one mutation the conjunction appears twice in
   200 000 tries, so the expected wait is around 10^5 invocations on the target that needs it, or a
-  few million across the fixture's 37 entry points. That is a cost of minutes at 4.4 ms per
+  few million across the target's 37 entry points. That is a cost of minutes at 4.4 ms per
   invocation and it buys no capability.
 - **Teaching the mutator about comparisons in the target's source.** The engine does not read target
   source, and by Decision 1 that knowledge belongs to a harness that wants to provide it.
 
 ## Measured outcome
 
-Before this change, guided runs of 250,000 invocations on the billing fixture at seed
+Before this change, guided runs of 250,000 invocations on the billing test target at seed
 `0x5e3a91c4` reported no finding, reaching 206 of 328 revealed edges. With it, a guided run at the
-same seed reported the fixture's defect at invocation 3,916 of a 50,000 budget: `oracle: failed`,
+same seed reported the target's defect at invocation 3,916 of a 50,000 budget: `oracle: failed`,
 `via: engine-error-outside-declared-channel`, `TypeError: Cannot read properties of undefined
 (reading 'toUpperCase')` at `src/reports.ts:72` in `legacyCreditHeader`, reproduced from the
 minimized input.
@@ -95,6 +95,6 @@ differing only in what the transplant provenance string contains and in what the
 hashes, reached 217, 206, and 197 covered edges at 50,000 invocations on the same seed; only the
 first reported the finding. Corpus entry ids are the keys of the map the donor pool draws from, so
 anything that renumbers them re-draws the search. An acceptance test that pins one seed and one
-budget is therefore a weak instrument on a fixture whose path needs a six-condition conjunction,
+budget is therefore a weak instrument on a target whose path needs a six-condition conjunction,
 and should be read across seeds rather than as a single pass.
 

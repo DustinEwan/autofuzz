@@ -19,8 +19,8 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn fixture_root() -> PathBuf {
-    repo_root().join("packages/harness-js/fixtures/minimize")
+fn target_root() -> PathBuf {
+    repo_root().join("packages/harness-js/test-targets/minimize")
 }
 
 fn harness_package() -> PathBuf {
@@ -44,12 +44,12 @@ fn launch() -> Launch {
 }
 
 #[test]
-fn the_fixture_input_minimizes_below_200_bytes_and_still_reproduces() {
-    let input_path = fixture_root().join("order-input.json");
-    let text = std::fs::read_to_string(&input_path).expect("the committed fixture input");
-    let values: Vec<ValueTree> = serde_json::from_str(&text).expect("the fixture input is a JSON array of ValueTree");
+fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
+    let input_path = target_root().join("order-input.json");
+    let text = std::fs::read_to_string(&input_path).expect("the committed target input");
+    let values: Vec<ValueTree> = serde_json::from_str(&text).expect("the target input is a JSON array of ValueTree");
     let bytes_on_disk = text.len();
-    assert_eq!(bytes_on_disk, 1842, "the plan names the fixture input's size exactly");
+    assert_eq!(bytes_on_disk, 1842, "the plan names the target input's size exactly");
     // `bytesBefore` sums the arguments' own wire size; the file adds the two-byte JSON array
     // wrapper around them, so the two numbers differ by exactly that.
     let bytes_before: usize = values.iter().map(ValueTree::wire_bytes).sum();
@@ -60,14 +60,14 @@ fn the_fixture_input_minimizes_below_200_bytes_and_still_reproduces() {
     let discovery = client
         .discover(
             &DiscoverReq {
-                root: fixture_root().display().to_string(),
+                root: target_root().display().to_string(),
                 include: Some(vec!["**/*.ts".to_string()]),
                 exclude: None,
                 config_path: None,
             },
             Duration::from_secs(120),
         )
-        .expect("discover the minimize fixture");
+        .expect("discover the minimize target");
     let target = discovery
         .targets
         .iter()
@@ -78,7 +78,7 @@ fn the_fixture_input_minimizes_below_200_bytes_and_still_reproduces() {
     let prepared = client
         .prepare(&afz_protocol::PrepareReq { target_id: target.id.clone(), values: values.clone() }, Duration::from_secs(30))
         .expect("prepare the target");
-    assert!(matches!(prepared, afz_protocol::PrepareResp::Ok { .. }), "the fixture target must be buildable: {prepared:?}");
+    assert!(matches!(prepared, afz_protocol::PrepareResp::Ok { .. }), "the target must be buildable: {prepared:?}");
 
     let mut invoke = |args: &[ValueTree]| -> Outcome {
         client
@@ -96,7 +96,7 @@ fn the_fixture_input_minimizes_below_200_bytes_and_still_reproduces() {
     };
 
     let original = invoke(&values);
-    let fault = original.fault().expect("the fixture input must fail");
+    let fault = original.fault().expect("the target input must fail");
     assert_eq!(fault.class, "TypeError", "{original:?}");
     let top = fault.top_frame().expect("a TypeError from the target carries a frame");
     let (file, line) = (top.file.clone(), top.line);
@@ -162,7 +162,7 @@ fn minimization_refuses_a_candidate_that_changes_the_fault() {
                     class: "TypeError".to_string(),
                     message: "Cannot read properties of undefined (reading 'join')".to_string(),
                     frames: vec![afz_protocol::FaultFrame {
-                        file: "/fixture/src/order.ts".to_string(),
+                        file: "/target/src/order.ts".to_string(),
                         line: 19,
                         column: None,
                         fn_name: None,

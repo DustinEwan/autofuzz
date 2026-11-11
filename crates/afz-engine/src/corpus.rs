@@ -226,7 +226,7 @@ impl Corpus {
 /// cleanliness win and is not one. Retention requires an edge set the corpus has not produced, and
 /// two trees that differ only in provenance make the same call and therefore report the same
 /// edges, so the second is never retained and no corpus capacity is wasted: a measured 85-entry
-/// scan of the billing fixture held zero entries sharing a target and a value. `Corpus::contains`
+/// scan of the billing test target held zero entries sharing a target and a value. `Corpus::contains`
 /// is the only other reader of the address and has no callers. What the address does drive is
 /// ordering, because the corpus is keyed by it and the donor pool draws from that order, so
 /// changing it re-numbers every entry and moves the search trajectory. Treat it as frozen.

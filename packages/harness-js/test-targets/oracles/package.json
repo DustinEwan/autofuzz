@@ -1,5 +1,5 @@
 {
-  "name": "@autofuzz/fixture-legacy",
+  "name": "@autofuzz/target-oracles",
   "version": "0.0.0",
   "private": true,
   "type": "module"

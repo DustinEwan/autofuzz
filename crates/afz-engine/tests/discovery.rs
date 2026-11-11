@@ -1,7 +1,7 @@
 //! The two sides of the plugin boundary, checked against each other on a real response.
 //!
 //! `docs/schema/discovery.json` is generated from the Rust types, and the plugin is written in
-//! TypeScript against the same document. This test runs the built plugin over a fixture whose
+//! TypeScript against the same document. This test runs the built plugin over a test target whose
 //! entry points need a class the generator cannot build, and parses the response with the
 //! engine's own `Discovery` type: a field that changed shape on either side fails to deserialize
 //! here rather than in the middle of a scan.
@@ -43,7 +43,7 @@ fn launch() -> Launch {
 #[test]
 fn a_blocked_symbol_arrives_in_the_shape_the_engine_reads() {
     let request = DiscoverReq {
-        root: harness_package().join("fixtures/blocked").display().to_string(),
+        root: harness_package().join("test-targets/blocked").display().to_string(),
         include: Some(vec!["**/*.ts".to_string()]),
         exclude: None,
         config_path: None,
@@ -92,7 +92,7 @@ fn a_blocked_symbol_arrives_in_the_shape_the_engine_reads() {
     assert_eq!(blocker.type_, "Db");
     assert_eq!(blocker.path, "arguments[0]");
     let module = blocker.module.as_deref().expect("the blocker names the file that declares Db");
-    assert!(module.ends_with("fixtures/blocked/src/db.ts"), "module {module} should name the declaring file");
+    assert!(module.ends_with("test-targets/blocked/src/db.ts"), "module {module} should name the declaring file");
     assert_eq!(balance.unlocks_targets, Some(1), "postEntry shares the same missing class");
     assert_eq!(by_name("postEntry").unlocks_targets, Some(1));
 

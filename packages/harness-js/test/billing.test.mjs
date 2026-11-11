@@ -1,12 +1,12 @@
-// The billing fixture is the acceptance target for "guided finds a bug that random does
-// not", and that claim means nothing unless the hidden bug stays reachable by an input the
+// The billing test target is what the claim "guided finds a bug that random does not" is
+// measured against, and that claim means nothing unless the bug stays reachable by an input the
 // generator is allowed to build. It stopped being reachable once already, silently: the
 // admission test in `validation.ts` pinned `batchTags.length === 3` while `legacyCreditHeader`
 // read index 2, a slot that gate guarantees to fill, so no generated input could ever reach
 // the unguarded dereference and a 50 000-invocation scan simply reported nothing.
 //
-// This test pins the whole conjunction the deep path needs. If a fixture edit makes the bug
-// unreachable again it fails here in a second, instead of costing an acceptance run.
+// This test pins the whole conjunction the deep path needs. If an edit to this target makes the
+// bug unreachable again it fails here in a second, instead of costing an acceptance run.
 
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -14,7 +14,7 @@ import test from "node:test";
 
 import { packageRoot, startPlugin } from "./support/plugin.mjs";
 
-const fixtureRoot = join(packageRoot, "fixtures", "billing");
+const targetRoot = join(packageRoot, "test-targets", "billing");
 
 const literal = (value) => ({ node: "literal", value });
 const number = (value) => ({ node: "number", value });
@@ -38,9 +38,9 @@ const request = (region, firstTag = "US") =>
   ]);
 
 const summaryTarget = async (plugin) => {
-  const discovery = await plugin.call("discover", { root: fixtureRoot });
+  const discovery = await plugin.call("discover", { root: targetRoot });
   const summary = discovery.targets.find((target) => target.name === "creditSummary");
-  assert.ok(summary, "the fixture must still export creditSummary as a fuzzable target");
+  assert.ok(summary, "the target must still export creditSummary as a fuzzable entry point");
   return summary.id;
 };
 
@@ -56,7 +56,7 @@ test("a reissue reaches the legacy header and fails on the slot no gate fills", 
       collectCoverage: false,
     });
     assert.equal(outcome.kind, "failed", JSON.stringify(outcome));
-    // Not a guard site: nothing declares this throw, which is the whole point of the fixture.
+    // Not a guard site: nothing declares this throw, which is the whole point of the target.
     assert.equal(outcome.via, "engine-error-outside-declared-channel");
     assert.equal(outcome.fault.class, "TypeError");
     const top = outcome.fault.frames?.[0];

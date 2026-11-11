@@ -1,6 +1,6 @@
 // Inbound webhook handling. Events arrive as raw text and are never trusted: topic parsing
 // is a closed switch, and signature checks are a plain FNV-1a digest comparison so the
-// fixture needs no crypto dependency.
+// target needs no crypto dependency.
 
 export type WebhookKind = "invoice.paid" | "invoice.void" | "credit.issued" | "unknown";
 

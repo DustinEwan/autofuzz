@@ -853,7 +853,7 @@ fn signature_index(targets: &[TargetDescriptor]) -> HashMap<String, String> {
 /// and otherwise any entry whose declared parameter types are the same.
 ///
 /// Entry points that take the same argument types solve the same argument problem, so an input
-/// that satisfied one of them is a head start on the others. On the billing fixture that sharing
+/// that satisfied one of them is a head start on the others. On the billing test target that sharing
 /// is the difference between finding the bug and not finding it: `creditSummary` is the only entry
 /// point that calls `isReissue`, it retained a single input that failed the admission test, and
 /// the two siblings taking the same `ReportRequest` were the ones whose entries got past

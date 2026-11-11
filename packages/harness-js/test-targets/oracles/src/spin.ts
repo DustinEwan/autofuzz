@@ -1,4 +1,4 @@
-// Oracle fixture 3 of 4 — the `deadline` oracle.
+// Oracle test target 3 of 4 — the `deadline` oracle.
 //
 // `13` in the input makes the loop spin without consuming anything, so the call never returns.
 // The engine enforces `deadlineMs` itself: it stops waiting, kills that plugin process, restarts

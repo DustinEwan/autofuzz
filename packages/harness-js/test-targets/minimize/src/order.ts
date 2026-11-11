@@ -1,4 +1,4 @@
-// Step 8 fixture — the input the minimizer is measured against.
+// Step 8 test target — the input the minimizer is measured against.
 //
 // `order-input.json` beside this file is a 1842-byte order: migration noise in every field, and
 // a first line with no `labels`. Only that missing field matters, so the whole order has to

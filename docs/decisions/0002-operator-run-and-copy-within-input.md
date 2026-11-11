@@ -6,11 +6,11 @@ Amends: `docs/architecture.md` "Feedback and scheduling", which says mutation op
 
 ## Context
 
-Step 10's acceptance fixture hides a bug behind a gate with five conditions, each of which opens a
+Step 10's acceptance test target hides a bug behind a gate with five conditions, each of which opens a
 new block, and a scan that found it had to cross a sixth change that opens nothing: the crashing
 read of a nullable array slot. Three properties of the mutator as designed made that unreachable
 within the budget, measured by running the engine's real scheduler, corpus, generator, and
-mutation operators against a model of the fixture's block structure:
+mutation operators against a model of the target's block structure:
 
 - One operator per execution. A run that needs two changes to reach new coverage is discarded,
   because the intermediate earned no edge and so was never retained to be mutated again. A gate
@@ -36,7 +36,7 @@ mutation operators against a model of the fixture's block structure:
    on every application. This is AFL++'s copy-paste operator, applied to a typed tree.
 3. **The integer boundary table carries every integer below 128** alongside the existing entries.
    The band is contiguous rather than a list of notable values, so it is a rule rather than a set of
-   constants picked to suit one fixture.
+   constants picked to suit one target.
 
 ## Consequences
 
@@ -47,7 +47,7 @@ mutation operators against a model of the fixture's block structure:
   dropped whatever the run length was.
 - Determinism is untouched. Every draw comes from the scan's single seed, so `--seed` still replays
   the same invocation sequence.
-- Measured on the Step 10 fixture model: guided reached the hidden bug in 20 of 20 runs of 50000
+- Measured on the Step 10 target model: guided reached the hidden bug in 20 of 20 runs of 50000
   invocations, first arrival between 198 and 13778 invocations; before the change, 9 of 20. The
   random strategy - which never mutates, so it cannot paste - reached it in 0 of 20.
 
@@ -55,7 +55,7 @@ mutation operators against a model of the fixture's block structure:
 
 - **More corpus entries, or a bigger budget.** Both cost invocations to work around a mutator that
   cannot express the change. Rejected.
-- **A resize that jumps to a random length.** Fixes the one plateau shape this fixture showed and
+- **A resize that jumps to a random length.** Fixes the one plateau shape this target showed and
   weakens the one-step walk that makes a coverage ladder climbable. The run length already crosses
   that plateau. Rejected.
 - **Per-operator weights** (run `sibling` more often than `paste`). Unmeasured, and a weighting is a

@@ -15,10 +15,10 @@ import test from "node:test";
 
 import { packageRoot, startPlugin } from "./support/plugin.mjs";
 
-const fixtureRoot = join(packageRoot, "fixtures", "counter");
+const targetRoot = join(packageRoot, "test-targets", "counter");
 
 async function targets(plugin) {
-  const discovery = await plugin.call("discover", { root: fixtureRoot, include: ["**/*.ts"], exclude: [] });
+  const discovery = await plugin.call("discover", { root: targetRoot, include: ["**/*.ts"], exclude: [] });
   assert.equal(discovery.skipped.length, 0, JSON.stringify(discovery.skipped));
   return new Map(discovery.targets.map((target) => [target.name, target]));
 }
