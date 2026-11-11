@@ -28,7 +28,7 @@ pub enum ConfigError {
 }
 
 impl ConfigError {
-    fn msg(m: impl Into<String>) -> ConfigError {
+    pub(crate) fn msg(m: impl Into<String>) -> ConfigError {
         ConfigError::Message(m.into())
     }
 }

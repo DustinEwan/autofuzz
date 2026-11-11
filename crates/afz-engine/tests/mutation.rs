@@ -98,6 +98,73 @@ fn a_transplant_records_the_entry_it_came_from() {
     assert!(saw_transplant, "transplant never ran with a donor present");
 }
 
+/// A graft that violates the declaration tests what happens when a caller ignores the types, and
+/// the fault it reports is not the target's logic. The donor below comes from a different
+/// signature: its `region` is a number and its row items carry no `sku`, so the only places any
+/// part of it may stand are the number positions.
+#[test]
+fn a_transplant_never_violates_the_declared_type() {
+    let row = TypeNode::Object {
+        name: Some("Row".into()),
+        id: None,
+        fields: vec![
+            Field { name: "sku".into(), ty: TypeNode::string(), required: true },
+            Field { name: "qty".into(), ty: TypeNode::number(), required: true },
+        ],
+    };
+    let ty = TypeNode::Object {
+        name: Some("Report".into()),
+        id: None,
+        fields: vec![
+            Field { name: "region".into(), ty: TypeNode::string(), required: true },
+            Field { name: "rows".into(), ty: TypeNode::array(row), required: true },
+        ],
+    };
+    let donor = ValueTree::new(ValueNode::Object {
+        fields: vec![
+            ("region".into(), ValueTree::number(7.0)),
+            (
+                "rows".into(),
+                ValueTree::new(ValueNode::Array {
+                    items: vec![ValueTree::new(ValueNode::Object { fields: vec![("qty".into(), ValueTree::number(3.0))] })],
+                }),
+            ),
+        ],
+    });
+
+    let mut rng = Rng::seeded(0x51);
+    let mut saw_transplant = false;
+    for _ in 0..600 {
+        let base = generate::generate(&ty, DEFAULT_DEPTH, &mut rng);
+        let after = mutate::mutate_with_donor(&base, &ty, &mut rng, Some(&donor), "afz:t:other");
+        let ValueNode::Object { fields } = &after.node else { panic!("the root of a Report stayed no object") };
+        for (name, value) in fields {
+            match name.as_str() {
+                "region" => {
+                    assert!(matches!(value.node, ValueNode::String { .. }), "`region: string` holds {:?}", value.node);
+                }
+                "rows" => {
+                    let ValueNode::Array { items } = &value.node else { panic!("`rows` stayed no array") };
+                    for item in items {
+                        let ValueNode::Object { fields: cells } = &item.node else { panic!("a row stayed no object") };
+                        for (field, cell) in cells {
+                            let declared =
+                                matches!((field.as_str(), &cell.node), ("sku", ValueNode::String { .. }) | ("qty", ValueNode::Number { .. }));
+                            assert!(declared, "`{field}` holds {:?}, which the row type does not declare", cell.node);
+                        }
+                    }
+                }
+                other => panic!("generation invented a field {other}"),
+            }
+        }
+        saw_transplant |= after
+            .paths()
+            .iter()
+            .any(|p| matches!(p.get(&after).unwrap().provenance, Provenance::Transplanted { .. }));
+    }
+    assert!(saw_transplant, "the filter left no legal graft, so transplant can never fire");
+}
+
 #[test]
 fn toggling_an_optional_never_removes_a_required_field() {
     let ty = object_type();

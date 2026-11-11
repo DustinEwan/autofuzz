@@ -3,6 +3,7 @@
 // and the coverage mapping rather than a unit-level stand-in for them.
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
@@ -170,13 +171,23 @@ test("coverage ids resolve through coverageMap to fixture source", async () => {
     assert.equal(rejected.kind, "rejected");
 
     const map = await plugin.call("coverageMap", {});
-    const byId = new Map(map.entries.map((entry) => [entry.id, entry]));
+    const byEdge = new Map(map.entries.map((entry) => [entry.edge, entry]));
+    // The map names a source range rather than a function, so the check is that the range sits
+    // inside the target's own declaration in the fixture source.
+    const source = readFileSync(join(fixtureRoot, "src", "convert.ts"), "utf8");
+    const convertStart = source.indexOf("export function convert");
+    assert.ok(convertStart >= 0, "the fixture declares convert");
+    const nextExport = source.indexOf("\nexport ", convertStart + 1);
+    const convertEnd = nextExport === -1 ? source.length : nextExport;
     for (const id of good.coverage) {
-      assert.ok(byId.has(id), `edge ${id} was reported but is not in the coverage map`);
-      const entry = byId.get(id);
+      assert.ok(byEdge.has(id), `edge ${id} was reported but is not in the coverage map`);
+      const entry = byEdge.get(id);
       assert.ok(entry.url.startsWith(pathToFileURL(fixtureRoot).href), entry.url);
-      assert.equal(entry.function, "convert");
-      assert.ok(entry.endBlock > entry.startBlock);
+      assert.ok(entry.end > entry.start, JSON.stringify(entry));
+      assert.ok(
+        entry.start >= convertStart && entry.end <= convertEnd,
+        `${JSON.stringify(entry)} is outside the convert declaration`,
+      );
     }
     // A call that takes the guard branch covers a block the accepted call never reached.
     const guardOnly = rejected.coverage.filter((id) => !good.coverage.includes(id));

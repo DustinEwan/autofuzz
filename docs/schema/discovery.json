@@ -346,6 +346,17 @@
             "null"
           ]
         },
+        "materialization": {
+          "description": "How far the plugin got in building a call for this symbol. The scan result's\n`materializationCounts` reads it: a symbol skipped for a reason that is not about\nmaterialization carries nothing, and is listed without being counted.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Materialization"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "name": {
           "type": "string"
         },

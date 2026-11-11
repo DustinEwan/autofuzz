@@ -144,6 +144,9 @@ pub fn render(document: &ScanDocument) -> String {
                 "- Minimized input: `{}` ({} bytes, from {})\n",
                 minimized.artifact, minimized.bytes_after, minimized.bytes_before
             )),
+            None if finding.seen_before => {
+                out.push_str("- Minimized input: not shrunk again, because an earlier scan reported this identity\n")
+            }
             None => out.push_str("- Minimized input: not smaller than the original\n"),
         }
         match &finding.reproducer {

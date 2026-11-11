@@ -77,7 +77,7 @@ export function underRoot(url: string, root: string): boolean {
 export async function withCoverage<T>(
   root: string,
   run: () => Promise<T>,
-): Promise<{ value: T; entries: CoverageEntry[] }> {
+): Promise<{ value: T; entries: CoverageEntry[]; all: CoverageEntry[] }> {
   const session = new Session();
   session.connect();
   try {
@@ -89,7 +89,7 @@ export async function withCoverage<T>(
       "Profiler.takePreciseCoverage",
       {},
     );
-    return { value, entries: collectEntries(result, root) };
+    return { value, entries: collectEntries(result, root), all: allEntries(result, root) };
   } finally {
     session.post("Profiler.disable", {}, () => undefined);
     session.disconnect();
@@ -97,36 +97,46 @@ export async function withCoverage<T>(
 }
 
 /**
- * Filters V8's report down to in-root code that ran, and names each piece.
- *
- * V8 lists a function's whole range with its execution count and lists the blocks the run
- * *skipped* as nested ranges with count 0; a branch that was taken gets no range of its own.
- * The blocks that actually ran are therefore each positive range with its skipped sub-ranges
- * cut out, and every such segment is one edge. Doing the subtraction here is what makes the
- * guard branch and the accepted path report different edge sets, which is the whole point of
- * asking for block-level coverage instead of function-level.
+ * The blocks that ran: the edges one invocation's digest reports. Each is a positive range with
+ * its skipped sub-ranges cut out, so a guard branch and the path it guards report different sets.
  */
 export function collectEntries(report: V8ScriptCoverage[], root: string): CoverageEntry[] {
+  return entriesFor(report, root, executedSegments);
+}
+
+/**
+ * Every block V8 knows about in in-root code, run or not. This is what `coverageMap` answers
+ * with: its size is the reachable-edge count the scan result divides covered edges by, and each
+ * entry names the source range behind an edge id in a digest.
+ */
+export function allEntries(report: V8ScriptCoverage[], root: string): CoverageEntry[] {
+  return entriesFor(report, root, allSegments);
+}
+
+function entriesFor(
+  report: V8ScriptCoverage[],
+  root: string,
+  segmentsOf: (ranges: readonly V8Range[]) => Segment[],
+): CoverageEntry[] {
   const entries: CoverageEntry[] = [];
   const seen = new Set<number>();
   for (const script of report) {
     if (!underRoot(script.url, root)) continue;
     for (const fn of script.functions) {
-      for (const segment of executedSegments(fn.ranges)) {
+      for (const segment of segmentsOf(fn.ranges)) {
         const id = edgeId(script.url, segment.startOffset, segment.endOffset);
         if (seen.has(id)) continue;
         seen.add(id);
         entries.push({
-          id,
+          edge: id,
           url: script.url,
-          function: fn.functionName,
-          startBlock: segment.startOffset,
-          endBlock: segment.endOffset,
+          start: segment.startOffset,
+          end: segment.endOffset,
         });
       }
     }
   }
-  entries.sort((a, b) => a.id - b.id);
+  entries.sort((a, b) => a.edge - b.edge);
   return entries;
 }
 
@@ -135,7 +145,14 @@ interface Segment {
   endOffset: number;
 }
 
-/** Each range that ran, cut wherever a range inside it was skipped. */
+/**
+ * Each range that ran, cut wherever a range inside it was skipped.
+ *
+ * V8 lists a function's whole range with its execution count and lists the blocks the run
+ * *skipped* as nested ranges with count 0; a branch that was taken gets no range of its own.
+ * That is why the segment list has to subtract, and why block-level coverage is asked for rather
+ * than function-level.
+ */
 export function executedSegments(ranges: readonly V8Range[]): Segment[] {
   const skipped = ranges
     .filter((range) => range.count <= 0)
@@ -147,6 +164,36 @@ export function executedSegments(ranges: readonly V8Range[]): Segment[] {
     if (range.count <= 0) continue;
     let cursor = range.startOffset;
     for (const [start, end] of skipped) {
+      const inside = range.startOffset <= start && end <= range.endOffset;
+      const proper = start > range.startOffset || end < range.endOffset;
+      if (!inside || !proper) continue;
+      if (start > cursor) add(segments, emitted, range.startOffset, start);
+      cursor = Math.max(cursor, end);
+    }
+    if (cursor < range.endOffset) add(segments, emitted, cursor, range.endOffset);
+  }
+  return segments;
+}
+
+/** Every block of a function: the ones that ran and the ones that did not. */
+export function allSegments(ranges: readonly V8Range[]): Segment[] {
+  const blocks = [...executedSegments(ranges), ...unexecutedSegments(ranges)];
+  blocks.sort((a, b) => a.startOffset - b.startOffset || a.endOffset - b.endOffset);
+  return blocks;
+}
+
+/** Each range that never ran, cut wherever a range inside it did run. */
+export function unexecutedSegments(ranges: readonly V8Range[]): Segment[] {
+  const ran = ranges
+    .filter((range) => range.count > 0)
+    .map((range) => [range.startOffset, range.endOffset] as const)
+    .sort((a, b) => a[0] - b[0]);
+  const segments: Segment[] = [];
+  const emitted = new Set<string>();
+  for (const range of ranges) {
+    if (range.count > 0) continue;
+    let cursor = range.startOffset;
+    for (const [start, end] of ran) {
       const inside = range.startOffset <= start && end <= range.endOffset;
       const proper = start > range.startOffset || end < range.endOffset;
       if (!inside || !proper) continue;

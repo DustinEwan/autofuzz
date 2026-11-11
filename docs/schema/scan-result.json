@@ -382,6 +382,26 @@
         "materializationCounts"
       ]
     },
+    "Materialization": {
+      "description": "The honest accounting of what the tool can actually reach.",
+      "oneOf": [
+        {
+          "description": "The whole parameter graph is buildable from generated values.",
+          "type": "string",
+          "const": "constructible"
+        },
+        {
+          "description": "A user-supplied fixture can fill the gap.",
+          "type": "string",
+          "const": "fixture-required"
+        },
+        {
+          "description": "Unreachable without a live system.",
+          "type": "string",
+          "const": "opaque"
+        }
+      ]
+    },
     "MinimizedArtifact": {
       "type": "object",
       "properties": {
@@ -530,6 +550,17 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "materialization": {
+          "description": "How far the plugin got in building a call for this symbol. The scan result's\n`materializationCounts` reads it: a symbol skipped for a reason that is not about\nmaterialization carries nothing, and is listed without being counted.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Materialization"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "name": {

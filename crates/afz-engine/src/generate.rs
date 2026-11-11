@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use afz_protocol::{
     CollectionKind, CompositeKind, Field, FunctionBehavior, Kind, LengthBounds, NumberBounds,
-    RefField, ScalarKind, TypeNode, ValueNode, ValueTree,
+    Parameter, RefField, ScalarKind, TypeNode, ValueNode, ValueTree,
 };
 
 use crate::boundaries;
@@ -37,7 +37,7 @@ pub fn generate(ty: &TypeNode, depth: u32, rng: &mut Rng) -> ValueTree {
 
 /// One value per parameter. An optional parameter is omitted a third of the time, which is how
 /// a target with `undefined` handling gets exercised.
-pub fn generate_arguments(parameters: &[Field], rng: &mut Rng) -> Vec<ValueTree> {
+pub fn generate_arguments(parameters: &[Parameter], rng: &mut Rng) -> Vec<ValueTree> {
     let mut out = Vec::with_capacity(parameters.len());
     for p in parameters {
         if !p.required && !rng.chance(2, 3) {

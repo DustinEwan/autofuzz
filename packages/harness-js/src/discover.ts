@@ -422,6 +422,7 @@ function discoverCallable(
       reason,
       detail: `${materialization}: ${[...unique.keys()].join(", ")}`,
       ...(first !== undefined ? { blockedBy: first } : {}),
+      materialization,
     });
     for (const key of unique.keys()) {
       const ids = collector.blockersByKey.get(key) ?? [];

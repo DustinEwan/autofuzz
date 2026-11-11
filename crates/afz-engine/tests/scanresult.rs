@@ -84,6 +84,7 @@ fn document() -> ScanDocument {
                     path: "receiver.db".to_string(),
                 }),
                 unlocks_targets: Some(14),
+                materialization: Some(Materialization::FixtureRequired),
                 detail: Some("fixture-required: Db@src/db.ts".to_string()),
             }],
             materialization_counts: BTreeMap::from([
@@ -133,7 +134,7 @@ fn document() -> ScanDocument {
                 reproducer: Some(Artifact { artifact: scanresult::reproducer_artifact_path(FAILED_ID) }),
                 first_seen_invocation: 10412,
                 reproduced: true,
-                seen_before: false,
+                seen_before: true,
             },
             FindingRecord {
                 finding_id: DEADLINE_ID.to_string(),
@@ -155,7 +156,7 @@ fn document() -> ScanDocument {
                 reproducer: None,
                 first_seen_invocation: 158204,
                 reproduced: false,
-                seen_before: true,
+                seen_before: false,
             },
         ],
         artifacts: Artifacts {
@@ -187,8 +188,18 @@ fn files() -> ScanFiles<'static> {
             },
         ],
         corpus: vec![
-            CorpusFile { name: "00000001".to_string(), values: order_input() },
-            CorpusFile { name: "00000002".to_string(), values: vec![ValueTree::number(7.0)] },
+            CorpusFile {
+                name: "00000001".to_string(),
+                target_id: FAILED_ID.to_string(),
+                values: order_input(),
+                edges: vec![1, 2],
+            },
+            CorpusFile {
+                name: "00000002".to_string(),
+                target_id: DEADLINE_ID.to_string(),
+                values: vec![ValueTree::number(7.0)],
+                edges: vec![],
+            },
         ],
         coverage: Some("{\"edges\":8312}"),
         log: Some("invocation 1 ok\n"),
@@ -266,11 +277,12 @@ fn every_artifact_the_document_names_exists_and_round_trips() {
 
     assert_eq!(std::fs::read_to_string(dir.join("coverage.json")).expect("coverage"), "{\"edges\":8312}");
     assert_eq!(std::fs::read_to_string(dir.join("engine.log")).expect("log"), "invocation 1 ok\n");
-    let corpus: Vec<ValueTree> = serde_json::from_str(
-        &std::fs::read_to_string(dir.join(CORPUS_DIR).join("00000002.json")).expect("corpus entry"),
-    )
-    .expect("corpus entry is a value tree array");
-    assert_eq!(corpus, vec![ValueTree::number(7.0)]);
+    let resumed = scanresult::read_corpus(&dir).expect("read the corpus back for a resume");
+    let names: Vec<&str> = resumed.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, ["00000001", "00000002"], "a resume reads every entry, in name order");
+    assert_eq!(resumed[1].values, vec![ValueTree::number(7.0)]);
+    assert_eq!(resumed[0].target_id, FAILED_ID, "an entry names the target it belongs to");
+    assert_eq!(resumed[0].edges, vec![1, 2], "and the edges it earned");
 
     std::fs::remove_dir_all(&root).ok();
 }
@@ -311,7 +323,7 @@ fn markdown_prints_one_section_per_finding() {
     assert!(text.contains("src/config.ts:41:19"), "the fault frame:\n{text}");
     assert!(text.contains("stopped: budget"), "why the run ended:\n{text}");
     assert!(text.contains("41.0%"), "coverage ratio:\n{text}");
-    assert!(text.contains("Seen before"), "the second finding was reported by an earlier scan:\n{text}");
+    assert!(text.contains("Seen before"), "the failed finding was reported by an earlier scan:\n{text}");
     assert!(text.contains("`Db` in `src/db.ts`"), "the skipped target's blocker:\n{text}");
     assert!(text.contains("unlocks") && text.contains("14"), "one missing type is one task:\n{text}");
 

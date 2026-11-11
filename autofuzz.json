@@ -1,0 +1,20 @@
+{
+  "project": "autofuzz",
+  "codebase": {
+    "harness": "js-ts",
+    "include": ["**/*.ts"],
+    "exclude": ["**/node_modules/**", "**/dist/**", "**/*.d.ts"]
+  },
+  "oracles": {},
+  "budget": {
+    "invocations": 100000,
+    "wallClockMs": 900000,
+    "workers": 0,
+    "maxCorpus": 2048,
+    "strategy": "guided"
+  },
+  "output": {
+    "dir": ".autofuzz",
+    "renderers": ["json", "markdown"]
+  }
+}

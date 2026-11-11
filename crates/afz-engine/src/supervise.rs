@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use afz_protocol::{DiscoverReq, FaultSignature, InvokeReq, Outcome, ValueTree};
+use afz_protocol::{CoverageEntry, CoverageMap, DiscoverReq, EdgeId, FaultSignature, InvokeReq, Outcome, ValueTree};
 
 use crate::rpc::client::{Launch, LostReason, PluginClient};
 
@@ -147,7 +147,10 @@ impl Watchdog {
 pub struct Supervisor {
     launch: Launch,
     discovery: DiscoverReq,
-    workers: usize,
+    /// One plugin process per worker. They outlive a batch: the next batch starts against
+    /// processes that have already discovered the inventory and prepared their targets, and only
+    /// a process that has run invocations knows the target's coverage blocks.
+    workers: Vec<Worker>,
     deadline: Duration,
     watchdog: Watchdog,
 }
@@ -157,7 +160,24 @@ impl Supervisor {
     /// resolves a `targetId` only against an inventory that process discovered itself, so a
     /// restart has to discover again: the new process knows nothing.
     pub fn new(launch: Launch, workers: usize, deadline: Duration, disable_after: u64, discovery: DiscoverReq) -> Supervisor {
-        Supervisor { launch, discovery, workers: workers.max(1), deadline, watchdog: Watchdog::new(disable_after) }
+        let pool = (0..workers.max(1)).map(|index| Worker::spawn(index, &launch, &discovery)).collect();
+        Supervisor { launch, discovery, workers: pool, deadline, watchdog: Watchdog::new(disable_after) }
+    }
+
+    /// The blocks every worker has reported, unioned. Only a process that has run an invocation
+    /// knows a module's blocks, and each worker has loaded only the modules of the targets it ran,
+    /// so the reachable set of the run is the pool's union. The engine's own plugin client only
+    /// prepares and minimizes without collecting coverage, so it is not asked.
+    pub fn coverage_map(&self, timeout: Duration) -> Option<CoverageMap> {
+        let mut entries: BTreeMap<EdgeId, CoverageEntry> = BTreeMap::new();
+        for worker in &self.workers {
+            if let Some(map) = worker.coverage_map(timeout) {
+                for entry in map.entries {
+                    entries.entry(entry.edge).or_insert(entry);
+                }
+            }
+        }
+        (!entries.is_empty()).then(|| CoverageMap { entries: entries.into_values().collect() })
     }
 
     pub fn watchdog(&self) -> &Watchdog {
@@ -177,30 +197,51 @@ impl Supervisor {
         // and it comes back to `self` when the last thread finishes.
         let watchdog = Arc::new(Mutex::new(self.watchdog.clone()));
 
-        let mut threads = Vec::with_capacity(self.workers);
-        for index in 0..self.workers {
+        let deadline = self.deadline;
+        // Each thread borrows one worker for the batch and hands it back afterwards, so the pool
+        // outlives the batch. The slot is behind a lock because a thread can panic on a bad job.
+        let slots: Vec<Arc<Mutex<Option<Worker>>>> =
+            self.workers.drain(..).map(|worker| Arc::new(Mutex::new(Some(worker)))).collect();
+        let mut threads = Vec::with_capacity(slots.len());
+        for (index, slot) in slots.iter().enumerate() {
             let queue = Arc::clone(&queue);
             let results = Arc::clone(&results);
             let watchdog = Arc::clone(&watchdog);
-            let launch = self.launch.clone();
-            let deadline = self.deadline;
-            let discovery = self.discovery.clone();
+            let slot = Arc::clone(slot);
             threads.push(
                 std::thread::Builder::new()
                     .name(format!("afz-worker-{index}"))
                     .spawn(move || {
-                        let mut worker = Worker::spawn(index, &launch, &discovery);
+                        let Some(mut worker) = slot.lock().expect("worker slot lock").take() else { return };
                         loop {
                             // Leave room for one more deadline, so a run stops on its budget
                             // rather than on the last invocation that happened to start.
                             if started.elapsed() + deadline >= budget {
-                                return;
+                                break;
                             }
-                            let Some(job) = Self::take(&queue, &watchdog) else { return };
-                            let completed = worker.invoke(job, deadline, &mut watchdog.lock().expect("watchdog lock"));
-
-                            results.lock().expect("results lock").push(completed);
+                            let Some(job) = Self::take(&queue, &watchdog) else { break };
+                            // The plugin call runs with no lock held. The watchdog is shared by
+                            // the whole pool, and a guard across a call that can wait out a
+                            // deadline would run every worker one invocation at a time.
+                            let (event, watch) = worker.invoke(job, deadline);
+                            {
+                                let mut guard = watchdog.lock().expect("watchdog lock");
+                                match watch {
+                                    Watch::Answered(target) => guard.note_answered(&target),
+                                    Watch::Restarted(target) => {
+                                        if guard.note_restart(&target) {
+                                            eprintln!(
+                                                "afz: target {target} disabled after {} consecutive restarts",
+                                                guard.streak(&target)
+                                            );
+                                        }
+                                    }
+                                    Watch::Nothing => {}
+                                }
+                            }
+                            results.lock().expect("results lock").push(event);
                         }
+                        *slot.lock().expect("worker slot lock") = Some(worker);
                     })
                     .expect("spawn worker"),
             );
@@ -209,6 +250,21 @@ impl Supervisor {
         for thread in threads {
             let _ = thread.join();
         }
+
+        // Hand the pool back. A thread that panicked never returned its worker, so that slot is
+        // refilled with a fresh process and the next batch still runs at the full worker count.
+        self.workers = slots
+            .into_iter()
+            .enumerate()
+            .map(|(index, slot)| {
+                // A panicked thread leaves its slot poisoned as well as empty, and a poisoned
+                // mutex cannot yield the process inside it, so both cases start a fresh one.
+                Arc::into_inner(slot)
+                    .and_then(|slot| slot.into_inner().ok())
+                    .flatten()
+                    .unwrap_or_else(|| Worker::spawn(index, &self.launch, &self.discovery))
+            })
+            .collect();
 
         self.watchdog = Arc::try_unwrap(watchdog).expect("watchdog still shared").into_inner().expect("watchdog lock");
         let events = Arc::try_unwrap(results).expect("results still shared").into_inner().expect("results lock");
@@ -286,6 +342,14 @@ impl Worker {
         self.restarts
     }
 
+    /// The coverage blocks this process has reported, or nothing when it has not run an
+    /// invocation. V8 lists a function's blocks only once that function has run under coverage,
+    /// so a process that has only discovered and prepared answers with an empty table.
+    pub fn coverage_map(&self, timeout: Duration) -> Option<CoverageMap> {
+        let client = self.client.as_ref()?;
+        client.coverage_map(timeout).ok().filter(|map| !map.entries.is_empty())
+    }
+
     /// The process is gone or was never startable; bring up a fresh one and forget what it had
     /// prepared, because the new process has prepared nothing.
     fn restart(&mut self) {
@@ -300,8 +364,9 @@ impl Worker {
     /// Run one invocation and classify whatever came back.
     ///
     /// The plugin call happens while `self` is borrowed immutably, so the attempt is collected
-    /// first and the restart that follows it runs on a free `self`.
-    fn invoke(&mut self, job: Job, deadline: Duration, watchdog: &mut Watchdog) -> Event {
+    /// first and the restart that follows it runs on a free `self`. What the attempt means for
+    /// the shared watchdog comes back as a `Watch` for the caller to apply under the lock.
+    fn invoke(&mut self, job: Job, deadline: Duration) -> (Event, Watch) {
         let attempt = match self.client.as_ref() {
             None => Attempt::Absent,
             Some(client) => {
@@ -314,12 +379,15 @@ impl Worker {
                         Ok(afz_protocol::PrepareResp::Ok { .. }) => {}
                         Ok(afz_protocol::PrepareResp::Skip { reason }) => {
                             self.prepared.remove(&job.target_id);
-                            return Event::Unbuildable {
-                                invocation_id: job.invocation_id,
-                                unbuildable: Unbuildable { target_id: job.target_id, reason },
-                            };
+                            return (
+                                Event::Unbuildable {
+                                    invocation_id: job.invocation_id,
+                                    unbuildable: Unbuildable { target_id: job.target_id, reason },
+                                },
+                                Watch::Nothing,
+                            );
                         }
-                        Err(reason) => return self.classify_loss(job, LostReason::Spawn(format!("prepare: {}", reason.detail())), watchdog),
+                        Err(reason) => return self.classify_loss(job, LostReason::Spawn(format!("prepare: {}", reason.detail()))),
                     }
                 }
                 match client.invoke(&Completed::request_for(&job, deadline), deadline) {
@@ -331,24 +399,28 @@ impl Worker {
 
         match attempt {
             Attempt::Answered(outcome) => {
-                watchdog.note_answered(&job.target_id);
-                Event::Ran(Completed {
-                    invocation_id: job.invocation_id,
-                    target_id: job.target_id,
-                    outcome,
-                    restart: None,
-                })
+                let target_id = job.target_id;
+                (
+                    Event::Ran(Completed {
+                        invocation_id: job.invocation_id,
+                        target_id: target_id.clone(),
+                        outcome,
+                        restart: None,
+                    }),
+                    Watch::Answered(target_id),
+                )
             }
-            Attempt::Lost(reason) => self.classify_loss(job, reason, watchdog),
+            Attempt::Lost(reason) => self.classify_loss(job, reason),
             // The process is gone or was never startable. That is a process exit as far as the
             // scan is concerned, and the next invocation gets a fresh process.
-            Attempt::Absent => self.classify_loss(job, LostReason::Spawn("plugin is not running".to_string()), watchdog),
+            Attempt::Absent => self.classify_loss(job, LostReason::Spawn("plugin is not running".to_string())),
         }
     }
 
-    /// Turn a call that got no answer into the finding the design names, restart the process,
-    /// and account for the restart against the target that was running.
-    fn classify_loss(&mut self, job: Job, reason: LostReason, watchdog: &mut Watchdog) -> Event {
+    /// Turn a call that got no answer into the finding the design names and restart the process.
+    /// Accounting the restart against the target is the caller's, because the watchdog belongs to
+    /// the pool and only the caller can hold it while the plugin call is in flight.
+    fn classify_loss(&mut self, job: Job, reason: LostReason) -> (Event, Watch) {
         let outcome = match &reason {
             // The engine waited for the answer until the deadline and none arrived.
             LostReason::NoAnswer => engine_fault("deadline", "Deadline", reason.detail()),
@@ -357,17 +429,27 @@ impl Worker {
             other => engine_fault(other.via(), "PluginLost", other.detail()),
         };
         self.restart();
-        let disabled = watchdog.note_restart(&job.target_id);
-        if disabled {
-            eprintln!("afz: target {} disabled after {} consecutive restarts", job.target_id, watchdog.streak(&job.target_id));
-        }
-        Event::Ran(Completed {
-            invocation_id: job.invocation_id,
-            target_id: job.target_id,
-            outcome,
-            restart: Some(Restart { worker: self.index, reason }),
-        })
+        let target_id = job.target_id;
+        (
+            Event::Ran(Completed {
+                invocation_id: job.invocation_id,
+                target_id: target_id.clone(),
+                outcome,
+                restart: Some(Restart { worker: self.index, reason }),
+            }),
+            Watch::Restarted(target_id),
+        )
     }
+}
+
+/// What one attempt tells the pool's watchdog.
+enum Watch {
+    /// The target answered, so its losing streak is over.
+    Answered(String),
+    /// The process was lost and restarted while this target was running.
+    Restarted(String),
+    /// Nothing happened that the watchdog counts.
+    Nothing,
 }
 
 /// What one plugin process did with an attempt, before the engine classifies it.

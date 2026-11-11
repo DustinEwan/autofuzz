@@ -253,6 +253,11 @@ export interface SkippedTarget {
   blockedBy?: Blocker;
   /** Entry points that share that blocker, so one missing type reads as one task. */
   unlocksTargets?: number;
+  /**
+   * How far this plugin got in building a call. Present when the skip is about materialization,
+   * absent when it is about something else, such as a signature this plugin cannot call.
+   */
+  materialization?: Materialization;
 }
 
 export interface Discovery {
@@ -312,12 +317,11 @@ export type Outcome = OkOutcome | RejectedOutcome | FailedOutcome;
 // ---------------------------------------------------------------- coverage
 
 export interface CoverageEntry {
-  /** `fnv1a64(url) ^ (startBlock << 1) ^ (endBlock << 1)`, folded to u32. */
-  id: number;
+  /** `fnv1a64(url) ^ (start << 1) ^ (end << 1)`, folded to u32. */
+  edge: number;
   url: string;
-  function: string;
-  startBlock: number;
-  endBlock: number;
+  start: number;
+  end: number;
 }
 
 export interface CoverageMap {

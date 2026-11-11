@@ -20,7 +20,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use afz_protocol::{Capability, Materialization, SkippedTarget, TargetClass, ValueTree};
+use afz_protocol::{Capability, EdgeId, Materialization, SkippedTarget, TargetClass, ValueTree};
 
 use crate::config::Severity;
 
@@ -234,11 +234,20 @@ pub struct MinimizedInput {
     pub bytes_after: usize,
 }
 
-/// One corpus entry, written so a later scan can replay the same inputs.
-#[derive(Debug, Clone)]
+/// One corpus entry, written so a later scan can replay it.
+///
+/// The file names the target and the edge set beside the values, because a resumed scan needs
+/// both: an input is only useful when the engine knows which target it belongs to and which edges
+/// it earned, and rediscovering that by re-running every retained entry would spend a scan's
+/// whole budget before the first new invocation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CorpusFile {
+    /// The file stem beside `corpus/`, normally the corpus entry's own id.
     pub name: String,
+    pub target_id: String,
     pub values: Vec<ValueTree>,
+    pub edges: Vec<EdgeId>,
 }
 
 /// Everything the document points at.
@@ -304,7 +313,7 @@ pub fn write(out_dir: &Path, document: &ScanDocument, files: &ScanFiles<'_>) -> 
     }
 
     for entry in &files.corpus {
-        write_json(&dir.join(CORPUS_DIR).join(format!("{}.json", entry.name)), &entry.values)?;
+        write_json(&dir.join(CORPUS_DIR).join(format!("{}.json", artifact_stem(&entry.name))), entry)?;
     }
     if let Some(coverage) = files.coverage {
         std::fs::write(dir.join("coverage.json"), coverage)?;
@@ -353,4 +362,39 @@ fn unique_dir(out_dir: &Path, scan_id: &str) -> io::Result<PathBuf> {
         }
     }
     unreachable!("the suffix loop always returns")
+}
+
+/// Read the corpus a previous scan left behind, oldest name first. Entries the file cannot be
+/// read as are reported rather than skipped: a resumed scan that silently lost half its corpus
+/// would look like a scan that found less.
+pub fn read_corpus(scan_dir: &Path) -> io::Result<Vec<CorpusFile>> {
+    let dir = scan_dir.join(CORPUS_DIR);
+    if !dir.is_dir() {
+        return Err(io::Error::new(io::ErrorKind::NotFound, format!("no {} under {}", CORPUS_DIR, scan_dir.display())));
+    }
+    let mut names: Vec<PathBuf> = std::fs::read_dir(&dir)?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|e| e == "json"))
+        .collect();
+    names.sort();
+    let mut loaded = Vec::with_capacity(names.len());
+    for path in names {
+        let text = std::fs::read_to_string(&path)?;
+        let entry: CorpusFile = serde_json::from_str(&text)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", path.display())))?;
+        loaded.push(entry);
+    }
+    Ok(loaded)
+}
+
+/// Make a path safe to publish: the scan result reports paths relative to the scan root, so the
+/// same directory read on another machine says the same thing.
+pub fn relativize(root: &str, path: &str) -> String {
+    let trimmed = path.trim_start_matches("file://");
+    let root = root.trim_end_matches('/');
+    match trimmed.strip_prefix(root) {
+        Some(rest) => rest.trim_start_matches('/').to_string(),
+        None => trimmed.to_string(),
+    }
 }

@@ -35,6 +35,12 @@ import {
 import { isCallable, isConstructable, isRecord, type Callable } from "./guards.js";
 
 export const LOAD_UNSUPPORTED_TYPESCRIPT_SYNTAX = "unsupported-typescript-syntax";
+/**
+ * A specifier type-stripping cannot resolve, such as `./ledger.js` written next to `ledger.ts` —
+ * the NodeNext convention most TypeScript projects use. `tsx` resolves it, so the server retries
+ * the module under that loader instead of reporting the target as unbuildable.
+ */
+export const LOAD_MODULE_NOT_FOUND = "module-not-found";
 export const LOAD_FAILED = "load-failed";
 
 export interface WorkerJob {
@@ -52,7 +58,7 @@ export interface WorkerJob {
 
 export type WorkerReply =
   | { type: "prepared"; state: PrepareResp }
-  | { type: "outcome"; outcome: Outcome; entries: CoverageEntry[] }
+  | { type: "outcome"; outcome: Outcome; entries: CoverageEntry[]; reachable: CoverageEntry[] }
   | { type: "load-error"; code: string; message: string };
 
 interface Resolved {
@@ -117,12 +123,9 @@ function resolveCallable(mod: Record<string, unknown>, name: string): Resolved {
 }
 
 function loadFailureCode(error: unknown): string {
-  if (
-    error instanceof Error &&
-    "code" in error &&
-    error.code === "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX"
-  ) {
-    return LOAD_UNSUPPORTED_TYPESCRIPT_SYNTAX;
+  if (error instanceof Error && "code" in error && typeof error.code === "string") {
+    if (error.code === "ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX") return LOAD_UNSUPPORTED_TYPESCRIPT_SYNTAX;
+    if (error.code === "ERR_MODULE_NOT_FOUND") return LOAD_MODULE_NOT_FOUND;
   }
   return LOAD_FAILED;
 }
@@ -242,6 +245,7 @@ async function run(job: WorkerJob): Promise<void> {
         type: "outcome",
         outcome: failed(0, "resolve-failed", signature),
         entries: [],
+        reachable: [],
       });
     }
     return;
@@ -303,11 +307,11 @@ async function run(job: WorkerJob): Promise<void> {
   };
 
   if (!job.collectCoverage) {
-    send({ type: "outcome", outcome: await body(), entries: [] });
+    send({ type: "outcome", outcome: await body(), entries: [], reachable: [] });
     return;
   }
-  const { value: outcome, entries } = await withCoverage(job.root, body);
-  send({ type: "outcome", outcome, entries });
+  const { value: outcome, entries, all } = await withCoverage(job.root, body);
+  send({ type: "outcome", outcome, entries, reachable: all });
 }
 
 /**
@@ -318,6 +322,7 @@ process.on("unhandledRejection", (reason) => {
   send({
     type: "outcome",
     entries: [],
+    reachable: [],
     outcome: failed(0, VIA_UNHANDLED_REJECTION, failureWithCause(VIA_UNHANDLED_REJECTION, String(reason))),
   });
 });

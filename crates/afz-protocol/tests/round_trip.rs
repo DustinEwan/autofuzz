@@ -442,6 +442,7 @@ fn skipped_target_round_trips_with_blocker() {
             path: "receiver.db".into(),
         }),
         unlocks_targets: Some(14),
+        materialization: Some(Materialization::FixtureRequired),
         detail: None,
     };
     let back = round_trip(&s);
@@ -474,6 +475,7 @@ fn discovery_and_coverage_map_round_trip() {
             reason: SkipReason::NotPublic,
             blocked_by: None,
             unlocks_targets: None,
+            materialization: None,
             detail: Some("not exported".into()),
         }],
     };

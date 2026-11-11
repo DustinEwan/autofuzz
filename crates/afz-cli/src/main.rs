@@ -1,6 +1,9 @@
 //! The `afz` command.
 
 mod probe;
+mod scan;
+
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
@@ -31,12 +34,41 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Run a coverage-guided scan and write the scan result.
+    Scan {
+        /// Directory to scan. Defaults to the scan project's own root.
+        path: Option<String>,
+        /// Scan project file. Defaults to the nearest autofuzz.json above the scan root.
+        #[arg(long)]
+        config: Option<PathBuf>,
+        /// Budget limits, repeated or comma-separated: `invocations=50000`, `wall=90s`.
+        #[arg(long, value_delimiter = ',')]
+        budget: Vec<String>,
+        /// Seed for every random choice the scan makes, so a rerun replays.
+        #[arg(long)]
+        seed: Option<String>,
+        /// A previous scan directory: its corpus is reloaded and its findings suppressed.
+        #[arg(long)]
+        resume: Option<PathBuf>,
+        /// `guided` steers with coverage; `random` generates without the corpus.
+        #[arg(long)]
+        strategy: Option<String>,
+        /// Plugin processes to run at once. Overrides `budget.workers`.
+        #[arg(long)]
+        workers: Option<u32>,
+        /// Print only the summary, not the coverage samples.
+        #[arg(long, short)]
+        quiet: bool,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::ProbePlugin { command, path, json } => probe::run(command, path, json),
+        Command::Scan { path, config, budget, seed, resume, strategy, workers, quiet } => {
+            scan::run(path, config, &budget, seed, resume, strategy, workers, quiet)
+        }
     };
     match result {
         Ok(()) => {}

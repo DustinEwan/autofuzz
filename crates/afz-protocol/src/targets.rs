@@ -16,6 +16,16 @@ pub enum TargetClass {
     Runtime,
 }
 
+impl TargetClass {
+    /// The kebab-case spelling this enum serializes to, for log lines.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TargetClass::DesignTime => "design-time",
+            TargetClass::Runtime => "runtime",
+        }
+    }
+}
+
 /// What a plugin declares at handshake. The engine adapts instead of assuming, and an
 /// absent capability has a defined absent behavior.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -151,6 +161,20 @@ pub enum SkipReason {
     TargetDisabled,
 }
 
+impl SkipReason {
+    /// The kebab-case spelling this enum serializes to, for log lines.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SkipReason::UnconstructibleParameter => "unconstructible-parameter",
+            SkipReason::DiscoveryError => "discovery-error",
+            SkipReason::NotPublic => "not-public",
+            SkipReason::Excluded => "excluded",
+            SkipReason::UnsupportedSignature => "unsupported-signature",
+            SkipReason::TargetDisabled => "target-disabled",
+        }
+    }
+}
+
 /// The type that blocks a target, and where it sits.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -174,6 +198,11 @@ pub struct SkippedTarget {
     /// Entry points that share the blocker, which turns one missing type into one task.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unlocks_targets: Option<u32>,
+    /// How far the plugin got in building a call for this symbol. The scan result's
+    /// `materializationCounts` reads it: a symbol skipped for a reason that is not about
+    /// materialization carries nothing, and is listed without being counted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub materialization: Option<Materialization>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }

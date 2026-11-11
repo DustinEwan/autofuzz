@@ -6,6 +6,7 @@
 // `ok`, `rejected`, or `failed`, and lets the engine apply the oracles.
 
 import { createInterface } from "node:readline";
+import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -48,7 +49,21 @@ import {
 } from "./classify.js";
 import { isRecord } from "./guards.js";
 import { discover } from "./discover.js";
-import { LOAD_UNSUPPORTED_TYPESCRIPT_SYNTAX, type WorkerJob, type WorkerReply } from "./invoke.js";
+import { LOAD_MODULE_NOT_FOUND, LOAD_UNSUPPORTED_TYPESCRIPT_SYNTAX, type WorkerJob, type WorkerReply } from "./invoke.js";
+
+/**
+ * Load failures that say the loader is wrong rather than the target unreachable. `tsx` is a
+ * full TypeScript loader, so it accepts `enum` and namespace syntax and resolves a `./x.js`
+ * specifier that names an `x.ts` file; a failure after the retry is the target's, not the loader's.
+ */
+const LOADER_RETRY_CODES = new Set<string>([LOAD_UNSUPPORTED_TYPESCRIPT_SYNTAX, LOAD_MODULE_NOT_FOUND]);
+
+/**
+ * The `tsx` entry resolved against this package rather than by name. A worker thread resolves
+ * `--import` from the working directory, and the engine starts this plugin from the scan
+ * project's directory, where a bare `tsx` would not be found.
+ */
+const TSX_ENTRY = createRequire(import.meta.url).resolve("tsx");
 
 export const HARNESS_NAME = "js-ts";
 export const HARNESS_VERSION = "0.1.0";
@@ -74,13 +89,17 @@ function runJob(job: WorkerJob, mode: LoaderMode): Promise<RunResult> {
     workerData: job,
     // The flag is per thread: the plugin process stays a plain Node process, and only the
     // thread that imports the target needs a TypeScript loader. `tsx` is the fallback for
-    // syntax that strip-only mode rejects, such as `enum` or a namespace.
-    execArgv: mode === "tsx" ? ["--import", "tsx"] : ["--experimental-strip-types"],
+    // syntax strip-only mode rejects and for a `./x.js` specifier that names `x.ts`.
+    execArgv: mode === "tsx" ? ["--import", TSX_ENTRY] : ["--experimental-strip-types"],
   });
   let settled = false;
   const finish = (result: RunResult): void => {
     if (settled) return;
     settled = true;
+    // A worker thread outlives its reply unless it is terminated: it keeps its isolate, its
+    // module registry and its inspector session, so every invocation would add another live
+    // thread to the process and the next invocation would cost more than the last.
+    void worker.terminate().catch(() => undefined);
     resolve(result);
   };
   worker.once("message", (reply: WorkerReply) => finish({ reply, exitCode: 0, error: null }));
@@ -169,7 +188,7 @@ export class Harness {
     const mode = this.loaderModes.get(job.moduleUrl) ?? "strip";
     const first = await runJob(job, mode);
     const loadError = first.reply?.type === "load-error" ? first.reply : null;
-    if (mode === "strip" && loadError?.code === LOAD_UNSUPPORTED_TYPESCRIPT_SYNTAX) {
+    if (mode === "strip" && loadError !== null && LOADER_RETRY_CODES.has(loadError.code)) {
       this.loaderModes.set(job.moduleUrl, "tsx");
       const retry = await runJob(job, "tsx");
       if (retry.reply?.type === "load-error") {
@@ -200,8 +219,11 @@ export class Harness {
       this.job(target, req.values, "invoke", req.collectCoverage),
     );
     if (result.reply?.type === "outcome") {
-      for (const entry of result.reply.entries) this.edges.set(entry.id, entry);
-      const coverage = result.reply.entries.map((entry) => entry.id);
+      // `reachable` is the whole block table of the modules this process has loaded, a superset
+      // of the blocks this call hit; the map answers with all of it, so the engine can divide by
+      // the edges that exist rather than only the ones already seen.
+      for (const entry of result.reply.reachable) this.edges.set(entry.edge, entry);
+      const coverage = result.reply.entries.map((entry) => entry.edge);
       const outcome = result.reply.outcome;
       if (req.collectCoverage) outcome.coverage = coverage;
       return outcome;
@@ -229,7 +251,7 @@ export class Harness {
   }
 
   coverageMap(): { entries: CoverageEntry[] } {
-    const entries = [...this.edges.values()].sort((a, b) => a.id - b.id);
+    const entries = [...this.edges.values()].sort((a, b) => a.edge - b.edge);
     return { entries };
   }
 }

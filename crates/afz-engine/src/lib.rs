@@ -15,5 +15,6 @@ pub mod oracles;
 pub mod report;
 pub mod rng;
 pub mod rpc;
+pub mod scan;
 pub mod schedule;
 pub mod supervise;

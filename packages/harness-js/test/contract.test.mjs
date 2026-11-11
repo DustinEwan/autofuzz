@@ -7,9 +7,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 
+import * as coverage from "../dist/coverage.js";
 import * as wire from "../dist/protocol.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -140,4 +141,31 @@ test("framing returns complete lines and keeps the partial tail", () => {
   assert.deepEqual(framer.push('}\n{"id":3}\n'), ['{"id":2}', '{"id":3}']);
   assert.deepEqual(framer.push('{"id":4'), []);
   assert.deepEqual(framer.push('}\n'), ['{"id":4}']);
+});
+
+test("a coverage map entry carries the fields the generated schema requires", () => {
+  const spec = schema("coverage-map.json").$defs.CoverageEntry;
+  const root = join(packageRoot, "src");
+  const report = [
+    {
+      url: pathToFileURL(join(root, "probe.ts")).href,
+      functions: [
+        {
+          functionName: "probe",
+          ranges: [
+            { startOffset: 0, endOffset: 40, count: 1 },
+            { startOffset: 10, endOffset: 20, count: 0 },
+          ],
+        },
+      ],
+    },
+  ];
+  // Both tables the engine reads: the blocks one invocation hit, and every block of the modules
+  // it loaded. The Rust struct has no optional fields, so `required` is the whole entry.
+  for (const built of [coverage.collectEntries(report, root), coverage.allEntries(report, root)]) {
+    assert.ok(built.length > 0, "the synthetic V8 report yields blocks");
+    for (const entry of built) {
+      assert.deepEqual(sorted(Object.keys(entry)), sorted(spec.required), JSON.stringify(entry));
+    }
+  }
 });

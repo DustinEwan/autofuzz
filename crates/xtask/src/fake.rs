@@ -252,6 +252,7 @@ pub fn inventory() -> Discovery {
                     path: "receiver.db".to_string(),
                 }),
                 unlocks_targets: Some(14),
+                materialization: Some(Materialization::FixtureRequired),
                 detail: None,
             },
             SkippedTarget {
@@ -264,6 +265,7 @@ pub fn inventory() -> Discovery {
                     path: "parameters[0]".to_string(),
                 }),
                 unlocks_targets: Some(1),
+                materialization: Some(Materialization::FixtureRequired),
                 detail: None,
             },
             SkippedTarget {
@@ -272,6 +274,7 @@ pub fn inventory() -> Discovery {
                 reason: SkipReason::DiscoveryError,
                 blocked_by: None,
                 unlocks_targets: None,
+                materialization: None,
                 detail: Some("syntax error at src/broken.ts:2".to_string()),
             },
             SkippedTarget {
@@ -280,6 +283,7 @@ pub fn inventory() -> Discovery {
                 reason: SkipReason::NotPublic,
                 blocked_by: None,
                 unlocks_targets: None,
+                materialization: None,
                 detail: None,
             },
             SkippedTarget {
@@ -288,6 +292,7 @@ pub fn inventory() -> Discovery {
                 reason: SkipReason::Excluded,
                 blocked_by: None,
                 unlocks_targets: None,
+                materialization: None,
                 detail: None,
             },
             SkippedTarget {
@@ -296,6 +301,7 @@ pub fn inventory() -> Discovery {
                 reason: SkipReason::UnsupportedSignature,
                 blocked_by: None,
                 unlocks_targets: None,
+                materialization: None,
                 detail: Some("rest parameter with no declared element type".to_string()),
             },
             SkippedTarget {
@@ -304,6 +310,7 @@ pub fn inventory() -> Discovery {
                 reason: SkipReason::TargetDisabled,
                 blocked_by: None,
                 unlocks_targets: None,
+                materialization: None,
                 detail: Some("50 consecutive plugin losses".to_string()),
             },
         ],
