@@ -162,15 +162,35 @@ fn boundary_for(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<(Value
     }
 }
 
+/// The length ceiling a resize may cross when the declared type states no maximum. Without it,
+/// repeated growth produces an artifact no plugin could materialize.
+const ABSOLUTE_MAX: u64 = 256;
+
 fn resize(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<ValueNode> {
-    let grow = rng.chance(1, 2);
+    let (min, max) = declared_length(ty);
     match node {
-        ValueNode::Array { items } => Some(ValueNode::Array { items: resize_items(items, grow, rng) }),
-        ValueNode::Set { items } => Some(ValueNode::Set { items: resize_items(items, grow, rng) }),
-        ValueNode::Stream { iterable, items } => Some(ValueNode::Stream { iterable: *iterable, items: resize_items(items, grow, rng) }),
+        ValueNode::Array { items } => {
+            let len = step(items.len() as u64, min, max, rng)?;
+            let mut items = items.clone();
+            resize_to(&mut items, len, rng);
+            Some(ValueNode::Array { items })
+        }
+        ValueNode::Set { items } => {
+            let len = step(items.len() as u64, min, max, rng)?;
+            let mut items = items.clone();
+            resize_to(&mut items, len, rng);
+            Some(ValueNode::Set { items })
+        }
+        ValueNode::Stream { iterable, items } => {
+            let len = step(items.len() as u64, min, max, rng)?;
+            let mut items = items.clone();
+            resize_to(&mut items, len, rng);
+            Some(ValueNode::Stream { iterable: *iterable, items })
+        }
         ValueNode::Map { entries } => {
+            let len = step(entries.len() as u64, min, max, rng)?;
             let mut entries = entries.clone();
-            if entries.is_empty() || (grow && !entries.is_empty()) {
+            if entries.len() < len {
                 let (k, v) = entries.last().cloned().unwrap_or_else(|| (ValueTree::string("k"), ValueTree::null()));
                 entries.push((k, v));
             } else {
@@ -179,9 +199,9 @@ fn resize(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<ValueNode> {
             Some(ValueNode::Map { entries })
         }
         ValueNode::Buffer { bytes } => {
+            let len = step(bytes.len() as u64, min, max, rng)?;
             let mut bytes = bytes.clone();
-            // An empty buffer has nothing to remove, so the first byte arrives on either draw.
-            if bytes.is_empty() || grow {
+            if bytes.len() < len {
                 bytes.push(rng.next_u32() as u8);
             } else {
                 bytes.remove(rng.below(bytes.len() as u64) as usize);
@@ -204,15 +224,41 @@ fn resize(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<ValueNode> {
     }
 }
 
-fn resize_items(items: &[ValueTree], grow: bool, rng: &mut Rng) -> Vec<ValueTree> {
-    let mut items = items.to_vec();
-    if items.is_empty() || grow {
+/// The length after one resize step of exactly one element.
+///
+/// The declared bounds decide the direction, so a parameter declared `maxItems: 8` never
+/// receives nine items: a value the type rules out is a type error, not a finding. When both
+/// directions are open the coin flip is the only draw, which keeps the ladder's walk one step at
+/// a time.
+fn step(len: u64, min: u64, max: Option<u64>, rng: &mut Rng) -> Option<usize> {
+    let can_grow = len < max.unwrap_or(ABSOLUTE_MAX);
+    let can_shrink = len > min;
+    match (can_grow, can_shrink) {
+        (true, true) => Some(if rng.chance(1, 2) { (len + 1) as usize } else { (len - 1) as usize }),
+        (true, false) => Some((len + 1) as usize),
+        (false, true) => Some((len - 1) as usize),
+        (false, false) => None,
+    }
+}
+
+/// The declared length bounds of a collection, buffer, or stream type.
+fn declared_length(ty: &TypeNode) -> (u64, Option<u64>) {
+    match ty {
+        TypeNode::Collection { length, .. } | TypeNode::Buffer { length } => {
+            (length.and_then(|l| l.min).unwrap_or(0), length.and_then(|l| l.max))
+        }
+        TypeNode::Stream { max_items, .. } => (0, *max_items),
+        _ => (0, None),
+    }
+}
+
+fn resize_to(items: &mut Vec<ValueTree>, len: usize, rng: &mut Rng) {
+    if items.len() < len {
         let seed = items.last().cloned().unwrap_or_else(|| ValueTree::number(0.0));
         items.push(seed);
-    } else {
+    } else if items.len() > len {
         items.remove(rng.below(items.len() as u64) as usize);
     }
-    items
 }
 
 fn toggle_optional(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<(ValueNode, String)> {
