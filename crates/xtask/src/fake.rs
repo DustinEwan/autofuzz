@@ -368,6 +368,9 @@ fn invoke_resp(id: u64, req: &Request, script: &Script, index: u64) -> Response 
     if let Some(msg) = &d.stderr {
         eprintln!("{msg}");
     }
+    // The slept time is reported as part of the call's duration, so a scripted slow call looks
+    // slow to the deadline oracle the way a real slow target would.
+    let started = std::time::Instant::now();
     if let Some(ms) = d.sleep_ms {
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
@@ -377,21 +380,38 @@ fn invoke_resp(id: u64, req: &Request, script: &Script, index: u64) -> Response 
     if let Some(message) = &d.rpc_error {
         return Response::err(id, PLUGIN_ERROR, message.clone());
     }
+    let slept = started.elapsed().as_secs_f64() * 1000.0;
+    let timed = |outcome: Outcome| -> Outcome {
+        match outcome {
+            Outcome::Ok(mut o) => {
+                o.duration_ms += slept;
+                Outcome::Ok(o)
+            }
+            Outcome::Rejected(mut o) => {
+                o.duration_ms += slept;
+                Outcome::Rejected(o)
+            }
+            Outcome::Failed(mut o) => {
+                o.duration_ms += slept;
+                Outcome::Failed(o)
+            }
+        }
+    };
     match d.outcome.clone() {
         Some(Outcome::Ok(mut o)) => {
             if o.coverage.is_none() {
                 o.coverage = d.coverage.clone().or_else(|| Some(default_edges(index)));
             }
-            Response::ok(id, Outcome::Ok(o))
+            Response::ok(id, timed(Outcome::Ok(o)))
         }
         Some(Outcome::Rejected(mut o)) => {
             if o.coverage.is_none() {
                 o.coverage = d.coverage.clone().or_else(|| Some(default_edges(index)));
             }
-            Response::ok(id, Outcome::Rejected(o))
+            Response::ok(id, timed(Outcome::Rejected(o)))
         }
-        Some(outcome) => Response::ok(id, outcome),
-        None => Response::ok(id, default_ok(index, &req)),
+        Some(outcome) => Response::ok(id, timed(outcome)),
+        None => Response::ok(id, timed(default_ok(index, &req))),
     }
 }
 

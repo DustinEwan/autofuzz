@@ -225,6 +225,10 @@ struct Scanner {
     ran: u64,
     restarts: u64,
     deadline_exceeded: u64,
+    /// Invocations whose reported duration reached `deadline`. See `Execution::deadline_cuts`.
+    deadline_cuts: u64,
+    /// The deadline every invocation is asked to finish inside, taken from the `deadline` oracle.
+    deadline: Duration,
     disabled: BTreeSet<String>,
     log: Vec<String>,
     records: Vec<(FindingRecord, FindingFiles)>,
@@ -316,6 +320,8 @@ impl Scanner {
             ran: 0,
             restarts: 0,
             deadline_exceeded: 0,
+            deadline_cuts: 0,
+            deadline,
             disabled: BTreeSet::new(),
             log: Vec::new(),
             records: Vec::new(),
@@ -532,12 +538,19 @@ impl Scanner {
     fn learn(&mut self, completed: &Completed, values: &[ValueTree]) {
         let edges: CoverageDigest = match completed.outcome.coverage() {
             Some(edges) => edges.iter().copied().collect(),
-            // A harness with no coverage still gets the novelty ladder: the outcome's own class,
-            // response shape, and latency bucket stand in for edges.
-            None => corpus::outcome_digest(&completed.outcome),
+            // The outcome tuple stands in for edges only where the harness has no coverage to give.
+            // A coverage harness can also answer with no digest - a plugin process that died
+            // mid-call never reached the target, and there is nothing to learn from that - and
+            // filing the tuple as edges would put ids the coverage map cannot name into
+            // `coverageEdges`, which is reported as a fraction of that map.
+            None if !self.handshake.capabilities.contains(&Capability::Coverage) => corpus::outcome_digest(&completed.outcome),
+            None => CoverageDigest::new(),
         };
         if completed.outcome.via() == Some(oracles::DEADLINE_VIA) {
             self.deadline_exceeded += 1;
+        }
+        if completed.outcome.duration_ms() >= self.deadline.as_millis() as f64 {
+            self.deadline_cuts += 1;
         }
         self.corpus.record(&completed.target_id, values, &edges, completed.invocation_id);
         for finding in self.oracles.evaluate(&completed.target_id, completed.invocation_id, &completed.outcome) {
@@ -778,6 +791,7 @@ impl Scanner {
                 coverage_edges: self.corpus.covered_count(),
                 coverage_ratio: self.ratio(),
                 deadline_exceeded: self.deadline_exceeded,
+                deadline_cuts: self.deadline_cuts,
                 stopped_reason: self.stopped,
                 restarts: self.restarts,
                 unattempted: self.options.invocations.saturating_sub(self.ran),

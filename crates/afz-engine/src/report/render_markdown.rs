@@ -78,6 +78,7 @@ pub fn render(document: &ScanDocument) -> String {
         ),
     );
     row(&mut out, "deadline exceeded", &document.execution.deadline_exceeded.to_string());
+    row(&mut out, "ran to deadline", &document.execution.deadline_cuts.to_string());
     row(&mut out, "plugin restarts", &document.execution.restarts.to_string());
     row(&mut out, "unattempted invocations", &document.execution.unattempted.to_string());
     if !document.execution.disabled_targets.is_empty() {

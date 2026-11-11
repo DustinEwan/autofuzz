@@ -20,6 +20,14 @@ use crate::rpc::client::{Launch, LostReason, PluginClient};
 /// Restarts attributed to one target before the engine disables it. The design's number.
 pub const DISABLE_AFTER: u64 = 50;
 
+/// How much longer than the deadline the engine waits before it kills a plugin process. A harness
+/// that can cut a call itself - the wasm harness stops a call at its deadline with an epoch
+/// interrupt - answers a little after the deadline, and killing it at the deadline would throw
+/// away that call's coverage and cost a process restart every time a slow target is hit. A harness
+/// that cannot cut, like the JavaScript one, is killed this far past the deadline instead. The
+/// `deadline` oracle keys on `oracles.deadline.ms` either way, so the finding is the same.
+pub const KILL_GRACE: Duration = Duration::from_millis(250);
+
 /// How long a plugin may take to answer `discover` before its process is treated as broken.
 /// The same allowance `afz probe-plugin` gives, because discovery walks the whole scan tree and
 /// is the one request whose cost is the size of the project rather than of one input.
@@ -88,6 +96,8 @@ pub struct RunReport {
     /// clock ran out, by invocation id. The scan result must account for every invocation it
     /// planned.
     pub unattempted: Vec<u64>,
+    /// Plugin processes this `run` call restarted. The watchdog carries its count across batches,
+    /// so the report says what this batch cost, which is what the scan loop adds up.
     pub restarts: u64,
     /// Targets the engine disabled during this run.
     pub disabled: Vec<String>,
@@ -190,6 +200,7 @@ impl Supervisor {
     /// hung target cannot stall the pool.
     pub fn run(&mut self, jobs: Vec<Job>, wall_clock: Duration) -> RunReport {
         let started = Instant::now();
+        let restarts_before = self.watchdog.restarts();
         let budget = wall_clock.min(Duration::from_secs(3600 * 24));
         let queue = Arc::new(Mutex::new(VecDeque::from(jobs)));
         let results: Arc<Mutex<Vec<Event>>> = Arc::new(Mutex::new(Vec::new()));
@@ -215,7 +226,10 @@ impl Supervisor {
                         let Some(mut worker) = slot.lock().expect("worker slot lock").take() else { return };
                         loop {
                             // Leave room for one more deadline, so a run stops on its budget
-                            // rather than on the last invocation that happened to start.
+                            // rather than on the last invocation that happened to start. `KILL_GRACE`
+                            // is deliberately not counted here: it delays a kill, not an answer, and
+                            // counting it would leave a run whose budget is near one deadline with no
+                            // room to attempt anything at all.
                             if started.elapsed() + deadline >= budget {
                                 break;
                             }
@@ -283,7 +297,7 @@ impl Supervisor {
         unattempted.extend(queue.lock().expect("queue lock").iter().map(|j| j.invocation_id));
         unattempted.sort_unstable();
         let disabled = self.watchdog.disabled();
-        RunReport { completed, unattempted, restarts: self.watchdog.restarts(), disabled, unbuildable }
+        RunReport { completed, unattempted, restarts: self.watchdog.restarts() - restarts_before, disabled, unbuildable }
     }
 
     /// Pull the next job that is worth running. A job whose target has been disabled is dropped
@@ -390,7 +404,7 @@ impl Worker {
                         Err(reason) => return self.classify_loss(job, LostReason::Spawn(format!("prepare: {}", reason.detail()))),
                     }
                 }
-                match client.invoke(&Completed::request_for(&job, deadline), deadline) {
+                match client.invoke(&Completed::request_for(&job, deadline), deadline + KILL_GRACE) {
                     Ok(outcome) => Attempt::Answered(outcome),
                     Err(reason) => Attempt::Lost(reason),
                 }

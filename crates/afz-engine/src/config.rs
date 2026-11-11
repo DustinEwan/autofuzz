@@ -202,7 +202,9 @@ impl Default for OraclesConfig {
 pub struct BudgetConfig {
     pub invocations: u64,
     pub wall_clock_ms: u64,
-    /// 0 means `min(num_cpus, 8)`.
+    /// 0 means one plugin process per available core. The scan is embarrassingly parallel and the
+    /// engine runs as many workers as the machine has cores; a smaller number is a deliberate
+    /// cap, set where the target or the harness cannot absorb the machine.
     pub workers: u32,
     pub max_corpus: u32,
     /// `guided` runs the coverage-guided loop; `random` disables corpus guidance.
@@ -234,7 +236,7 @@ impl BudgetConfig {
         if self.workers > 0 {
             self.workers
         } else {
-            num_cpus::get().min(8) as u32
+            num_cpus::get() as u32
         }
     }
 }
@@ -321,6 +323,15 @@ impl LoadedConfig {
                 ))
             })?,
         };
+        // The plugin runs with the scan root as its working directory, so a path written the way a
+        // person types it - relative to where `afz` was run - has to become absolute here. The
+        // built-in `packages/harness-js/dist/server.js` would otherwise be looked up inside the
+        // scanned project.
+        let argv: Vec<String> = argv
+            .into_iter()
+            .enumerate()
+            .map(|(index, argument)| absolutized(index, argument, |path| path.exists()))
+            .collect();
         let mut launch = Launch::new(argv);
         if let Some(env) = env {
             for (k, v) in env {
@@ -372,6 +383,20 @@ pub struct DiscoveryScope {
     pub root: PathBuf,
     pub include: Option<Vec<String>>,
     pub exclude: Option<Vec<String>>,
+}
+
+/// A plugin argument that names a file, made absolute when it names one that exists relative to
+/// the directory `afz` was run from. Flags are returned untouched, so `--root out` stays a flag
+/// rather than becoming a filesystem path, and a program name with no separator is left for `PATH`.
+fn absolutized(index: usize, argument: String, exists: impl Fn(&Path) -> bool) -> String {
+    if argument.starts_with('-') || (index == 0 && !argument.contains('/')) {
+        return argument;
+    }
+    let path = Path::new(&argument);
+    if path.is_absolute() || !exists(path) {
+        return argument;
+    }
+    path.canonicalize().map(|p| p.display().to_string()).unwrap_or(argument)
 }
 
 /// The built-in plugin command for a known harness, relative to the repository or project
@@ -491,4 +516,28 @@ pub fn discover(start: &Path) -> Result<PathBuf, ConfigError> {
 
 fn absolute(path: &Path) -> Result<PathBuf, ConfigError> {
     std::path::absolute(path).map_err(|e| ConfigError::Read { path: path.to_path_buf(), source: e })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::absolutized;
+    use std::path::Path;
+
+    /// The plugin runs with the scan root as its working directory, so a plugin path written
+    /// relative to the invocation directory has to be resolved before the child is spawned - and a
+    /// flag must not be turned into a path on the way.
+    #[test]
+    fn a_relative_plugin_path_becomes_absolute_and_a_flag_does_not() {
+        let exists = |_: &Path| true;
+        let missing = |_: &Path| false;
+        assert_eq!(absolutized(0, "node".into(), exists), "node", "a bare program name is found on PATH");
+        let program = absolutized(0, "src/config.rs".into(), exists);
+        assert!(Path::new(&program).is_absolute() && program.ends_with("src/config.rs"), "a program named by path stays put: {program}");
+        assert_eq!(absolutized(2, "--root out".into(), exists), "--root out");
+        assert_eq!(absolutized(1, "no-such/plugin.js".into(), missing), "no-such/plugin.js");
+        assert_eq!(absolutized(1, "/opt/plugin/server.js".into(), missing), "/opt/plugin/server.js");
+        let resolved = absolutized(1, "Cargo.toml".into(), exists);
+        assert!(Path::new(&resolved).is_absolute(), "{resolved} stayed relative");
+        assert!(resolved.ends_with("Cargo.toml"), "{resolved} renamed the argument");
+    }
 }

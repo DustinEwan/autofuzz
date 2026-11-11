@@ -99,6 +99,7 @@ fn document() -> ScanDocument {
             coverage_edges: 8312,
             coverage_ratio: 0.41,
             deadline_exceeded: 3,
+            deadline_cuts: 7,
             stopped_reason: StoppedReason::Budget,
             restarts: 1,
             unattempted: 96,

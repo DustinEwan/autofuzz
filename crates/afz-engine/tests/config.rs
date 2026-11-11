@@ -153,7 +153,7 @@ fn defaults_match_the_design() {
     assert_eq!(loaded.project.budget.max_corpus, 2048);
     assert_eq!(loaded.project.budget.strategy, config::Strategy::Guided);
     assert_eq!(loaded.project.output.dir, ".autofuzz");
-    assert_eq!(loaded.project.budget.workers_or_default(), num_cpus::get().min(8) as u32);
+    assert_eq!(loaded.project.budget.workers_or_default(), num_cpus::get() as u32, "the default is one worker per core, with no cap");
     std::fs::remove_dir_all(dir).ok();
 }
 

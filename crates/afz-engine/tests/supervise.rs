@@ -7,7 +7,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use afz_engine::supervise::{Completed, DISABLE_AFTER, Job, Supervisor};
+use afz_engine::supervise::{Completed, DISABLE_AFTER, Job, RunReport, Supervisor};
+use afz_engine::config::OraclesConfig;
+use afz_engine::oracles::{Oracle, Oracles};
 use afz_engine::rpc::client::Launch;
 use afz_protocol::{DiscoverReq, SkipReason, ValueTree};
 
@@ -169,4 +171,57 @@ fn parallel_workers_answer_every_invocation_exactly_once() {
     // Out-of-order answers are the point of parallel workers; the report is sorted anyway.
     assert!(report.completed.windows(2).all(|w| w[0].invocation_id < w[1].invocation_id));
     assert_eq!(report.restarts, 0, "a healthy plugin is not restarted");
+}
+
+/// `RunReport::restarts` describes the batch that produced it. The scan loop adds each batch's
+/// number into the run total, so a report that repeated earlier batches inflated what a reader
+/// sees: one wasm run printed 904328 restarts against a 20000-invocation budget.
+#[test]
+fn a_second_batch_reports_only_its_own_restarts() {
+    let script = r#"[{"exit":1,"at":1,"to":100000}]"#;
+    let mut supervisor = supervisor(script, 1, 2_000);
+    let first = supervisor.run(jobs("afz:t:0002", 3), Duration::from_millis(20_000));
+    let second = supervisor.run(jobs("afz:t:0002", 3), Duration::from_millis(20_000));
+
+    let restarted = |report: &RunReport| report.completed.iter().filter(|c| c.restart.is_some()).count() as u64;
+    assert_eq!(first.restarts, restarted(&first), "the first batch reports its own cost");
+    assert_eq!(
+        second.restarts,
+        restarted(&second),
+        "a batch must report what it cost, not the run total: {} reported, {} invocations restarted",
+        second.restarts,
+        restarted(&second)
+    );
+}
+
+/// A harness that cuts a slow call itself answers a little after the deadline. The engine has to
+/// let it answer: the answer carries that call's coverage, and killing the process instead costs a
+/// restart on every slow invocation. The `deadline` finding is not lost, because the oracle reads
+/// the duration the harness reports.
+#[test]
+fn a_plugin_that_answers_past_the_deadline_but_inside_the_grace_keeps_its_process() {
+    // 400 ms against a 300 ms deadline: past the deadline, inside `KILL_GRACE`.
+    let script = r#"[{"sleepMs":400,"at":1,"to":100000}]"#;
+    let mut supervisor = supervisor(script, 1, 300);
+    let report = supervisor.run(jobs("afz:t:0001", 3), Duration::from_millis(20_000));
+
+    assert_eq!(report.restarts, 0, "a late answer must not cost a process: {} restarts", report.restarts);
+    assert_eq!(report.completed.len(), 3, "every invocation is answered by the plugin");
+
+    let mut config = OraclesConfig::default();
+    config.deadline.ms = Some(300);
+    let engine = Oracles::new(&config);
+    for completed in &report.completed {
+        assert_eq!(completed.outcome.kind(), "ok", "the plugin answered: {:?}", completed.outcome);
+        assert!(
+            completed.outcome.duration_ms() >= 300.0,
+            "the call must show that it ran past the deadline: {} ms",
+            completed.outcome.duration_ms()
+        );
+        let findings = engine.evaluate("afz:t:0001", completed.invocation_id, &completed.outcome);
+        assert!(
+            findings.iter().any(|f| f.oracle == Oracle::Deadline),
+            "the deadline oracle must still fire on the reported duration: {findings:?}"
+        );
+    }
 }

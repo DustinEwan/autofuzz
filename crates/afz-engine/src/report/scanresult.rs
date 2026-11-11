@@ -103,6 +103,12 @@ pub struct Execution {
     pub coverage_edges: u64,
     pub coverage_ratio: f64,
     pub deadline_exceeded: u64,
+    /// Invocations whose reported duration reached the deadline the engine gave the plugin. A
+    /// harness that cuts a call itself answers at the deadline with an `ok` outcome carrying no
+    /// value, so these appear nowhere else: `deadlineExceeded` counts only calls the engine
+    /// stopped waiting for. A scan can spend most of its wall clock inside these and report a
+    /// clean run.
+    pub deadline_cuts: u64,
     pub stopped_reason: StoppedReason,
     /// Plugin processes the engine restarted, and the targets it stopped using because they
     /// caused too many of them. Both are the supervisor's, and a scan that says nothing about

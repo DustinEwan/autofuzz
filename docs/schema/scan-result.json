@@ -177,6 +177,12 @@
           "type": "number",
           "format": "double"
         },
+        "deadlineCuts": {
+          "description": "Invocations whose reported duration reached the deadline the engine gave the plugin. A\nharness that cuts a call itself answers at the deadline with an `ok` outcome carrying no\nvalue, so these appear nowhere else: `deadlineExceeded` counts only calls the engine\nstopped waiting for. A scan can spend most of its wall clock inside these and report a\nclean run.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
         "deadlineExceeded": {
           "type": "integer",
           "format": "uint64",
@@ -215,6 +221,7 @@
         "coverageEdges",
         "coverageRatio",
         "deadlineExceeded",
+        "deadlineCuts",
         "stoppedReason",
         "restarts",
         "unattempted",
