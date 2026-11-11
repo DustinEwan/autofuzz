@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CoverageMap",
+  "description": "`coverageMap` response: the mapping from digest ids to source ranges.",
+  "type": "object",
+  "properties": {
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/CoverageEntry"
+      }
+    }
+  },
+  "required": [
+    "entries"
+  ],
+  "$defs": {
+    "CoverageEntry": {
+      "description": "One entry of `coverageMap`: a stable edge id and the source range it stands for.",
+      "type": "object",
+      "properties": {
+        "edge": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "end": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "start": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "edge",
+        "url",
+        "start",
+        "end"
+      ]
+    }
+  }
+}

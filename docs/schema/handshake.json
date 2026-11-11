@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Handshake",
+  "description": "`handshake` response.",
+  "type": "object",
+  "properties": {
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Capability"
+      }
+    },
+    "discoverRequiresExecution": {
+      "description": "Set when enumerating targets requires importing the target. The engine then runs\nthat discovery under the same isolation and deadline it applies to invocations.",
+      "type": "boolean",
+      "default": false
+    },
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "name": {
+      "type": "string"
+    },
+    "protocolVersion": {
+      "type": "string"
+    },
+    "targetClass": {
+      "$ref": "#/$defs/TargetClass"
+    },
+    "version": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocolVersion",
+    "name",
+    "version",
+    "targetClass",
+    "capabilities",
+    "languages"
+  ],
+  "$defs": {
+    "Capability": {
+      "description": "What a plugin declares at handshake. The engine adapts instead of assuming, and an\nabsent capability has a defined absent behavior.",
+      "oneOf": [
+        {
+          "description": "Per-invocation coverage digest is available. Absent: the scheduler uses\nschema-directed generation and outcome novelty only.",
+          "type": "string",
+          "const": "coverage"
+        },
+        {
+          "description": "The plugin can build receiver state. Absent: only entry points with fully\nconstructible parameter graphs are fuzzed.",
+          "type": "string",
+          "const": "stateful"
+        },
+        {
+          "description": "The plugin can shrink an input in target terms. Absent: the engine minimizes by\nremoving arguments and reducing structure only.",
+          "type": "string",
+          "const": "minimize"
+        },
+        {
+          "description": "Invocations may change external state. Present: the side-effect policy applies.",
+          "type": "string",
+          "const": "sideEffects"
+        },
+        {
+          "description": "The plugin tolerates parallel instances. Absent: the engine runs one instance.",
+          "type": "string",
+          "const": "concurrent"
+        }
+      ]
+    },
+    "TargetClass": {
+      "description": "The two target classes. Design-time targets are symbols we call in a process we control;\nruntime targets are boundaries a live process exposes.",
+      "type": "string",
+      "enum": [
+        "design-time",
+        "runtime"
+      ]
+    }
+  }
+}

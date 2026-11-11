@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Response",
+  "description": "A response, discriminated by the presence of `result` or `error`.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/Success"
+    },
+    {
+      "$ref": "#/$defs/Failure"
+    }
+  ],
+  "$defs": {
+    "ErrorObject": {
+      "description": "An error response.",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "format": "int64"
+        },
+        "data": true,
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ]
+    },
+    "Failure": {
+      "description": "A failure response.",
+      "type": "object",
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorObject"
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "jsonrpc": {
+          "$ref": "#/$defs/JsonRpcVersion"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "error"
+      ]
+    },
+    "JsonRpcVersion": {
+      "description": "The only protocol revision this build speaks.",
+      "type": "string",
+      "enum": [
+        "2.0"
+      ]
+    },
+    "Success": {
+      "description": "A successful response.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "jsonrpc": {
+          "$ref": "#/$defs/JsonRpcVersion"
+        },
+        "result": true
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ]
+    }
+  }
+}

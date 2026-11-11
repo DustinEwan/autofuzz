@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PrepareResp",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "materialized": {
+          "$ref": "#/$defs/MaterializedCall"
+        },
+        "ok": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "materialized"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "ok": {
+          "type": "boolean",
+          "const": false
+        },
+        "reason": {
+          "$ref": "#/$defs/SkipReason"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "reason"
+      ]
+    }
+  ],
+  "$defs": {
+    "MaterializedCall": {
+      "description": "What the plugin built for one call. Present only when `prepare` reports `ok`.",
+      "type": "object",
+      "properties": {
+        "handle": {
+          "description": "Plugin-side handle naming the built receiver and arguments. `invoke` may reference\nit so the plugin does not rebuild state it already built during `prepare`.",
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "handle",
+        "summary"
+      ]
+    },
+    "SkipReason": {
+      "description": "Why a parameter graph cannot be built.",
+      "oneOf": [
+        {
+          "description": "A parameter or receiver field has no constructible representation.",
+          "type": "string",
+          "const": "unconstructible-parameter"
+        },
+        {
+          "description": "Discovery could not analyze the declaring file.",
+          "type": "string",
+          "const": "discovery-error"
+        },
+        {
+          "description": "The symbol is not public.",
+          "type": "string",
+          "const": "not-public"
+        },
+        {
+          "description": "The scan project excluded it.",
+          "type": "string",
+          "const": "excluded"
+        },
+        {
+          "description": "The plugin cannot call it: varargs-only, generator, or accessor.",
+          "type": "string",
+          "const": "unsupported-signature"
+        },
+        {
+          "description": "The engine disabled the target after repeated plugin losses.",
+          "type": "string",
+          "const": "target-disabled"
+        }
+      ]
+    }
+  }
+}

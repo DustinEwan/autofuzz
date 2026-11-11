@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MaterializedCall",
+  "description": "What the plugin built for one call. Present only when `prepare` reports `ok`.",
+  "type": "object",
+  "properties": {
+    "handle": {
+      "description": "Plugin-side handle naming the built receiver and arguments. `invoke` may reference\nit so the plugin does not rebuild state it already built during `prepare`.",
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "handle",
+    "summary"
+  ]
+}

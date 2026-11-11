@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SkippedTarget",
+  "description": "One non-fuzzed symbol, with a reason. Reported, never silently dropped.",
+  "type": "object",
+  "properties": {
+    "blockedBy": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Blocker"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "detail": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "name": {
+      "type": "string"
+    },
+    "reason": {
+      "$ref": "#/$defs/SkipReason"
+    },
+    "targetId": {
+      "type": "string"
+    },
+    "unlocksTargets": {
+      "description": "Entry points that share the blocker, which turns one missing type into one task.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "targetId",
+    "name",
+    "reason"
+  ],
+  "$defs": {
+    "Blocker": {
+      "description": "The type that blocks a target, and where it sits.",
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Parameter or receiver path, e.g. `receiver.db`.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ]
+    },
+    "SkipReason": {
+      "description": "Why a parameter graph cannot be built.",
+      "oneOf": [
+        {
+          "description": "A parameter or receiver field has no constructible representation.",
+          "type": "string",
+          "const": "unconstructible-parameter"
+        },
+        {
+          "description": "Discovery could not analyze the declaring file.",
+          "type": "string",
+          "const": "discovery-error"
+        },
+        {
+          "description": "The symbol is not public.",
+          "type": "string",
+          "const": "not-public"
+        },
+        {
+          "description": "The scan project excluded it.",
+          "type": "string",
+          "const": "excluded"
+        },
+        {
+          "description": "The plugin cannot call it: varargs-only, generator, or accessor.",
+          "type": "string",
+          "const": "unsupported-signature"
+        },
+        {
+          "description": "The engine disabled the target after repeated plugin losses.",
+          "type": "string",
+          "const": "target-disabled"
+        }
+      ]
+    }
+  }
+}

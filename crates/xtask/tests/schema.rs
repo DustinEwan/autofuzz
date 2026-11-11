@@ -1,0 +1,72 @@
+//! The committed schema must be regenerable from the Rust types, because the Node plugin is
+//! written against these files and a stale file means a silent protocol drift.
+
+use afz_xtask::schema::write_schemas;
+
+fn repo_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+#[test]
+fn every_contract_type_has_a_schema() {
+    let dir = std::env::temp_dir().join(format!("afz-xtask-schema-{}", std::process::id()));
+    let files = write_schemas(&dir).expect("schemas write");
+    assert!(files.len() >= 18, "expected every contract type, got {}", files.len());
+    for f in &files {
+        let text = std::fs::read_to_string(f).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).expect("schema is json");
+        assert_eq!(value["$schema"].as_str(), Some("https://json-schema.org/draft/2020-12/schema"), "{f}");
+    }
+
+    let outcome: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("outcome.json")).unwrap()).unwrap();
+    let tags: Vec<&str> = outcome["oneOf"]
+        .as_array()
+        .expect("outcome is a tagged union")
+        .iter()
+        .filter_map(|v| v["properties"]["kind"]["const"].as_str())
+        .collect();
+    assert_eq!(tags, ["ok", "rejected", "failed"], "outcome variants changed shape");
+
+    let type_node: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("type-node.json")).unwrap()).unwrap();
+    let kinds: Vec<&str> = type_node["oneOf"]
+        .as_array()
+        .expect("type-node is a tagged union")
+        .iter()
+        .filter_map(|v| v["properties"]["kind"]["const"].as_str())
+        .collect();
+    assert_eq!(kinds.len(), 13, "TypeNode must carry the thirteen wire kinds, got {kinds:?}");
+
+    // `prepare` answers with a JSON boolean, not the string a serde internal tag would write.
+    let prepare: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("prepare-resp.json")).unwrap()).unwrap();
+    let oks: Vec<bool> = prepare["oneOf"]
+        .as_array()
+        .expect("prepare-resp is a two-shape union")
+        .iter()
+        .filter_map(|v| v["properties"]["ok"]["const"].as_bool())
+        .collect();
+    assert_eq!(oks, [true, false], "prepare-resp must tag on a boolean ok, got {oks:?}");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn committed_schema_matches_generated_schema() {
+    let dir = std::env::temp_dir().join(format!("afz-xtask-schema-fresh-{}", std::process::id()));
+    write_schemas(&dir).expect("schemas write");
+    let committed = repo_root().join("docs/schema");
+    let mut stale = Vec::new();
+    for entry in std::fs::read_dir(&dir).expect("fresh schema dir") {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap();
+        let fresh = std::fs::read_to_string(&path).unwrap();
+        match std::fs::read_to_string(committed.join(name)) {
+            Ok(have) if have == fresh => {}
+            Ok(_) => stale.push(name.to_string_lossy().to_string()),
+            Err(_) => stale.push(format!("{} (missing)", name.to_string_lossy())),
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(stale.is_empty(), "docs/schema is stale, run `cargo run -p afz-xtask -- schema`: {stale:?}");
+}

@@ -1,0 +1,25 @@
+[package]
+name = "afz-xtask"
+description = "repository helpers: fake harness plugin, schema generation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+default-run = "afz-xtask"
+
+[lib]
+name = "afz_xtask"
+path = "src/lib.rs"
+
+[[bin]]
+name = "afz-xtask"
+path = "src/main.rs"
+
+[[bin]]
+name = "afz-fakeplugin"
+path = "src/fakeplugin.rs"
+
+[dependencies]
+afz-protocol.workspace = true
+serde.workspace = true
+schemars.workspace = true
+serde_json.workspace = true

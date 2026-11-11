@@ -1,0 +1,790 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Discovery",
+  "description": "`discover` response.",
+  "type": "object",
+  "properties": {
+    "skipped": {
+      "description": "Every non-fuzzed symbol, with a reason.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SkippedTarget"
+      }
+    },
+    "targets": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/TargetDescriptor"
+      }
+    }
+  },
+  "required": [
+    "targets",
+    "skipped"
+  ],
+  "$defs": {
+    "Blocker": {
+      "description": "The type that blocks a target, and where it sits.",
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Parameter or receiver path, e.g. `receiver.db`.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ]
+    },
+    "CollectionKind": {
+      "description": "Collection sub-kinds carried by [`Kind::Collection`].",
+      "type": "string",
+      "enum": [
+        "array",
+        "set",
+        "map"
+      ]
+    },
+    "CompositeKind": {
+      "description": "Composite sub-kinds carried by [`Kind::Composite`].",
+      "type": "string",
+      "enum": [
+        "union",
+        "intersection"
+      ]
+    },
+    "Effects": {
+      "description": "Effects a target can have, recorded during discovery, never guessed at invoke time.",
+      "type": "object",
+      "properties": {
+        "async": {
+          "type": "boolean",
+          "default": false
+        },
+        "callbacks": {
+          "type": "boolean",
+          "default": false
+        },
+        "mutatesState": {
+          "type": "boolean",
+          "default": false
+        },
+        "streams": {
+          "type": "boolean",
+          "default": false
+        },
+        "throws": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "Field": {
+      "description": "One named field of an object type.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "type": {
+          "$ref": "#/$defs/TypeNode"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "required"
+      ]
+    },
+    "FunctionBehavior": {
+      "description": "A `function` node's configurable stub behavior. The generator emits a callable; this\nsays what the callable does when the target calls it.",
+      "type": "string",
+      "enum": [
+        "returnFirst",
+        "throw",
+        "captureArguments"
+      ]
+    },
+    "HttpOrigin": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "method",
+        "path"
+      ]
+    },
+    "LengthBounds": {
+      "description": "Declared length bounds for a collection, a string, or a buffer.",
+      "type": "object",
+      "properties": {
+        "max": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "min": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        }
+      }
+    },
+    "Materialization": {
+      "description": "The honest accounting of what the tool can actually reach.",
+      "oneOf": [
+        {
+          "description": "The whole parameter graph is buildable from generated values.",
+          "type": "string",
+          "const": "constructible"
+        },
+        {
+          "description": "A user-supplied fixture can fill the gap.",
+          "type": "string",
+          "const": "fixture-required"
+        },
+        {
+          "description": "Unreachable without a live system.",
+          "type": "string",
+          "const": "opaque"
+        }
+      ]
+    },
+    "NumberBounds": {
+      "description": "Declared numeric bounds, present only when the source declares them.",
+      "type": "object",
+      "properties": {
+        "finiteOnly": {
+          "type": "boolean",
+          "default": false
+        },
+        "int": {
+          "type": "boolean",
+          "default": false
+        },
+        "max": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "min": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        }
+      }
+    },
+    "Origin": {
+      "description": "Where a target came from.",
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "http": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HttpOrigin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "line": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "module": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Parameter": {
+      "description": "One parameter of a target.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "type": {
+          "$ref": "#/$defs/TypeNode"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "required"
+      ]
+    },
+    "RefField": {
+      "description": "A named field of a `ref` node: the receiver property or parameter path that a\nrecursive reference re-enters through.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#/$defs/TypeNode"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "ScalarKind": {
+      "description": "Scalar sub-kinds carried by [`Kind::Scalar`].",
+      "type": "string",
+      "enum": [
+        "null",
+        "undefined",
+        "boolean",
+        "number",
+        "bigInt",
+        "string"
+      ]
+    },
+    "SkipReason": {
+      "description": "Why a parameter graph cannot be built.",
+      "oneOf": [
+        {
+          "description": "A parameter or receiver field has no constructible representation.",
+          "type": "string",
+          "const": "unconstructible-parameter"
+        },
+        {
+          "description": "Discovery could not analyze the declaring file.",
+          "type": "string",
+          "const": "discovery-error"
+        },
+        {
+          "description": "The symbol is not public.",
+          "type": "string",
+          "const": "not-public"
+        },
+        {
+          "description": "The scan project excluded it.",
+          "type": "string",
+          "const": "excluded"
+        },
+        {
+          "description": "The plugin cannot call it: varargs-only, generator, or accessor.",
+          "type": "string",
+          "const": "unsupported-signature"
+        },
+        {
+          "description": "The engine disabled the target after repeated plugin losses.",
+          "type": "string",
+          "const": "target-disabled"
+        }
+      ]
+    },
+    "SkippedTarget": {
+      "description": "One non-fuzzed symbol, with a reason. Reported, never silently dropped.",
+      "type": "object",
+      "properties": {
+        "blockedBy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Blocker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/SkipReason"
+        },
+        "targetId": {
+          "type": "string"
+        },
+        "unlocksTargets": {
+          "description": "Entry points that share the blocker, which turns one missing type into one task.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "targetId",
+        "name",
+        "reason"
+      ]
+    },
+    "TargetClass": {
+      "description": "The two target classes. Design-time targets are symbols we call in a process we control;\nruntime targets are boundaries a live process exposes.",
+      "type": "string",
+      "enum": [
+        "design-time",
+        "runtime"
+      ]
+    },
+    "TargetDescriptor": {
+      "description": "One callable, normalized. Every plugin produces this shape.",
+      "type": "object",
+      "properties": {
+        "effects": {
+          "$ref": "#/$defs/Effects"
+        },
+        "guardSites": {
+          "description": "Source lines inside this target that hold a `throw` the target author wrote. The\nclassification rule reads this list; the engine never sees it.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          }
+        },
+        "id": {
+          "description": "Stable content hash of module path + symbol + signature.",
+          "type": "string"
+        },
+        "materialization": {
+          "$ref": "#/$defs/Materialization"
+        },
+        "name": {
+          "description": "Human-facing name: `parseConfig`, `POST /v1/tokens`.",
+          "type": "string"
+        },
+        "origin": {
+          "$ref": "#/$defs/Origin"
+        },
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Parameter"
+          }
+        },
+        "returns": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TypeNode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "targetClass": {
+          "$ref": "#/$defs/TargetClass"
+        }
+      },
+      "required": [
+        "id",
+        "targetClass",
+        "origin",
+        "name",
+        "parameters",
+        "effects",
+        "materialization"
+      ]
+    },
+    "TypeNode": {
+      "description": "A normalized type. Every plugin produces this shape; the generator consumes nothing else.",
+      "oneOf": [
+        {
+          "description": "`null`, `undefined`, `boolean`, `number`, `bigint`, `string`.",
+          "type": "object",
+          "properties": {
+            "bounds": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/NumberBounds"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "scalar"
+            },
+            "length": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LengthBounds"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scalar": {
+              "$ref": "#/$defs/ScalarKind"
+            }
+          },
+          "required": [
+            "kind",
+            "scalar"
+          ]
+        },
+        {
+          "description": "`email`, `uuid`, `date-time`, `hostname`, `ipv4`, `uri`, plus plugin-defined formats.",
+          "type": "object",
+          "properties": {
+            "format": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "stringFormat"
+            }
+          },
+          "required": [
+            "kind",
+            "format"
+          ]
+        },
+        {
+          "description": "Enum members and string unions collapse to a literal set.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "literal"
+            },
+            "values": {
+              "type": "array",
+              "items": true
+            }
+          },
+          "required": [
+            "kind",
+            "values"
+          ]
+        },
+        {
+          "description": "`array`, `set`, `map`. A map carries `key` and `element`; the others carry `element`.",
+          "type": "object",
+          "properties": {
+            "collection": {
+              "$ref": "#/$defs/CollectionKind"
+            },
+            "key": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TypeNode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "collection"
+            },
+            "length": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LengthBounds"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "type": {
+              "$ref": "#/$defs/TypeNode"
+            }
+          },
+          "required": [
+            "kind",
+            "collection",
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Field"
+              }
+            },
+            "id": {
+              "description": "Set when the object type is recursive; children may carry [`Kind::Ref`] back to it.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "object"
+            },
+            "name": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "fields"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TypeNode"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "tuple"
+            }
+          },
+          "required": [
+            "kind",
+            "items"
+          ]
+        },
+        {
+          "description": "`union` or `intersection`. A union with a literal discriminant field generates\ndiscriminant-aware members.",
+          "type": "object",
+          "properties": {
+            "composite": {
+              "$ref": "#/$defs/CompositeKind"
+            },
+            "discriminant": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "composite"
+            },
+            "members": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/TypeNode"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "composite",
+            "members"
+          ]
+        },
+        {
+          "description": "`Uint8Array`, `ArrayBuffer`, `Buffer`.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "buffer"
+            },
+            "length": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/LengthBounds"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "Marks an async effect. The harness awaits it under the invocation deadline.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "promise"
+            },
+            "type": {
+              "$ref": "#/$defs/TypeNode"
+            }
+          },
+          "required": [
+            "kind",
+            "type"
+          ]
+        },
+        {
+          "description": "A callable parameter, generated as a stub.",
+          "type": "object",
+          "properties": {
+            "behavior": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/FunctionBehavior"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "kind": {
+              "type": "string",
+              "const": "function"
+            },
+            "type": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/TypeNode"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "`stream` or `iterable`, generated as an in-memory source with a bounded item count.",
+          "type": "object",
+          "properties": {
+            "iterable": {
+              "type": "boolean"
+            },
+            "kind": {
+              "type": "string",
+              "const": "stream"
+            },
+            "max_items": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint64",
+              "minimum": 0
+            },
+            "type": {
+              "$ref": "#/$defs/TypeNode"
+            }
+          },
+          "required": [
+            "kind",
+            "iterable",
+            "type"
+          ]
+        },
+        {
+          "description": "A type the plugin cannot build: class instance, DOM node, socket. Drives\n[`crate::TargetDescriptor::materialization`].",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "opaque"
+            },
+            "module": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "ty": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "ty"
+          ]
+        },
+        {
+          "description": "A named recursive reference. Generation enforces a per-path depth budget.",
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/RefField"
+              }
+            },
+            "kind": {
+              "type": "string",
+              "const": "ref"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ]
+        }
+      ]
+    }
+  }
+}

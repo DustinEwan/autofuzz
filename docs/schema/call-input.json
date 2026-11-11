@@ -1,0 +1,370 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CallInput",
+  "description": "A complete call input: the argument list, plus the receiver the plugin should build\nstate on when the target is a method.",
+  "type": "object",
+  "properties": {
+    "arguments": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ValueTree"
+      }
+    },
+    "receiver": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ValueTree"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "arguments"
+  ],
+  "$defs": {
+    "FunctionBehavior": {
+      "description": "A `function` node's configurable stub behavior. The generator emits a callable; this\nsays what the callable does when the target calls it.",
+      "type": "string",
+      "enum": [
+        "returnFirst",
+        "throw",
+        "captureArguments"
+      ]
+    },
+    "NumberValue": {
+      "description": "A number that survives JSON round-trip exactly: finite values as `f64`, everything else\nas a name. `NaN`, `Infinity`, and `-Infinity` have no JSON number token, so they travel\nas strings and the plugin re-materializes them.",
+      "anyOf": [
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "$ref": "#/$defs/SpecialNumber"
+        }
+      ]
+    },
+    "SpecialNumber": {
+      "type": "string",
+      "enum": [
+        "naN",
+        "infinity",
+        "negativeInfinity"
+      ]
+    },
+    "ValueTree": {
+      "description": "One node of a structured input.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "null"
+            }
+          },
+          "required": [
+            "node"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "undefined"
+            }
+          },
+          "required": [
+            "node"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "boolean"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "node",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "number"
+            },
+            "value": {
+              "$ref": "#/$defs/NumberValue"
+            }
+          },
+          "required": [
+            "node",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "bigInt"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "literal"
+            },
+            "value": true
+          },
+          "required": [
+            "node",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ValueTree"
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "array"
+            }
+          },
+          "required": [
+            "node",
+            "items"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ValueTree"
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "set"
+            }
+          },
+          "required": [
+            "node",
+            "items"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "$ref": "#/$defs/ValueTree"
+                  },
+                  {
+                    "$ref": "#/$defs/ValueTree"
+                  }
+                ]
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "map"
+            }
+          },
+          "required": [
+            "node",
+            "entries"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ValueTree"
+                  }
+                ]
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "object"
+            }
+          },
+          "required": [
+            "node",
+            "fields"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ValueTree"
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "tuple"
+            }
+          },
+          "required": [
+            "node",
+            "items"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "buffer"
+            }
+          },
+          "required": [
+            "node",
+            "bytes"
+          ]
+        },
+        {
+          "description": "A callable stub. `behavior` selects what the stub does when the target calls it.",
+          "type": "object",
+          "properties": {
+            "behavior": {
+              "$ref": "#/$defs/FunctionBehavior"
+            },
+            "node": {
+              "type": "string",
+              "const": "function"
+            },
+            "returns": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ValueTree"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "node",
+            "behavior"
+          ]
+        },
+        {
+          "description": "A stream or iterable source, generated as an in-memory item list.",
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ValueTree"
+              }
+            },
+            "iterable": {
+              "type": "boolean"
+            },
+            "node": {
+              "type": "string",
+              "const": "stream"
+            }
+          },
+          "required": [
+            "node",
+            "iterable",
+            "items"
+          ]
+        },
+        {
+          "description": "A node the plugin must supply from a fixture. The engine never invents one.",
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "opaque"
+            },
+            "ty": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node",
+            "ty"
+          ]
+        }
+      ]
+    }
+  }
+}

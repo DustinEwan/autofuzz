@@ -1,0 +1,479 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TypeNode",
+  "description": "A normalized type. Every plugin produces this shape; the generator consumes nothing else.",
+  "oneOf": [
+    {
+      "description": "`null`, `undefined`, `boolean`, `number`, `bigint`, `string`.",
+      "type": "object",
+      "properties": {
+        "bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NumberBounds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "const": "scalar"
+        },
+        "length": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LengthBounds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scalar": {
+          "$ref": "#/$defs/ScalarKind"
+        }
+      },
+      "required": [
+        "kind",
+        "scalar"
+      ]
+    },
+    {
+      "description": "`email`, `uuid`, `date-time`, `hostname`, `ipv4`, `uri`, plus plugin-defined formats.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "const": "stringFormat"
+        }
+      },
+      "required": [
+        "kind",
+        "format"
+      ]
+    },
+    {
+      "description": "Enum members and string unions collapse to a literal set.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "literal"
+        },
+        "values": {
+          "type": "array",
+          "items": true
+        }
+      },
+      "required": [
+        "kind",
+        "values"
+      ]
+    },
+    {
+      "description": "`array`, `set`, `map`. A map carries `key` and `element`; the others carry `element`.",
+      "type": "object",
+      "properties": {
+        "collection": {
+          "$ref": "#/$defs/CollectionKind"
+        },
+        "key": {
+          "anyOf": [
+            {
+              "$ref": "#"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "const": "collection"
+        },
+        "length": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LengthBounds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "$ref": "#"
+        }
+      },
+      "required": [
+        "kind",
+        "collection",
+        "type"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Field"
+          }
+        },
+        "id": {
+          "description": "Set when the object type is recursive; children may carry [`Kind::Ref`] back to it.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "const": "object"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "fields"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "const": "tuple"
+        }
+      },
+      "required": [
+        "kind",
+        "items"
+      ]
+    },
+    {
+      "description": "`union` or `intersection`. A union with a literal discriminant field generates\ndiscriminant-aware members.",
+      "type": "object",
+      "properties": {
+        "composite": {
+          "$ref": "#/$defs/CompositeKind"
+        },
+        "discriminant": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "const": "composite"
+        },
+        "members": {
+          "type": "array",
+          "items": {
+            "$ref": "#"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "composite",
+        "members"
+      ]
+    },
+    {
+      "description": "`Uint8Array`, `ArrayBuffer`, `Buffer`.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "buffer"
+        },
+        "length": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LengthBounds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    {
+      "description": "Marks an async effect. The harness awaits it under the invocation deadline.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "promise"
+        },
+        "type": {
+          "$ref": "#"
+        }
+      },
+      "required": [
+        "kind",
+        "type"
+      ]
+    },
+    {
+      "description": "A callable parameter, generated as a stub.",
+      "type": "object",
+      "properties": {
+        "behavior": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FunctionBehavior"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "const": "function"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "$ref": "#"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    {
+      "description": "`stream` or `iterable`, generated as an in-memory source with a bounded item count.",
+      "type": "object",
+      "properties": {
+        "iterable": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string",
+          "const": "stream"
+        },
+        "max_items": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "type": {
+          "$ref": "#"
+        }
+      },
+      "required": [
+        "kind",
+        "iterable",
+        "type"
+      ]
+    },
+    {
+      "description": "A type the plugin cannot build: class instance, DOM node, socket. Drives\n[`crate::TargetDescriptor::materialization`].",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "opaque"
+        },
+        "module": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ty": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "ty"
+      ]
+    },
+    {
+      "description": "A named recursive reference. Generation enforces a per-path depth budget.",
+      "type": "object",
+      "properties": {
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RefField"
+          }
+        },
+        "kind": {
+          "type": "string",
+          "const": "ref"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "name"
+      ]
+    }
+  ],
+  "$defs": {
+    "CollectionKind": {
+      "description": "Collection sub-kinds carried by [`Kind::Collection`].",
+      "type": "string",
+      "enum": [
+        "array",
+        "set",
+        "map"
+      ]
+    },
+    "CompositeKind": {
+      "description": "Composite sub-kinds carried by [`Kind::Composite`].",
+      "type": "string",
+      "enum": [
+        "union",
+        "intersection"
+      ]
+    },
+    "Field": {
+      "description": "One named field of an object type.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "required": {
+          "type": "boolean"
+        },
+        "type": {
+          "$ref": "#"
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "required"
+      ]
+    },
+    "FunctionBehavior": {
+      "description": "A `function` node's configurable stub behavior. The generator emits a callable; this\nsays what the callable does when the target calls it.",
+      "type": "string",
+      "enum": [
+        "returnFirst",
+        "throw",
+        "captureArguments"
+      ]
+    },
+    "LengthBounds": {
+      "description": "Declared length bounds for a collection, a string, or a buffer.",
+      "type": "object",
+      "properties": {
+        "max": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "min": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        }
+      }
+    },
+    "NumberBounds": {
+      "description": "Declared numeric bounds, present only when the source declares them.",
+      "type": "object",
+      "properties": {
+        "finiteOnly": {
+          "type": "boolean",
+          "default": false
+        },
+        "int": {
+          "type": "boolean",
+          "default": false
+        },
+        "max": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "min": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        }
+      }
+    },
+    "RefField": {
+      "description": "A named field of a `ref` node: the receiver property or parameter path that a\nrecursive reference re-enters through.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "#"
+        }
+      },
+      "required": [
+        "name",
+        "type"
+      ]
+    },
+    "ScalarKind": {
+      "description": "Scalar sub-kinds carried by [`Kind::Scalar`].",
+      "type": "string",
+      "enum": [
+        "null",
+        "undefined",
+        "boolean",
+        "number",
+        "bigInt",
+        "string"
+      ]
+    }
+  }
+}
