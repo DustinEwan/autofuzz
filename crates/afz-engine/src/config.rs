@@ -352,7 +352,7 @@ impl LoadedConfig {
     }
 
     /// Discovery scope for a codebase block: root plus include and exclude globs.
-    pub fn discovery_scope(&self) -> Result<(PathBuf, Option<Vec<String>>, Option<Vec<String>>), ConfigError> {
+    pub fn discovery_scope(&self) -> Result<DiscoveryScope, ConfigError> {
         let codebase = self
             .project
             .codebase
@@ -362,8 +362,16 @@ impl LoadedConfig {
             Some(root) => self.root.join(root),
             None => self.root.clone(),
         };
-        Ok((root, codebase.include.clone(), codebase.exclude.clone()))
+        Ok(DiscoveryScope { root, include: codebase.include.clone(), exclude: codebase.exclude.clone() })
     }
+}
+
+/// The directory and globs a `discover` request walks.
+#[derive(Debug, Clone)]
+pub struct DiscoveryScope {
+    pub root: PathBuf,
+    pub include: Option<Vec<String>>,
+    pub exclude: Option<Vec<String>>,
 }
 
 /// The built-in plugin command for a known harness, relative to the repository or project
@@ -406,7 +414,9 @@ impl ScanProject {
                 ));
             }
         }
-        for name in self.oracles.unimplemented.keys() {
+        // The design's rule: a named-but-unimplemented oracle is a configuration error, not a
+        // silently disabled check.
+        if let Some(name) = self.oracles.unimplemented.keys().next() {
             return Err(ConfigError::msg(format!(
                 "oracle \"{name}\" is not implemented in this version"
             )));

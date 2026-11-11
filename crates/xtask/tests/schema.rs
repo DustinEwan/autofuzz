@@ -70,3 +70,47 @@ fn committed_schema_matches_generated_schema() {
     std::fs::remove_dir_all(&dir).ok();
     assert!(stale.is_empty(), "docs/schema is stale, run `cargo run -p afz-xtask -- schema`: {stale:?}");
 }
+
+/// The design fixes the wire format: JSON field names are camelCase. serde's container-level
+/// `rename_all` renames variant names but leaves struct-variant fields alone, so a field like
+/// `max_items` reaches the wire unchanged and the generated TypeScript type disagrees with the
+/// Rust parser that accepts it.
+#[test]
+fn every_wire_field_name_is_camel_case() {
+    let dir = std::env::temp_dir().join(format!("afz-xtask-schema-camel-{}", std::process::id()));
+    let files = write_schemas(&dir).expect("schemas write");
+    let mut offenders = Vec::new();
+    for file in &files {
+        let text = std::fs::read_to_string(file).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).expect("schema is json");
+        let name = std::path::Path::new(file).file_name().unwrap().to_string_lossy().to_string();
+        walk_properties(&value, &name, &mut offenders);
+    }
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(offenders.is_empty(), "snake_case wire field names: {offenders:?}");
+}
+
+fn walk_properties(node: &serde_json::Value, schema: &str, offenders: &mut Vec<String>) {
+    match node {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                if key == "properties" {
+                    if let Some(fields) = value.as_object() {
+                        for field in fields.keys() {
+                            if field.contains('_') {
+                                offenders.push(format!("{schema}: {field}"));
+                            }
+                        }
+                    }
+                }
+                walk_properties(value, schema, offenders);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                walk_properties(item, schema, offenders);
+            }
+        }
+        _ => {}
+    }
+}

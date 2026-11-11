@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "handle": {
-      "description": "Plugin-side handle naming the built receiver and arguments. `invoke` may reference\nit so the plugin does not rebuild state it already built during `prepare`.",
+      "description": "Plugin-side handle naming the built receiver and arguments. `invoke` may reference it\nso the plugin does not rebuild state it already built during `prepare`.",
       "type": "string"
     },
     "summary": {

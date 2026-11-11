@@ -31,4 +31,7 @@ pub use types::{
     CollectionKind, CompositeKind, Field, FunctionBehavior, Kind, LengthBounds, NumberBounds,
     RefField, ScalarKind, TypeNode,
 };
-pub use value::{CallInput, MaterializedCall, NumberValue, Provenance, SpecialNumber, ValueTree};
+pub use value::{
+    CallInput, KeySide, MaterializedCall, NodePath, NumberValue, Provenance, SpecialNumber, Step,
+    ValueNode, ValueTree,
+};

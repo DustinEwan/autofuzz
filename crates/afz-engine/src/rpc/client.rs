@@ -267,22 +267,22 @@ impl PluginClient {
             return Err(reason);
         }
 
-        let response = loop {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            match rx.recv_timeout(remaining) {
-                Ok(resp) => break resp,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    self.drop_slot(id);
-                    // A recorded loss is more specific than "slow": the plugin died while we
-                    // waited, and the supervisor should classify the death, not the timeout.
-                    return Err(self.lost().unwrap_or(LostReason::NoAnswer));
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    self.drop_slot(id);
-                    return Err(self
-                        .await_exit_reason(Duration::from_millis(250))
-                        .unwrap_or(LostReason::Eof));
-                }
+        // One receive, not a poll loop: the deadline is the wait, and `recv_timeout` already
+        // blocks for it.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let response = match rx.recv_timeout(remaining) {
+            Ok(resp) => resp,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.drop_slot(id);
+                // A recorded loss is more specific than "slow": the plugin died while we
+                // waited, and the supervisor should classify the death, not the timeout.
+                return Err(self.lost().unwrap_or(LostReason::NoAnswer));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                self.drop_slot(id);
+                return Err(self
+                    .await_exit_reason(Duration::from_millis(250))
+                    .unwrap_or(LostReason::Eof));
             }
         };
 
@@ -387,19 +387,15 @@ fn spawn_reader(stdout: ChildStdout, state: Arc<Mutex<State>>) {
         .spawn(move || {
             let mut reader = buffered(stdout);
             let mut buf = String::new();
-            loop {
-                match read_line(&mut reader, &mut buf) {
-                    Ok(Some(line)) => {
-                        let Ok(resp) = parse_response(&line) else { continue };
-                        let slot = {
-                            let mut state = state.lock().expect("state lock");
-                            state.slots.remove(&resp.id())
-                        };
-                        if let Some(tx) = slot {
-                            let _ = tx.send(resp);
-                        }
-                    }
-                    Ok(None) | Err(_) => break,
+            // EOF or a read error ends the loop, and the line below records the loss.
+            while let Ok(Some(line)) = read_line(&mut reader, &mut buf) {
+                let Ok(resp) = parse_response(&line) else { continue };
+                let slot = {
+                    let mut state = state.lock().expect("state lock");
+                    state.slots.remove(&resp.id())
+                };
+                if let Some(tx) = slot {
+                    let _ = tx.send(resp);
                 }
             }
             // A closed pipe is how a plugin dies when no exit status is readable yet.

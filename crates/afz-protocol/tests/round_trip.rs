@@ -141,36 +141,64 @@ fn type_node_kind_tag_is_on_the_wire() {
 #[test]
 fn value_tree_round_trips_every_node() {
     let values = vec![
-        ValueTree::Null,
-        ValueTree::Undefined,
+        ValueTree::null(),
+        ValueTree::undefined(),
         ValueTree::bool(true),
         ValueTree::number(1.5),
         ValueTree::number(f64::NAN),
         ValueTree::number(f64::INFINITY),
         ValueTree::number(f64::NEG_INFINITY),
-        ValueTree::BigInt { value: "-9223372036854775808".into() },
+        ValueTree::new(ValueNode::BigInt { value: "-9223372036854775808".into() }),
         ValueTree::string(""),
-        ValueTree::string("1 MiB".repeat(1)),
-        ValueTree::Literal { value: serde_json::json!({"a": [1, null, true]}) },
-        ValueTree::Array { items: vec![ValueTree::number(0.0), ValueTree::Null] },
-        ValueTree::Set { items: vec![ValueTree::string("a")] },
-        ValueTree::Map {
+        ValueTree::string("1 MiB".to_string()),
+        ValueTree::new(ValueNode::Literal { value: serde_json::json!({"a": [1, null, true]}) }),
+        ValueTree::new(ValueNode::Array { items: vec![ValueTree::number(0.0), ValueTree::null()] }),
+        ValueTree::new(ValueNode::Set { items: vec![ValueTree::string("a")] }),
+        ValueTree::new(ValueNode::Map {
             entries: vec![(ValueTree::string("k"), ValueTree::number(-1.0))],
-        },
-        ValueTree::Object {
+        }),
+        ValueTree::new(ValueNode::Object {
             fields: vec![("v".into(), ValueTree::number(10.0)), ("to".into(), ValueTree::string("ZZZ"))],
-        },
-        ValueTree::Tuple { items: vec![ValueTree::bool(false)] },
-        ValueTree::Buffer { bytes: vec![0, 1, 2, 255] },
-        ValueTree::Function { behavior: FunctionBehavior::Throw, returns: None },
-        ValueTree::Stream { iterable: false, items: vec![ValueTree::number(1.0)] },
-        ValueTree::Opaque { ty: "Db".into() },
+        }),
+        ValueTree::new(ValueNode::Tuple { items: vec![ValueTree::bool(false)] }),
+        ValueTree::new(ValueNode::Buffer { bytes: vec![0, 1, 2, 255] }),
+        ValueTree::new(ValueNode::Function { behavior: FunctionBehavior::Throw, returns: None }),
+        ValueTree::new(ValueNode::Function {
+            behavior: FunctionBehavior::ReturnFirst,
+            returns: Some(Box::new(ValueTree::number(0.0))),
+        }),
+        ValueTree::new(ValueNode::Stream { iterable: false, items: vec![ValueTree::number(1.0)] }),
+        ValueTree::new(ValueNode::Opaque { ty: "Db".into() }),
     ];
     for v in &values {
         round_trip(v);
     }
-    round_trip(&CallInput { arguments: values.clone(), receiver: Some(ValueTree::Null) });
+    round_trip(&CallInput { arguments: values.clone(), receiver: Some(ValueTree::null()) });
     round_trip(&CallInput::default());
+}
+
+#[test]
+fn provenance_rides_flat_beside_the_node_tag() {
+    // The plugin reads one flat object per node: its `node` tag, its fields, and provenance.
+    let tree = ValueTree::boundary(ValueNode::String { value: String::new() });
+    let json = serde_json::to_value(&tree).unwrap();
+    assert_eq!(json["node"], "string");
+    assert_eq!(json["value"], "");
+    assert_eq!(json["provenance"], "boundary");
+    assert_eq!(tree.provenance, Provenance::Boundary);
+
+    // An absent provenance is a generated node, so a plugin that omits it stays readable.
+    let back: ValueTree = serde_json::from_str(r#"{"node":"null"}"#).unwrap();
+    assert_eq!(back, ValueTree::null());
+    assert_eq!(back.provenance, Provenance::Generated);
+
+    let mutated = ValueTree::with_provenance(
+        ValueNode::number(1.0),
+        Provenance::Mutated { op: "boundary".into(), from: "afz:t:44be".into() },
+    );
+    let json = serde_json::to_value(&mutated).unwrap();
+    assert_eq!(json["provenance"]["mutated"]["op"], "boundary");
+    round_trip(&mutated);
 }
 
 #[test]
@@ -179,13 +207,44 @@ fn special_numbers_survive_json() {
     for v in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let tree = ValueTree::number(v);
         let back = round_trip(&tree);
-        let ValueTree::Number { value } = back else { panic!("expected number") };
+        let ValueNode::Number { value } = back.node else { panic!("expected number") };
         match v {
             x if x.is_nan() => assert!(value.as_f64().is_nan()),
             x if x == f64::INFINITY => assert_eq!(value.as_f64(), f64::INFINITY),
             _ => assert_eq!(value.as_f64(), f64::NEG_INFINITY),
         }
     }
+}
+
+#[test]
+fn node_paths_address_every_descendant() {
+    let tree = ValueTree::new(ValueNode::Object {
+        fields: vec![
+            ("items".into(), ValueTree::new(ValueNode::Array { items: vec![ValueTree::number(7.0)] })),
+            ("map".into(), ValueTree::new(ValueNode::Map { entries: vec![(ValueTree::string("k"), ValueTree::string("v"))] })),
+        ],
+    });
+    let paths = tree.paths();
+    // root, items, items[0], map, map[0].key, map[0].value
+    assert_eq!(paths.len(), 6, "paths were {paths:?}");
+    assert_eq!(paths[0], NodePath::root());
+
+    let target = NodePath { steps: vec![Step::Field("items".into()), Step::Index(0)] };
+    let found = target.get(&tree).expect("the path exists");
+    assert_eq!(found.node, ValueNode::Number { value: NumberValue::Finite(7.0) });
+
+    let mut replaced = tree.clone();
+    assert!(target.replace(&mut replaced, ValueTree::boundary(ValueNode::number(8.0))));
+    let found = target.get(&replaced).expect("still there");
+    assert_eq!(found.node, ValueNode::Number { value: NumberValue::Finite(8.0) });
+    assert_eq!(found.provenance, Provenance::Boundary);
+    // The untouched sibling keeps its value, so a mutation cannot leak across fields.
+    assert_eq!(NodePath { steps: vec![Step::Field("map".into())] }.get(&replaced).unwrap().node,
+               NodePath { steps: vec![Step::Field("map".into())] }.get(&tree).unwrap().node);
+
+    // A path through a missing index or a wrong kind resolves to nothing rather than panicking.
+    assert!(NodePath { steps: vec![Step::Field("items".into()), Step::Index(9)] }.get(&tree).is_none());
+    assert!(!NodePath { steps: vec![Step::Index(0)] }.replace(&mut replaced, ValueTree::null()));
 }
 
 #[test]
@@ -366,7 +425,7 @@ fn target_descriptor_round_trips() {
     round_trip(&runtime);
 
     for m in [Materialization::Constructible, Materialization::FixtureRequired, Materialization::Opaque] {
-        assert_eq!(serde_json::to_value(m).unwrap().as_str().is_some(), true);
+        assert!(serde_json::to_value(m).unwrap().as_str().is_some());
         round_trip(&m);
     }
 }
@@ -451,11 +510,11 @@ fn method_payloads_round_trip() {
     });
     round_trip(&MinimizeReq {
         target_id: "afz:t:44be".into(),
-        values: vec![ValueTree::Null],
+        values: vec![ValueTree::null()],
         fault: FaultSignature { class: "TypeError".into(), message: "m".into(), frames: vec![frame()] },
         budget_ms: 5000,
     });
-    round_trip(&MinimizeResp { values: vec![ValueTree::Null], steps: 12 });
+    round_trip(&MinimizeResp { values: vec![ValueTree::null()], steps: 12 });
 }
 
 #[test]

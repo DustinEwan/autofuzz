@@ -1,0 +1,713 @@
+[
+  {
+    "name": "null",
+    "type": {
+      "kind": "scalar",
+      "scalar": "null"
+    }
+  },
+  {
+    "name": "undefined",
+    "type": {
+      "kind": "scalar",
+      "scalar": "undefined"
+    }
+  },
+  {
+    "name": "boolean",
+    "type": {
+      "kind": "scalar",
+      "scalar": "boolean"
+    }
+  },
+  {
+    "name": "number-plain",
+    "type": {
+      "kind": "scalar",
+      "scalar": "number"
+    }
+  },
+  {
+    "name": "number-int-bounded",
+    "type": {
+      "kind": "scalar",
+      "scalar": "number",
+      "bounds": {
+        "int": true,
+        "min": 0,
+        "max": 64
+      }
+    }
+  },
+  {
+    "name": "number-finite-bounded",
+    "type": {
+      "kind": "scalar",
+      "scalar": "number",
+      "bounds": {
+        "finiteOnly": true,
+        "min": -1.5,
+        "max": 1.5
+      }
+    }
+  },
+  {
+    "name": "bigint",
+    "type": {
+      "kind": "scalar",
+      "scalar": "bigInt"
+    }
+  },
+  {
+    "name": "string-bounded",
+    "type": {
+      "kind": "scalar",
+      "scalar": "string",
+      "length": {
+        "min": 0,
+        "max": 12
+      }
+    }
+  },
+  {
+    "name": "format-email",
+    "type": {
+      "kind": "stringFormat",
+      "format": "email"
+    }
+  },
+  {
+    "name": "format-uuid",
+    "type": {
+      "kind": "stringFormat",
+      "format": "uuid"
+    }
+  },
+  {
+    "name": "format-date-time",
+    "type": {
+      "kind": "stringFormat",
+      "format": "date-time"
+    }
+  },
+  {
+    "name": "format-hostname",
+    "type": {
+      "kind": "stringFormat",
+      "format": "hostname"
+    }
+  },
+  {
+    "name": "format-ipv4",
+    "type": {
+      "kind": "stringFormat",
+      "format": "ipv4"
+    }
+  },
+  {
+    "name": "format-uri",
+    "type": {
+      "kind": "stringFormat",
+      "format": "uri"
+    }
+  },
+  {
+    "name": "format-unknown",
+    "type": {
+      "kind": "stringFormat",
+      "format": "semver"
+    }
+  },
+  {
+    "name": "literal-strings",
+    "type": {
+      "kind": "literal",
+      "values": [
+        "create",
+        "read",
+        "update",
+        "delete"
+      ]
+    }
+  },
+  {
+    "name": "literal-mixed",
+    "type": {
+      "kind": "literal",
+      "values": [
+        0,
+        1,
+        "two",
+        null,
+        true
+      ]
+    }
+  },
+  {
+    "name": "array-number",
+    "type": {
+      "kind": "collection",
+      "collection": "array",
+      "type": {
+        "kind": "scalar",
+        "scalar": "number"
+      },
+      "length": {
+        "min": 1,
+        "max": 5
+      }
+    }
+  },
+  {
+    "name": "set-string",
+    "type": {
+      "kind": "collection",
+      "collection": "set",
+      "type": {
+        "kind": "scalar",
+        "scalar": "string",
+        "length": {
+          "min": 0,
+          "max": 12
+        }
+      }
+    }
+  },
+  {
+    "name": "map-string-object",
+    "type": {
+      "kind": "collection",
+      "collection": "map",
+      "type": {
+        "kind": "object",
+        "fields": [
+          {
+            "name": "v",
+            "type": {
+              "kind": "scalar",
+              "scalar": "number",
+              "bounds": {
+                "int": true,
+                "min": 0,
+                "max": 64
+              }
+            },
+            "required": true
+          },
+          {
+            "name": "label",
+            "type": {
+              "kind": "scalar",
+              "scalar": "string",
+              "length": {
+                "min": 0,
+                "max": 12
+              }
+            },
+            "required": false
+          }
+        ]
+      },
+      "key": {
+        "kind": "scalar",
+        "scalar": "string",
+        "length": {
+          "min": 0,
+          "max": 12
+        }
+      },
+      "length": {
+        "max": 4
+      }
+    }
+  },
+  {
+    "name": "object-flat",
+    "type": {
+      "kind": "object",
+      "name": "Point",
+      "fields": [
+        {
+          "name": "x",
+          "type": {
+            "kind": "scalar",
+            "scalar": "number"
+          },
+          "required": true
+        },
+        {
+          "name": "y",
+          "type": {
+            "kind": "scalar",
+            "scalar": "number"
+          },
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": {
+            "kind": "scalar",
+            "scalar": "string",
+            "length": {
+              "min": 0,
+              "max": 12
+            }
+          },
+          "required": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "object-nested",
+    "type": {
+      "kind": "object",
+      "name": "Order",
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "stringFormat",
+            "format": "uuid"
+          },
+          "required": true
+        },
+        {
+          "name": "items",
+          "type": {
+            "kind": "collection",
+            "collection": "array",
+            "type": {
+              "kind": "object",
+              "fields": [
+                {
+                  "name": "sku",
+                  "type": {
+                    "kind": "scalar",
+                    "scalar": "string",
+                    "length": {
+                      "min": 0,
+                      "max": 12
+                    }
+                  },
+                  "required": true
+                },
+                {
+                  "name": "qty",
+                  "type": {
+                    "kind": "scalar",
+                    "scalar": "number",
+                    "bounds": {
+                      "int": true,
+                      "min": 0,
+                      "max": 64
+                    }
+                  },
+                  "required": true
+                }
+              ]
+            },
+            "length": {
+              "max": 3
+            }
+          },
+          "required": true
+        },
+        {
+          "name": "shipTo",
+          "type": {
+            "kind": "object",
+            "fields": [
+              {
+                "name": "street",
+                "type": {
+                  "kind": "scalar",
+                  "scalar": "string",
+                  "length": {
+                    "min": 0,
+                    "max": 12
+                  }
+                },
+                "required": true
+              },
+              {
+                "name": "country",
+                "type": {
+                  "kind": "literal",
+                  "values": [
+                    "NL",
+                    "DE",
+                    "US"
+                  ]
+                },
+                "required": true
+              }
+            ]
+          },
+          "required": false
+        }
+      ]
+    }
+  },
+  {
+    "name": "tuple",
+    "type": {
+      "kind": "tuple",
+      "items": [
+        {
+          "kind": "scalar",
+          "scalar": "string",
+          "length": {
+            "min": 0,
+            "max": 12
+          }
+        },
+        {
+          "kind": "scalar",
+          "scalar": "number",
+          "bounds": {
+            "int": true,
+            "min": 0,
+            "max": 64
+          }
+        },
+        {
+          "kind": "scalar",
+          "scalar": "boolean"
+        }
+      ]
+    }
+  },
+  {
+    "name": "union-discriminated",
+    "type": {
+      "kind": "composite",
+      "composite": "union",
+      "discriminant": "op",
+      "members": [
+        {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "op",
+              "type": {
+                "kind": "literal",
+                "values": [
+                  "add"
+                ]
+              },
+              "required": true
+            },
+            {
+              "name": "a",
+              "type": {
+                "kind": "scalar",
+                "scalar": "number"
+              },
+              "required": true
+            }
+          ]
+        },
+        {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "op",
+              "type": {
+                "kind": "literal",
+                "values": [
+                  "concat"
+                ]
+              },
+              "required": true
+            },
+            {
+              "name": "a",
+              "type": {
+                "kind": "scalar",
+                "scalar": "string",
+                "length": {
+                  "min": 0,
+                  "max": 12
+                }
+              },
+              "required": true
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "union-plain",
+    "type": {
+      "kind": "composite",
+      "composite": "union",
+      "members": [
+        {
+          "kind": "scalar",
+          "scalar": "string",
+          "length": {
+            "min": 0,
+            "max": 12
+          }
+        },
+        {
+          "kind": "scalar",
+          "scalar": "number"
+        },
+        {
+          "kind": "scalar",
+          "scalar": "null"
+        }
+      ]
+    }
+  },
+  {
+    "name": "intersection",
+    "type": {
+      "kind": "composite",
+      "composite": "intersection",
+      "members": [
+        {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "id",
+              "type": {
+                "kind": "scalar",
+                "scalar": "number",
+                "bounds": {
+                  "int": true,
+                  "min": 0,
+                  "max": 64
+                }
+              },
+              "required": true
+            }
+          ]
+        },
+        {
+          "kind": "object",
+          "fields": [
+            {
+              "name": "name",
+              "type": {
+                "kind": "scalar",
+                "scalar": "string",
+                "length": {
+                  "min": 0,
+                  "max": 12
+                }
+              },
+              "required": true
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "name": "buffer",
+    "type": {
+      "kind": "buffer",
+      "length": {
+        "min": 0,
+        "max": 16
+      }
+    }
+  },
+  {
+    "name": "promise-number",
+    "type": {
+      "kind": "promise",
+      "type": {
+        "kind": "scalar",
+        "scalar": "number"
+      }
+    }
+  },
+  {
+    "name": "promise-object",
+    "type": {
+      "kind": "promise",
+      "type": {
+        "kind": "object",
+        "fields": [
+          {
+            "name": "ok",
+            "type": {
+              "kind": "scalar",
+              "scalar": "boolean"
+            },
+            "required": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "function-return-first",
+    "type": {
+      "kind": "function",
+      "behavior": "returnFirst",
+      "type": {
+        "kind": "scalar",
+        "scalar": "number"
+      }
+    }
+  },
+  {
+    "name": "function-throw",
+    "type": {
+      "kind": "function",
+      "behavior": "throw"
+    }
+  },
+  {
+    "name": "function-capture",
+    "type": {
+      "kind": "function",
+      "behavior": "captureArguments",
+      "type": {
+        "kind": "scalar",
+        "scalar": "string",
+        "length": {
+          "min": 0,
+          "max": 12
+        }
+      }
+    }
+  },
+  {
+    "name": "stream-iterable",
+    "type": {
+      "kind": "stream",
+      "iterable": true,
+      "type": {
+        "kind": "scalar",
+        "scalar": "string",
+        "length": {
+          "min": 0,
+          "max": 12
+        }
+      },
+      "maxItems": 3
+    }
+  },
+  {
+    "name": "stream-async",
+    "type": {
+      "kind": "stream",
+      "iterable": false,
+      "type": {
+        "kind": "scalar",
+        "scalar": "number",
+        "bounds": {
+          "int": true,
+          "min": 0,
+          "max": 64
+        }
+      }
+    }
+  },
+  {
+    "name": "opaque",
+    "type": {
+      "kind": "opaque",
+      "ty": "Socket",
+      "module": "node:net"
+    }
+  },
+  {
+    "name": "ref-tree",
+    "type": {
+      "kind": "object",
+      "name": "Node",
+      "id": "Node",
+      "fields": [
+        {
+          "name": "id",
+          "type": {
+            "kind": "scalar",
+            "scalar": "number",
+            "bounds": {
+              "int": true,
+              "min": 0,
+              "max": 64
+            }
+          },
+          "required": true
+        },
+        {
+          "name": "children",
+          "type": {
+            "kind": "collection",
+            "collection": "array",
+            "type": {
+              "kind": "ref",
+              "name": "Node",
+              "fields": [
+                {
+                  "name": "id",
+                  "type": {
+                    "kind": "scalar",
+                    "scalar": "number",
+                    "bounds": {
+                      "int": true,
+                      "min": 0,
+                      "max": 64
+                    }
+                  }
+                },
+                {
+                  "name": "children",
+                  "type": {
+                    "kind": "collection",
+                    "collection": "array",
+                    "type": {
+                      "kind": "ref",
+                      "name": "Node"
+                    }
+                  }
+                }
+              ]
+            },
+            "length": {
+              "max": 3
+            }
+          },
+          "required": true
+        }
+      ]
+    }
+  },
+  {
+    "name": "ref-bare",
+    "type": {
+      "kind": "ref",
+      "name": "Context",
+      "fields": [
+        {
+          "name": "depth",
+          "type": {
+            "kind": "scalar",
+            "scalar": "number",
+            "bounds": {
+              "int": true,
+              "min": 0,
+              "max": 64
+            }
+          }
+        },
+        {
+          "name": "parent",
+          "type": {
+            "kind": "ref",
+            "name": "Context"
+          }
+        }
+      ]
+    }
+  }
+]

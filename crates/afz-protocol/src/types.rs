@@ -174,7 +174,9 @@ pub enum TypeNode {
         iterable: bool,
         #[serde(rename = "type")]
         element: Box<TypeNode>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        /// Renamed explicitly: serde's container-level `rename_all` covers variant names, not
+        /// the fields of a struct variant.
+        #[serde(default, skip_serializing_if = "Option::is_none", rename = "maxItems")]
         max_items: Option<u64>,
     },
     /// A type the plugin cannot build: class instance, DOM node, socket. Drives

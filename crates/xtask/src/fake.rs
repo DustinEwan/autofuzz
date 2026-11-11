@@ -77,7 +77,7 @@ impl Script {
             let at = d.at.unwrap_or(next_free);
             let to = d.to.unwrap_or(at);
             next_free = next_free.max(to + 1);
-            if index >= at && index <= to && d.r#for.as_deref().map_or(true, |t| t == target_id) {
+            if index >= at && index <= to && d.r#for.as_deref().is_none_or(|t| t == target_id) {
                 return Some(d);
             }
         }

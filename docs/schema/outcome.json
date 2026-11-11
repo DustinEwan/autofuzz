@@ -138,7 +138,7 @@
       ]
     },
     "NumberValue": {
-      "description": "A number that survives JSON round-trip exactly: finite values as `f64`, everything else\nas a name. `NaN`, `Infinity`, and `-Infinity` have no JSON number token, so they travel\nas strings and the plugin re-materializes them.",
+      "description": "A number that survives JSON round-trip exactly: finite values as `f64`, everything else as\na name. JSON has no token for `NaN` or `Infinity`, so they travel as names and the plugin\nre-materializes them.",
       "anyOf": [
         {
           "type": "number",
@@ -190,6 +190,95 @@
         }
       }
     },
+    "Provenance": {
+      "description": "Why a node exists.",
+      "oneOf": [
+        {
+          "description": "Drawn from the type by the generator.",
+          "type": "string",
+          "const": "generated"
+        },
+        {
+          "description": "Drawn from the shared boundary table in `crates/afz-engine/src/boundaries.rs`.",
+          "type": "string",
+          "const": "boundary"
+        },
+        {
+          "description": "Rewritten by one mutation operator. `op` names it, `from` names the target or corpus\nentry the operation is attributed to.",
+          "type": "object",
+          "properties": {
+            "mutated": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string"
+                },
+                "op": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "from"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "mutated"
+          ]
+        },
+        {
+          "description": "Copied whole from another corpus entry.\n\nRenamed explicitly: serde's container-level `rename_all` covers variant names, not the\nfields of a struct variant, and the wire format is camelCase everywhere.",
+          "type": "object",
+          "properties": {
+            "transplanted": {
+              "type": "object",
+              "properties": {
+                "fromEntry": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "fromEntry"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "transplanted"
+          ]
+        },
+        {
+          "description": "Produced by the minimizer at this step count.",
+          "type": "object",
+          "properties": {
+            "minimized": {
+              "type": "object",
+              "properties": {
+                "step": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "step"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "minimized"
+          ]
+        },
+        {
+          "description": "Supplied by a user fixture.",
+          "type": "string",
+          "const": "user"
+        }
+      ]
+    },
     "RejectedOutcome": {
       "description": "`rejected`: the target examined the input, decided it was not acceptable, and said so\nthrough the channel its own signature declares. `via` names the rule that decided it.",
       "type": "object",
@@ -231,7 +320,14 @@
       ]
     },
     "ValueTree": {
-      "description": "One node of a structured input.",
+      "description": "A node plus the provenance that made it.",
+      "type": "object",
+      "properties": {
+        "provenance": {
+          "$ref": "#/$defs/Provenance",
+          "default": "generated"
+        }
+      },
       "oneOf": [
         {
           "type": "object",

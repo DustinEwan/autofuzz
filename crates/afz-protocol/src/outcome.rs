@@ -68,7 +68,7 @@ impl FaultSignature {
 }
 
 /// One stack frame inside a fault.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FaultFrame {
     pub file: String,
@@ -77,12 +77,6 @@ pub struct FaultFrame {
     pub column: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fn_name: Option<String>,
-}
-
-impl Default for FaultFrame {
-    fn default() -> Self {
-        FaultFrame { file: String::new(), line: 0, column: None, fn_name: None }
-    }
 }
 
 /// The three outcomes. Exactly one is produced per invocation, by the plugin, always.

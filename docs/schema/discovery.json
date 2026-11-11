@@ -720,7 +720,8 @@
               "type": "string",
               "const": "stream"
             },
-            "max_items": {
+            "maxItems": {
+              "description": "Renamed explicitly: serde's container-level `rename_all` covers variant names, not\nthe fields of a struct variant.",
               "type": [
                 "integer",
                 "null"

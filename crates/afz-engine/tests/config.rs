@@ -43,10 +43,10 @@ fn a_codebase_block_loads_with_design_defaults() {
     assert_eq!(loaded.project.budget.workers_or_default(), 8);
     assert_eq!(loaded.project.oracles.deadline.ms, Some(2000));
 
-    let (root, include, exclude) = loaded.discovery_scope().expect("scope");
-    assert_eq!(root, loaded.root);
-    assert_eq!(include.as_deref(), Some(&["src/**/*.ts".to_string()][..]));
-    assert_eq!(exclude.as_deref(), Some(&["**/*.test.ts".to_string()][..]));
+    let scope = loaded.discovery_scope().expect("scope");
+    assert_eq!(scope.root, loaded.root);
+    assert_eq!(scope.include.as_deref(), Some(&["src/**/*.ts".to_string()][..]));
+    assert_eq!(scope.exclude.as_deref(), Some(&["**/*.test.ts".to_string()][..]));
 
     let hash = loaded.config_hash().expect("hash");
     assert!(hash.starts_with("sha256:") && hash.len() == 71, "hash was {hash}");

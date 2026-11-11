@@ -13,7 +13,7 @@ use afz_protocol::*;
 pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), String> {
     let launch = launch_for(argv)?;
     let root = PathBuf::from(path.as_deref().unwrap_or("."));
-    let (root, include, exclude, config_path) = scope_for(&root)?;
+    let scope = scope_for(&root)?;
 
     let client = PluginClient::spawn(&launch).map_err(|r| r.detail())?;
     let handshake = client.handshake().map_err(|r| r.detail())?;
@@ -22,10 +22,10 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
     let discovery = client
         .discover(
             &DiscoverReq {
-                root: root.display().to_string(),
-                include,
-                exclude,
-                config_path: config_path.map(|p| p.display().to_string()),
+                root: scope.root.display().to_string(),
+                include: scope.include,
+                exclude: scope.exclude,
+                config_path: scope.config_path.map(|p| p.display().to_string()),
             },
             std::time::Duration::from_secs(120),
         )
@@ -143,15 +143,28 @@ fn launch_for(argv: Vec<String>) -> Result<Launch, String> {
     Err("no --command given and afz-fakeplugin is not beside this binary; build it with `cargo build --workspace`".to_string())
 }
 
+/// Where to discover, and the config file that said so, if there was one.
+struct Scope {
+    root: PathBuf,
+    include: Option<Vec<String>>,
+    exclude: Option<Vec<String>>,
+    config_path: Option<PathBuf>,
+}
+
 /// Discovery scope: the scan project's block if there is one, otherwise the given directory.
-fn scope_for(root: &Path) -> Result<(PathBuf, Option<Vec<String>>, Option<Vec<String>>, Option<PathBuf>), String> {
+fn scope_for(root: &Path) -> Result<Scope, String> {
     let candidate = root.join(config::CONFIG_FILE_NAME);
     if candidate.is_file() {
         let loaded: LoadedConfig = config::load(&candidate).map_err(|e| e.to_string())?;
-        let (scope_root, include, exclude) = loaded.discovery_scope().map_err(|e| e.to_string())?;
-        return Ok((scope_root, include, exclude, Some(loaded.path)));
+        let declared = loaded.discovery_scope().map_err(|e| e.to_string())?;
+        return Ok(Scope {
+            root: declared.root,
+            include: declared.include,
+            exclude: declared.exclude,
+            config_path: Some(loaded.path),
+        });
     }
-    Ok((root.to_path_buf(), None, None, None))
+    Ok(Scope { root: root.to_path_buf(), include: None, exclude: None, config_path: None })
 }
 
 fn wire_target_class(class: TargetClass) -> &'static str {
