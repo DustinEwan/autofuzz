@@ -194,8 +194,9 @@ mod tests {
     fn a_higher_yield_entry_is_drawn_more_often() {
         let mut scheduler = Scheduler::guided();
         let mut corpus = corpus_with(&[&[1], &[2, 3, 4, 5, 6]]);
-        let ids: Vec<String> = corpus.entries().map(|e| e.id.clone()).collect();
-        let rich = ids[1].clone();
+        // The rich entry is the one with five edges. Corpus ids are content hashes, so the order
+        // `entries()` yields them in is not a property a test may rely on.
+        let rich = corpus.entries().find(|e| e.edges.len() > 1).unwrap().id.clone();
         let mut rng = Rng::seeded(3);
         let (mut rich_draws, mut mutated) = (0, 0);
         for invocation in 0..4_000 {
@@ -218,7 +219,7 @@ mod tests {
     fn an_unvisited_entry_outranks_a_high_yield_one() {
         let mut scheduler = Scheduler::guided();
         let mut corpus = corpus_with(&[&[1, 2, 3, 4, 5], &[9]]);
-        let rich = corpus.entries().next().unwrap().id.clone();
+        let rich = corpus.entries().find(|e| e.edges.len() > 1).unwrap().id.clone();
         corpus.note_use(&rich, 10_000);
         let poor = corpus.entries().find(|e| e.id != rich).unwrap().id.clone();
         let mut rng = Rng::seeded(4);

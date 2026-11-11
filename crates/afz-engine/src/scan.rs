@@ -113,7 +113,10 @@ impl Options {
 pub struct Progress {
     pub invocations: u64,
     pub coverage_edges: u64,
-    /// Reachable edges, as the harness reported them.
+    /// Reachable edges, as the harness reported them across the whole worker pool. A harness
+    /// learns an edge only when the runtime reveals it, so this count grows as a scan reaches code
+    /// it had not executed. The ratio is therefore comparable between two runs of the same seed and
+    /// strategy, and the covered-edge count is the number to compare across strategies.
     pub coverage_total: u64,
     /// Covered edges over the edges the harness says are reachable. Zero when the harness reports
     /// no coverage at all.
@@ -210,6 +213,10 @@ struct Scanner {
     handshake: Handshake,
     discovery: afz_protocol::Discovery,
     targets: Vec<TargetDescriptor>,
+    /// Declared argument shape per target id, so a donor can be chosen by signature rather than
+    /// by target id. Computed once: every mutation draws a donor, and serializing a `TypeNode`
+    /// on each draw would cost more than the batch it is planning.
+    signatures: HashMap<String, String>,
     oracles: Oracles,
     scheduler: Scheduler,
     corpus: Corpus,
@@ -307,6 +314,7 @@ impl Scanner {
             options: options.clone(),
             handshake,
             discovery,
+            signatures: signature_index(&targets),
             targets,
             oracles,
             scheduler,
@@ -425,7 +433,11 @@ impl Scanner {
                     let Some(entry) = self.corpus.get(&entry_id).cloned() else { continue };
                     self.corpus.note_use(&entry_id, invocation);
                     let donor = self.donor(&entry.target_id, &entry_id);
-                    let mutated = self.mutate_arguments(&entry.target_id, &values, donor.as_ref());
+                    let (donor_values, donor_id) = match donor.as_ref() {
+                        Some((id, values)) => (Some(values), id.as_str()),
+                        None => (None, ""),
+                    };
+                    let mutated = self.mutate_arguments(&entry.target_id, &values, donor_values, donor_id);
                     (entry.target_id, mutated)
                 }
             };
@@ -465,21 +477,27 @@ impl Scanner {
         self.rng.pick(&live).copied()
     }
 
-    /// Another retained input for the same target, to donate a subtree during mutation.
-    fn donor(&mut self, target_id: &str, except: &str) -> Option<Vec<ValueTree>> {
-        let ids: Vec<String> = self
-            .corpus
-            .entries()
-            .filter(|e| e.target_id == target_id && e.id != except)
-            .map(|e| e.id.clone())
-            .collect();
-        let id = self.rng.pick(&ids)?.clone();
-        self.corpus.get(&id).map(|e| e.values.clone())
+    /// Another retained input to donate a subtree during mutation, as its corpus entry id and its
+    /// argument values. The entry id is what the transplant provenance records, so a finding names
+    /// the corpus entry a grafted value came from and a triager can open that entry.
+    fn donor(&mut self, target_id: &str, except: &str) -> Option<(String, Vec<ValueTree>)> {
+        let signature = self.signatures.get(target_id)?.clone();
+        let entries: Vec<(String, String)> =
+            self.corpus.entries().map(|entry| (entry.id.clone(), entry.target_id.clone())).collect();
+        let pool = donor_pool(&entries, target_id, except, &self.signatures, &signature);
+        let id = self.rng.pick(&pool)?.clone();
+        self.corpus.get(&id).map(|entry| (id.clone(), entry.values.clone()))
     }
 
     /// Mutate one argument of a retained input, leaving the others alone. Mutating every argument
     /// at once loses whatever combination the retained input had found.
-    fn mutate_arguments(&mut self, target_id: &str, values: &[ValueTree], donor: Option<&Vec<ValueTree>>) -> Vec<ValueTree> {
+    fn mutate_arguments(
+        &mut self,
+        target_id: &str,
+        values: &[ValueTree],
+        donor: Option<&Vec<ValueTree>>,
+        donor_id: &str,
+    ) -> Vec<ValueTree> {
         let Some(position) = self.targets.iter().position(|t| t.id == target_id) else { return values.to_vec() };
         if values.is_empty() || self.targets[position].parameters.is_empty() {
             return values.to_vec();
@@ -488,7 +506,7 @@ impl Scanner {
         let Some(parameter) = self.targets[position].parameters.get(index) else { return values.to_vec() };
         let donor_value = donor.and_then(|d| d.get(index));
         let mut next = values.to_vec();
-        let mutated = mutate_with_donor(&next[index], &parameter.ty, &mut self.rng, donor_value, target_id);
+        let mutated = mutate_with_donor(&next[index], &parameter.ty, &mut self.rng, donor_value, donor_id);
         next[index] = mutated;
         next
     }
@@ -816,6 +834,53 @@ impl Scanner {
     }
 }
 
+/// The declared argument shape of a target: its parameter types in order. Parameter names are
+/// left out because they say nothing about whether a value is legal at a position.
+fn signature_of(target: &TargetDescriptor) -> String {
+    target
+        .parameters
+        .iter()
+        .map(|parameter| serde_json::to_string(&parameter.ty).unwrap_or_else(|_| "?".to_string()))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn signature_index(targets: &[TargetDescriptor]) -> HashMap<String, String> {
+    targets.iter().map(|target| (target.id.clone(), signature_of(target))).collect()
+}
+
+/// Which retained entries may donate to `target_id`: another entry for the same target first,
+/// and otherwise any entry whose declared parameter types are the same.
+///
+/// Entry points that take the same argument types solve the same argument problem, so an input
+/// that satisfied one of them is a head start on the others. On the billing fixture that sharing
+/// is the difference between finding the bug and not finding it: `creditSummary` is the only entry
+/// point that calls `isReissue`, it retained a single input that failed the admission test, and
+/// the two siblings taking the same `ReportRequest` were the ones whose entries got past
+/// `isCreditWindow`. `mutate::transplant` still rejects any node the destination declaration does
+/// not allow, so a wider pool cannot graft a value the target would read as a type error.
+fn donor_pool(
+    entries: &[(String, String)],
+    target_id: &str,
+    except: &str,
+    signatures: &HashMap<String, String>,
+    signature: &str,
+) -> Vec<String> {
+    let mut same_target = Vec::new();
+    let mut same_shape = Vec::new();
+    for (id, owner) in entries {
+        if id == except {
+            continue;
+        }
+        if owner == target_id {
+            same_target.push(id.clone());
+        } else if signatures.get(owner).map(String::as_str) == Some(signature) {
+            same_shape.push(id.clone());
+        }
+    }
+    if same_target.is_empty() { same_shape } else { same_target }
+}
+
 /// `git:<short sha>` when the scan root is in a repository, `None` when it is not.
 fn git_revision(root: &str) -> Option<String> {
     let output = Command::new("git").arg("-C").arg(root).args(["rev-parse", "--short", "HEAD"]).output().ok()?;
@@ -859,4 +924,45 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     (if m <= 2 { y + 1 } else { y }, m as u32, d as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn signatures() -> HashMap<String, String> {
+        HashMap::from([
+            ("summary".to_string(), "REPORT".to_string()),
+            ("manifest".to_string(), "REPORT".to_string()),
+            ("digest".to_string(), "NUMBER".to_string()),
+        ])
+    }
+
+    #[test]
+    fn a_donor_comes_from_a_sibling_with_the_same_argument_types() {
+        // The entry being mutated is the only one for its target, so the same-target pool is
+        // empty and the sibling taking the same request type has to serve.
+        let entries = vec![
+            ("c-summary".to_string(), "summary".to_string()),
+            ("c-manifest".to_string(), "manifest".to_string()),
+            ("c-digest".to_string(), "digest".to_string()),
+        ];
+        assert_eq!(donor_pool(&entries, "summary", "c-summary", &signatures(), "REPORT"), vec!["c-manifest".to_string()]);
+    }
+
+    #[test]
+    fn same_target_entries_are_preferred_and_an_entry_is_never_its_own_donor() {
+        let entries = vec![
+            ("c-summary".to_string(), "summary".to_string()),
+            ("c-summary-2".to_string(), "summary".to_string()),
+            ("c-manifest".to_string(), "manifest".to_string()),
+        ];
+        assert_eq!(donor_pool(&entries, "summary", "c-summary", &signatures(), "REPORT"), vec!["c-summary-2".to_string()]);
+    }
+
+    #[test]
+    fn a_different_argument_shape_is_not_a_donor() {
+        let entries = vec![("c-digest".to_string(), "digest".to_string())];
+        assert!(donor_pool(&entries, "summary", "c-summary", &signatures(), "REPORT").is_empty());
+    }
 }

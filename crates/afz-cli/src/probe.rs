@@ -5,15 +5,23 @@
 
 use std::path::{Path, PathBuf};
 
-use afz_engine::config::{self, LoadedConfig};
+use afz_engine::config::{self, Block, LoadedConfig};
 use afz_engine::rpc::client::{Launch, PluginClient};
 use afz_protocol::*;
 
-/// Run the command. `argv` empty means the repository's fake plugin.
+/// Run the command. With no `--command`, the scan project at `path` names the plugin; with no
+/// scan project either, the repository's fake plugin is used.
 pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), String> {
-    let launch = launch_for(argv)?;
     let root = PathBuf::from(path.as_deref().unwrap_or("."));
     let scope = scope_for(&root)?;
+    // A scan project declares the harness that can read it, so probing that project has to
+    // launch that plugin and not some other one. `--command` still wins, and a bare
+    // `probe-plugin` with no scan project keeps exercising the fake plugin, which is what
+    // `cargo run -p afz-cli -- probe-plugin` is for.
+    let launch = match (argv.is_empty(), scope.config.as_ref()) {
+        (true, Some(loaded)) => loaded.launch_for(Block::Codebase).map_err(|e| e.to_string())?,
+        _ => launch_for(argv)?,
+    };
 
     let client = PluginClient::spawn(&launch).map_err(|r| r.detail())?;
     let handshake = client.handshake().map_err(|r| r.detail())?;
@@ -25,7 +33,7 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
                 root: scope.root.display().to_string(),
                 include: scope.include,
                 exclude: scope.exclude,
-                config_path: scope.config_path.map(|p| p.display().to_string()),
+                config_path: scope.config.as_ref().map(|loaded| loaded.path.display().to_string()),
             },
             std::time::Duration::from_secs(120),
         )
@@ -127,8 +135,9 @@ fn check_protocol(handshake: &Handshake) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolve the plugin argv. With no `--command`, use the repository's fake plugin, which is
-/// what `cargo run -p afz-cli -- probe-plugin` is for.
+/// Resolve the plugin argv given on the command line, or fall back to the repository's fake
+/// plugin. A scan project does not come here: `run` takes the launch from its harness block, so
+/// the plugin that is probed is the plugin that would run the scan.
 fn launch_for(argv: Vec<String>) -> Result<Launch, String> {
     if !argv.is_empty() {
         return Ok(Launch::new(argv));
@@ -143,12 +152,12 @@ fn launch_for(argv: Vec<String>) -> Result<Launch, String> {
     Err("no --command given and afz-fakeplugin is not beside this binary; build it with `cargo build --workspace`".to_string())
 }
 
-/// Where to discover, and the config file that said so, if there was one.
+/// Where to discover, and the scan project that said so, if there was one.
 struct Scope {
     root: PathBuf,
     include: Option<Vec<String>>,
     exclude: Option<Vec<String>>,
-    config_path: Option<PathBuf>,
+    config: Option<LoadedConfig>,
 }
 
 /// Discovery scope: the scan project's block if there is one, otherwise the given directory.
@@ -161,10 +170,10 @@ fn scope_for(root: &Path) -> Result<Scope, String> {
             root: declared.root,
             include: declared.include,
             exclude: declared.exclude,
-            config_path: Some(loaded.path),
+            config: Some(loaded),
         });
     }
-    Ok(Scope { root: root.to_path_buf(), include: None, exclude: None, config_path: None })
+    Ok(Scope { root: root.to_path_buf(), include: None, exclude: None, config: None })
 }
 
 fn wire_target_class(class: TargetClass) -> &'static str {
