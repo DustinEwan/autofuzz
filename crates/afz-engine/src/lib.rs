@@ -12,3 +12,4 @@ pub mod mutate;
 pub mod rng;
 pub mod rpc;
 pub mod schedule;
+pub mod supervise;
