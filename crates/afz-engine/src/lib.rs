@@ -7,9 +7,12 @@
 pub mod boundaries;
 pub mod config;
 pub mod corpus;
+pub mod finding;
 pub mod generate;
+pub mod minimize;
 pub mod mutate;
 pub mod oracles;
+pub mod report;
 pub mod rng;
 pub mod rpc;
 pub mod schedule;
