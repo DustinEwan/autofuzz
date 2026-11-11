@@ -790,6 +790,15 @@ impl Scanner {
                 corpus_size: self.corpus.len() as u64,
                 coverage_edges: self.corpus.covered_count(),
                 coverage_ratio: self.ratio(),
+                samples: self
+                    .samples
+                    .iter()
+                    .map(|sample| ProgressSample {
+                        invocations: sample.invocations,
+                        coverage_edges: sample.coverage_edges,
+                        coverage_ratio: sample.coverage_ratio,
+                    })
+                    .collect(),
                 deadline_exceeded: self.deadline_exceeded,
                 deadline_cuts: self.deadline_cuts,
                 stopped_reason: self.stopped,

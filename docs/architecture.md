@@ -276,7 +276,9 @@ One JSON document per scan, written once, never edited in place. Renderers read 
     "materializationCounts": { "constructible": 287, "fixture-required": 61, "opaque": 64 }
   },
   "execution": { "invocations": 184320, "corpusSize": 1204, "coverageEdges": 8312,
-                 "coverageRatio": 0.41, "deadlineExceeded": 3, "deadlineCuts": 41 },
+                 "coverageRatio": 0.41, "deadlineExceeded": 3, "deadlineCuts": 41,
+                 "samples": [{ "invocations": 5000, "coverageEdges": 1140, "coverageRatio": 0.056 },
+                             { "invocations": 10000, "coverageEdges": 2011, "coverageRatio": 0.099 }] },
   "findings": [{
     "findingId": "afz:f:7a41c2e0",
     "identity": "sha256:...",

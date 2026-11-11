@@ -104,6 +104,18 @@ fn document() -> ScanDocument {
             restarts: 1,
             unattempted: 96,
             disabled_targets: vec!["afz:t:44de0b12c9aa".to_string()],
+            samples: vec![
+                ProgressSample {
+                    invocations: 5000,
+                    coverage_edges: 1140,
+                    coverage_ratio: 0.056,
+                },
+                ProgressSample {
+                    invocations: 10000,
+                    coverage_edges: 2011,
+                    coverage_ratio: 0.099,
+                },
+            ],
         },
         findings: vec![
             FindingRecord {

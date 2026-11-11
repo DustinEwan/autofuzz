@@ -205,6 +205,13 @@
           "format": "uint64",
           "minimum": 0
         },
+        "samples": {
+          "description": "Coverage at fixed invocation intervals, taken every `SAMPLE_EVERY` invocations. The final\n`coverageRatio` cannot tell a search that converged from one that stalled at invocation\n6,000 and then spent the rest of the budget repeating itself, and the acceptance check for\na guided scan is about the series rather than its endpoint.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProgressSample"
+          }
+        },
         "stoppedReason": {
           "$ref": "#/$defs/StoppedReason"
         },
@@ -225,7 +232,8 @@
         "stoppedReason",
         "restarts",
         "unattempted",
-        "disabledTargets"
+        "disabledTargets",
+        "samples"
       ]
     },
     "FindingRecord": {
@@ -430,6 +438,31 @@
         "artifact",
         "bytesBefore",
         "bytesAfter"
+      ]
+    },
+    "ProgressSample": {
+      "description": "One point of the coverage series. `coverageRatio` is restated against the reachable set known\nwhen the scan finished, so the series is comparable across samples; `coverageEdges` keeps the\ncount the run observed at that moment.",
+      "type": "object",
+      "properties": {
+        "coverageEdges": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "coverageRatio": {
+          "type": "number",
+          "format": "double"
+        },
+        "invocations": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "invocations",
+        "coverageEdges",
+        "coverageRatio"
       ]
     },
     "ScanFault": {

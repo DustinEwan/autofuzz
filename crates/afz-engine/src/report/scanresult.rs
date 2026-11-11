@@ -118,6 +118,22 @@ pub struct Execution {
     /// or the wall clock ended first.
     pub unattempted: u64,
     pub disabled_targets: Vec<String>,
+    /// Coverage at fixed invocation intervals, taken every `SAMPLE_EVERY` invocations. The final
+    /// `coverageRatio` cannot tell a search that converged from one that stalled at invocation
+    /// 6,000 and then spent the rest of the budget repeating itself, and the acceptance check for
+    /// a guided scan is about the series rather than its endpoint.
+    pub samples: Vec<ProgressSample>,
+}
+
+/// One point of the coverage series. `coverageRatio` is restated against the reachable set known
+/// when the scan finished, so the series is comparable across samples; `coverageEdges` keeps the
+/// count the run observed at that moment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgressSample {
+    pub invocations: u64,
+    pub coverage_edges: u64,
+    pub coverage_ratio: f64,
 }
 
 /// Why the run ended. `budget` covers both limits, because the user reads the same sentence for
