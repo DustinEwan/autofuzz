@@ -9,6 +9,7 @@ pub mod config;
 pub mod corpus;
 pub mod generate;
 pub mod mutate;
+pub mod oracles;
 pub mod rng;
 pub mod rpc;
 pub mod schedule;

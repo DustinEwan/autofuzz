@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use afz_engine::supervise::{Completed, DISABLE_AFTER, Job, Supervisor};
 use afz_engine::rpc::client::Launch;
-use afz_protocol::{SkipReason, ValueTree};
+use afz_protocol::{DiscoverReq, SkipReason, ValueTree};
 
 /// The fake plugin is a binary of the `xtask` package, so `CARGO_BIN_EXE_…` does not cover it
 /// from here. A test binary sits in `<target>/<profile>/deps/`, one level below the plugin.
@@ -23,7 +23,10 @@ fn fakeplugin_path() -> PathBuf {
 
 fn supervisor(script: &str, workers: usize, deadline_ms: u64) -> Supervisor {
     let launch = Launch::new([fakeplugin_path().display().to_string()]).with_env("AFZ_FAKE_SCRIPT", script);
-    Supervisor::new(launch, workers, Duration::from_millis(deadline_ms), DISABLE_AFTER)
+    // The fake plugin answers `discover` from a fixed inventory, so the scope here is only
+    // what a real plugin would need to resolve a `targetId`.
+    let discovery = DiscoverReq { root: ".".to_string(), ..Default::default() };
+    Supervisor::new(launch, workers, Duration::from_millis(deadline_ms), DISABLE_AFTER, discovery)
 }
 
 fn jobs(target: &str, count: u64) -> Vec<Job> {

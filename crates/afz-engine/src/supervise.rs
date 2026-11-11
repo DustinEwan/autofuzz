@@ -13,12 +13,17 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use afz_protocol::{FaultSignature, InvokeReq, Outcome, ValueTree};
+use afz_protocol::{DiscoverReq, FaultSignature, InvokeReq, Outcome, ValueTree};
 
 use crate::rpc::client::{Launch, LostReason, PluginClient};
 
 /// Restarts attributed to one target before the engine disables it. The design's number.
 pub const DISABLE_AFTER: u64 = 50;
+
+/// How long a plugin may take to answer `discover` before its process is treated as broken.
+/// The same allowance `afz probe-plugin` gives, because discovery walks the whole scan tree and
+/// is the one request whose cost is the size of the project rather than of one input.
+pub const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// One invocation the supervisor must run.
 #[derive(Debug, Clone)]
@@ -141,14 +146,18 @@ impl Watchdog {
 /// The supervisor owns the plugin processes and the wall clock for one run.
 pub struct Supervisor {
     launch: Launch,
+    discovery: DiscoverReq,
     workers: usize,
     deadline: Duration,
     watchdog: Watchdog,
 }
 
 impl Supervisor {
-    pub fn new(launch: Launch, workers: usize, deadline: Duration, disable_after: u64) -> Supervisor {
-        Supervisor { launch, workers: workers.max(1), deadline, watchdog: Watchdog::new(disable_after) }
+    /// `discovery` is replayed into every plugin process this supervisor starts. `prepare`
+    /// resolves a `targetId` only against an inventory that process discovered itself, so a
+    /// restart has to discover again: the new process knows nothing.
+    pub fn new(launch: Launch, workers: usize, deadline: Duration, disable_after: u64, discovery: DiscoverReq) -> Supervisor {
+        Supervisor { launch, discovery, workers: workers.max(1), deadline, watchdog: Watchdog::new(disable_after) }
     }
 
     pub fn watchdog(&self) -> &Watchdog {
@@ -175,11 +184,12 @@ impl Supervisor {
             let watchdog = Arc::clone(&watchdog);
             let launch = self.launch.clone();
             let deadline = self.deadline;
+            let discovery = self.discovery.clone();
             threads.push(
                 std::thread::Builder::new()
                     .name(format!("afz-worker-{index}"))
                     .spawn(move || {
-                        let mut worker = Worker::spawn(index, &launch);
+                        let mut worker = Worker::spawn(index, &launch, &discovery);
                         loop {
                             // Leave room for one more deadline, so a run stops on its budget
                             // rather than on the last invocation that happened to start.
@@ -237,6 +247,7 @@ impl Supervisor {
 pub struct Worker {
     index: usize,
     launch: Launch,
+    discovery: DiscoverReq,
     client: Option<PluginClient>,
     prepared: BTreeSet<String>,
     unbuildable: BTreeSet<String>,
@@ -244,15 +255,27 @@ pub struct Worker {
 }
 
 impl Worker {
-    fn spawn(index: usize, launch: &Launch) -> Worker {
+    fn spawn(index: usize, launch: &Launch, discovery: &DiscoverReq) -> Worker {
         Worker {
             index,
             launch: launch.clone(),
-            client: PluginClient::spawn(launch).ok(),
+            discovery: discovery.clone(),
+            client: Worker::start(index, launch, discovery),
             prepared: BTreeSet::new(),
             unbuildable: BTreeSet::new(),
             restarts: 0,
         }
+    }
+
+    /// Bring a process up and give it the inventory it needs to answer `prepare`. A plugin that
+    /// fails discovery stays up: every `prepare` then reports the plugin's own reason, which is
+    /// the diagnostic the scan result should carry rather than a swallowed error here.
+    fn start(index: usize, launch: &Launch, discovery: &DiscoverReq) -> Option<PluginClient> {
+        let client = PluginClient::spawn(launch).ok()?;
+        if let Err(reason) = client.discover(discovery, DISCOVERY_TIMEOUT) {
+            eprintln!("afz: worker {index} discovery failed: {}", reason.detail());
+        }
+        Some(client)
     }
 
     pub fn index(&self) -> usize {
@@ -269,7 +292,7 @@ impl Worker {
         if let Some(client) = self.client.take() {
             client.kill();
         }
-        self.client = PluginClient::spawn(&self.launch).ok();
+        self.client = Worker::start(self.index, &self.launch, &self.discovery);
         self.prepared.clear();
         self.restarts += 1;
     }
