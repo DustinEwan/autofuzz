@@ -73,7 +73,7 @@ fn a_mutated_node_records_which_operator_ran() {
             }
         }
     }
-    for expected in [Op::Sibling.name(), Op::Boundary.name(), Op::Resize.name(), Op::ToggleOptional.name()] {
+    for expected in [Op::Sibling.name(), Op::Boundary.name(), Op::Resize.name(), Op::ToggleOptional.name(), Op::Paste.name()] {
         assert!(seen.contains(&expected.to_string()), "operator {expected} never ran across 400 mutations: {seen:?}");
     }
 }
@@ -212,4 +212,66 @@ fn mutation_of_a_bounded_string_respects_its_length() {
         let ValueNode::String { value } = after.node else { panic!("string type mutated into {:?}", after.node) };
         assert!((1..=3).contains(&value.chars().count()), "mutated string {:?} ignores length 1..=3", value);
     }
+}
+
+/// A target that compares two independently generated fields is unreachable without a copy of a
+/// value the input already holds: generation draws the two strings separately, `Sibling` draws a
+/// fresh one, and `Transplant` brings a string from a different entry. Paste is the operator that
+/// moves a value within one input, and the equality below is what it exists to make reachable.
+/// The non-empty guard keeps the boundary table's empty string from satisfying the test on its own.
+#[test]
+fn a_paste_copies_a_value_already_in_the_input() {
+    let ty = TypeNode::Object {
+        name: Some("Pair".into()),
+        id: None,
+        fields: vec![
+            Field { name: "left".into(), ty: TypeNode::string(), required: true },
+            Field { name: "right".into(), ty: TypeNode::string(), required: true },
+        ],
+    };
+    let mut rng = Rng::seeded(0x4a2e);
+    let mut saw_paste = false;
+    let mut saw_copied_equality = false;
+    for _ in 0..600 {
+        let base = generate::generate(&ty, DEFAULT_DEPTH, &mut rng);
+        let after = mutate::mutate(&base, &ty, &mut rng);
+        let ValueNode::Object { fields } = &after.node else { panic!("the root of a Pair stayed no object") };
+        let field = |name: &str| fields.iter().find(|(n, _)| n == name).map(|(_, v)| &v.node);
+        let strings = match (field("left"), field("right")) {
+            (Some(ValueNode::String { value: l }), Some(ValueNode::String { value: r })) => Some((l, r)),
+            _ => None,
+        };
+        let pasted = after.paths().iter().any(|path| {
+            matches!(&path.get(&after).unwrap().provenance, Provenance::Mutated { op, .. } if op == Op::Paste.name())
+        });
+        saw_paste |= pasted;
+        if let (Some((l, r)), true) = (strings, pasted) {
+            if l == r && !l.is_empty() {
+                saw_copied_equality = true;
+            }
+        }
+    }
+    assert!(saw_paste, "paste never ran across 600 mutations");
+    assert!(saw_copied_equality, "no paste made the two string fields hold the same non-empty value");
+}
+
+/// One execution rewrites a run of nodes rather than exactly one. The run is what lets a gate two
+/// changes deep be reached at all: an intermediate that earns no coverage is never retained, so it
+/// is never mutated again. Reverting to a single rewrite per execution is the regression this pins.
+#[test]
+fn one_execution_rewrites_more_than_one_node() {
+    let ty = object_type();
+    let mut rng = Rng::seeded(0x0b71);
+    let mut widest = 0usize;
+    for _ in 0..400 {
+        let base = generate::generate(&ty, DEFAULT_DEPTH, &mut rng);
+        let after = mutate::mutate(&base, &ty, &mut rng);
+        let rewritten = after
+            .paths()
+            .iter()
+            .filter(|path| matches!(path.get(&after).unwrap().provenance, Provenance::Mutated { .. }))
+            .count();
+        widest = widest.max(rewritten);
+    }
+    assert!(widest >= 2, "every execution rewrote at most one node (widest across 400 runs was {widest})");
 }

@@ -15,8 +15,16 @@ use crate::rng::Rng;
 /// gate that needs two changes when the change in between earns no new coverage, so a mutated
 /// input takes a short run of them and one execution can land two rungs away.
 const HAVOC_MIN: u64 = 1;
-/// Drawn on top of [`HAVOC_MIN`], so a run is `HAVOC_MIN ..= HAVOC_MIN + HAVOC_SPAN`.
-const HAVOC_SPAN: u64 = 3;
+/// Drawn on top of [`HAVOC_MIN`], so a run is `HAVOC_MIN ..= HAVOC_MIN + HAVOC_SPAN`. The span is
+/// wide enough that one run can carry a collection from the length it was generated at to a
+/// length several steps away with nothing in between earning coverage: an array the generator drew
+/// at 8 items reaches 3 inside one run, and no intermediate length opens a new block.
+const HAVOC_SPAN: u64 = 7;
+
+/// The largest subtree [`Op::Paste`] will copy. The values worth copying inside one input - a
+/// string, an item, a short list - are far below this, and a paste of a whole argument over a
+/// small field only costs materialization time.
+const PASTE_MAX_BYTES: usize = 4096;
 
 /// The operators, named on the wire so a finding can say which one produced a fault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +39,8 @@ pub enum Op {
     Boundary,
     /// Copy a subtree from another corpus entry.
     Transplant,
+    /// Copy a node from elsewhere in the same input over the selected node.
+    Paste,
 }
 
 impl Op {
@@ -41,6 +51,7 @@ impl Op {
             Op::Resize => "resize",
             Op::Boundary => "boundary",
             Op::Transplant => "transplant",
+            Op::Paste => "paste",
         }
     }
 }
@@ -81,7 +92,12 @@ fn mutate_once(value: &ValueTree, ty: &TypeNode, rng: &mut Rng, donor: Option<&V
     let node_ty = type_at(ty, &path);
 
     let Some(op) = choose_op(rng, &current.node, donor) else { return out };
-    let Some(replacement) = apply(op, &current, &node_ty, rng, donor, donor_id) else {
+    // The paste needs a second position in the same input, which `apply` does not see.
+    let Some(replacement) = (if op == Op::Paste {
+        paste_source(&out, ty, &path, &candidates, rng)
+    } else {
+        apply(op, &current, &node_ty, rng, donor, donor_id)
+    }) else {
         return out;
     };
     if replacement.node == current.node {
@@ -111,10 +127,35 @@ fn choose_op(rng: &mut Rng, node: &ValueNode, donor: Option<&ValueTree>) -> Opti
         ValueNode::Object { .. } => ops.push(Op::ToggleOptional),
         _ => {}
     }
+    ops.push(Op::Paste);
     if donor.is_some() {
         ops.push(Op::Transplant);
     }
     rng.pick(&ops).copied()
+}
+
+/// Copy a node from elsewhere in the same input over the selected node.
+///
+/// Two fields the target compares for equality are never equal when each is generated on its own,
+/// and no other operator copies a value the input already holds: [`Op::Sibling`] generates afresh
+/// and [`Op::Transplant`] draws from a different entry, whose strings are just as unrelated.
+/// Without this operator an equality gate is unreachable however long the run goes. Candidates
+/// are filtered by the same declaration check a graft uses, and a node that contains the
+/// destination is excluded, because copying an ancestor over its own descendant doubles the input
+/// every time the operator runs.
+fn paste_source(value: &ValueTree, ty: &TypeNode, dest: &NodePath, candidates: &[NodePath], rng: &mut Rng) -> Option<ValueTree> {
+    let dest_ty = type_at(ty, dest);
+    let sources: Vec<&NodePath> = candidates
+        .iter()
+        .filter(|p| {
+            !dest.steps.starts_with(&p.steps)
+                && p.get(value).is_some_and(|sub| sub.wire_bytes() <= PASTE_MAX_BYTES && matches(&dest_ty, &sub.node))
+        })
+        .collect();
+    let path = *rng.pick(&sources)?;
+    let subtree = path.get(value)?.clone();
+    let from = kind_label(&subtree.node);
+    Some(ValueTree::with_provenance(subtree.node, Provenance::Mutated { op: Op::Paste.name().into(), from }))
 }
 
 fn apply(
@@ -128,6 +169,9 @@ fn apply(
     // `op` names the operator and `from` names what it acted on, so a finding can be traced
     // back through the corpus without replaying the run.
     let (node, provenance) = match op {
+        // `Paste` copies from a second position in the same input, so `mutate_once` applies it
+        // before reaching here; `apply` only sees the node being rewritten.
+        Op::Paste => return None,
         Op::Sibling => (
             generate::generate(ty, generate::DEFAULT_DEPTH, rng).node,
             Provenance::Mutated { op: op.name().into(), from: ty_label(ty) },

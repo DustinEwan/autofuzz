@@ -28,6 +28,22 @@ pub const NUMBERS: &[f64] = &[
 /// Integer boundaries, for a parameter declared `int`.
 pub const INTEGERS: &[i64] = &[0, 1, -1, i64::MIN, i64::MAX, 2, 255, 256, 65_535, 65_536];
 
+/// Every integer below 128, which generation and mutation treat as boundaries alongside
+/// [`INTEGERS`]. A `u32` or `i32` parameter is usually a length, an index, or a small tag, and a
+/// draw uniform over the declared range - the whole `i32` range for a wasm export, which is all
+/// the module declares - never produces one. The band is where the branch conditions are.
+const fn small_integers() -> [i64; 128] {
+    let mut out = [0i64; 128];
+    let mut i = 0;
+    while i < 128 {
+        out[i] = i as i64;
+        i += 1;
+    }
+    out
+}
+
+pub static SMALL_INTEGERS: [i64; 128] = small_integers();
+
 /// `bigint` boundaries. They travel as strings, because JSON has no token for them.
 pub const BIGINTS: &[&str] = &[
     "0",
@@ -86,7 +102,13 @@ pub const DEFAULT_RANGE: f64 = 1_000_000.0;
 /// the range excludes every boundary, a value is drawn from inside the range instead.
 pub fn number_node(rng: &mut Rng, bounds: NumberBounds) -> ValueNode {
     if bounds.int {
-        let in_range: Vec<f64> = INTEGERS.iter().copied().map(|v| v as f64).filter(|v| in_declared(*v, bounds)).collect();
+        let mut in_range: Vec<f64> = INTEGERS.iter().copied().map(|v| v as f64).filter(|v| in_declared(*v, bounds)).collect();
+        for v in SMALL_INTEGERS {
+            let v = v as f64;
+            if in_declared(v, bounds) && !in_range.contains(&v) {
+                in_range.push(v);
+            }
+        }
         let v = match rng.pick(&in_range) {
             Some(v) => *v,
             None => int_in_declared(rng, bounds) as f64,
