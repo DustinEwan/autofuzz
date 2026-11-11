@@ -186,6 +186,10 @@ export class TypeLowerer {
       if (constraint !== undefined && constraint !== type) return this.lowerType(constraint, path, ctx, depth);
       return UNKNOWN_UNION;
     }
+    // The depth budget is spent here rather than inside `lowerObject`: a union member or an
+    // array element recurses back through this function, and a check that sits below the
+    // object's collection branches is never reached by a type such as `type Json = Json[] | string`.
+    if (depth >= this.maxDepth) return this.capped(type, path, ctx);
     if (flags & ts.TypeFlags.Intersection) return this.lowerIntersection(type as ts.IntersectionType, path, ctx, depth);
     if (flags & ts.TypeFlags.Union) return this.lowerUnion(type as ts.UnionType, path, ctx, depth);
     if (flags & ts.TypeFlags.Object) return this.lowerObject(type, path, ctx, depth);
@@ -414,18 +418,6 @@ export class TypeLowerer {
       return this.opaque(ctx, path, checker.typeToString(type), this.moduleOf(symbol), "fixture-required");
     }
 
-    if (depth >= this.maxDepth) {
-      const deepName = this.refName(type, symbol);
-      if (deepName !== undefined) return this.ref(deepName);
-      return this.opaque(
-        ctx,
-        path,
-        `depth-budget-exceeded:${checker.typeToString(type)}`,
-        this.moduleOf(symbol),
-        "opaque",
-      );
-    }
-
     const refName = this.refName(type, symbol);
     if (refName !== undefined) {
       const activeName = ctx.active.get(type);
@@ -498,6 +490,23 @@ export class TypeLowerer {
   }
 
   // ------------------------------------------------------------------ refs and opaque
+
+  /**
+   * What a type becomes when the depth budget is spent: a named `ref` when the type has a name
+   * to point at, and an `opaque` node naming the budget otherwise.
+   */
+  private capped(type: ts.Type, path: string, ctx: Ctx): TypeNode {
+    const symbol = type.getSymbol() ?? type.aliasSymbol;
+    const name = this.refName(type, symbol);
+    if (name !== undefined) return this.ref(name);
+    return this.opaque(
+      ctx,
+      path,
+      `depth-budget-exceeded:${this.checker.typeToString(type)}`,
+      this.moduleOf(symbol),
+      "opaque",
+    );
+  }
 
   /** A stable name for a named object/interface/alias type, claimed once per type. */
   private refName(type: ts.Type, symbol: ts.Symbol | undefined): string | undefined {

@@ -13,6 +13,8 @@
 //! The caller supplies the re-run as a closure, which keeps this module away from the transport:
 //! production passes a plugin call, a test passes a table.
 
+use std::time::{Duration, Instant};
+
 use afz_protocol::{NodePath, Outcome, ValueNode, ValueTree};
 
 /// The fault a candidate must still produce.
@@ -61,15 +63,17 @@ pub struct Minimized {
 
 /// Shrink `values` as far as it goes while `run` keeps reporting the same fault.
 ///
-/// `max_attempts` bounds the work: a scan should not spend more shrinking one finding than it
-/// spent finding it.
-pub fn minimize<F>(values: &[ValueTree], max_attempts: u64, run: &mut F) -> Minimized
+/// `max_attempts` and `budget` bound the work: a scan should not spend more shrinking one
+/// finding than it spent finding it. The time bound is the one that bites when the fault is a
+/// deadline, because an attempt that reproduces it costs the whole deadline every time.
+pub fn minimize<F>(values: &[ValueTree], max_attempts: u64, budget: Duration, run: &mut F) -> Minimized
 where
     F: FnMut(&[ValueTree]) -> Outcome,
 {
     let bytes_before = total_bytes(values);
     let mut current = values.to_vec();
     let mut attempts = 0u64;
+    let started = Instant::now();
 
     let Some(target) = (attempts < max_attempts).then(|| {
         attempts += 1;
@@ -85,7 +89,7 @@ where
         // An argument the target never needed can go entirely: `undefined` in its position is
         // what a caller who passed fewer arguments would produce.
         for index in 0..current.len() {
-            if attempts >= max_attempts {
+            if attempts >= max_attempts || started.elapsed() >= budget {
                 break 'passes;
             }
             attempts += 1;
@@ -102,7 +106,7 @@ where
             for path in current[index].paths() {
                 let Some(node) = node_at(&current[index], &path) else { continue };
                 for candidate in ladder(node) {
-                    if attempts >= max_attempts {
+                    if attempts >= max_attempts || started.elapsed() >= budget {
                         break 'passes;
                     }
                     attempts += 1;

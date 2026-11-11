@@ -1,0 +1,30 @@
+{
+  "project": "defu",
+  "codebase": {
+    "harness": "js-ts",
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "**/*.test.ts",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/*.d.ts"
+    ]
+  },
+  "oracles": {},
+  "budget": {
+    "invocations": 20000,
+    "wallClockMs": 900000,
+    "workers": 12,
+    "maxCorpus": 2048,
+    "strategy": "guided"
+  },
+  "output": {
+    "dir": ".autofuzz",
+    "renderers": [
+      "json",
+      "markdown"
+    ]
+  }
+}

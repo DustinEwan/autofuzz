@@ -102,7 +102,7 @@ fn the_fixture_input_minimizes_below_200_bytes_and_still_reproduces() {
     let (file, line) = (top.file.clone(), top.line);
     assert!(file.ends_with("src/order.ts"), "{file}");
 
-    let result = minimize(&values, 2000, &mut invoke);
+    let result = minimize(&values, 2000, Duration::MAX, &mut invoke);
     assert!(result.reproduces, "the original input must reproduce before anything is shrunk");
     // The plan's bound. The run reaches 116 bytes in 13 attempts, leaving `{ lines: [] }`: the
     // empty list is what makes `lines[0]` undefined, and everything else was noise.
@@ -174,7 +174,7 @@ fn minimization_refuses_a_candidate_that_changes_the_fault() {
         }
     };
 
-    let result = minimize(&values, 200, &mut run);
+    let result = minimize(&values, 200, Duration::MAX, &mut run);
     assert!(result.reproduces);
     let kept = match &result.values[0].node {
         afz_protocol::ValueNode::Array { items } => items,

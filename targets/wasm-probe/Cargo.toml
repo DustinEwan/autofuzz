@@ -1,0 +1,20 @@
+[package]
+name = "wasm-probe"
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+description = "The wasm target used to prove the engine generalizes past JavaScript (Step 12)."
+
+# Detached from the workspace on purpose: `cargo test --workspace` builds the engine for the
+# host, and this crate is built only for `wasm32-unknown-unknown` as data the harness reads.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+# Release profiles wrap integer overflow silently, so an overflow bug would report as `ok`.
+overflow-checks = true
+# A wasm32 cdylib cannot unwind; a panic becomes a trap, which is what the harness catches.
+panic = "abort"
+opt-level = 2

@@ -48,6 +48,10 @@ pub const SEEN_FILE: &str = "seen.json";
 const BATCH_PER_WORKER: usize = 8;
 /// Shrink attempts per finding, so one finding cannot spend the whole scan shrinking itself.
 const MINIMIZE_ATTEMPTS: u64 = 2_000;
+/// Wall clock one finding may spend being shrunk. An attempt against a deadline fault costs the
+/// whole deadline, so the attempt count alone would let one slow finding hold the finish phase
+/// for the better part of an hour.
+const MINIMIZE_BUDGET: Duration = Duration::from_secs(300);
 /// How long one minimization call may take over the wire. The plugin enforces the invocation
 /// deadline; this is the transport bound on top of it.
 const MINIMIZE_SLACK: Duration = Duration::from_secs(10);
@@ -627,7 +631,7 @@ impl Scanner {
     /// Shrink a finding's input against the same fault. The minimizer runs on its own plugin
     /// process, so shrinking never displaces the guided workers.
     fn shrink(&mut self, target_id: &str, values: &[ValueTree]) -> Minimized {
-        minimize::minimize(values, MINIMIZE_ATTEMPTS, &mut |candidate| self.minimizer.run(target_id, candidate))
+        minimize::minimize(values, MINIMIZE_ATTEMPTS, MINIMIZE_BUDGET, &mut |candidate| self.minimizer.run(target_id, candidate))
     }
 
     fn scan_fault(&self, fault: &FaultSignature) -> ScanFault {

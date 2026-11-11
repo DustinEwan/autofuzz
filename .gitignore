@@ -1,4 +1,10 @@
 /target
+
+# Built by `cargo build --target wasm32-unknown-unknown` inside targets/<probe>; the wasm scan
+# project names the module, so a fresh clone builds it before scanning.
+/targets/*/target
+/targets/*.wasm
+/targets/*/*.wasm
 **/node_modules
 .autofuzz/
 *.tsbuildinfo

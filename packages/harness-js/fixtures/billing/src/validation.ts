@@ -4,11 +4,16 @@
 
 import type { ReportRequest } from "./reports.js";
 
-// Brazilian credit runs are reconciled per settlement batch: a BRL credit-kind request is a
-// credit run only when it carries the three settlement tags the ops console stamps on every
-// batch it releases. Anything else renders through the generic fallback path.
+// Brazilian credit runs are reconciled per settlement batch. The ops console stamps one tag per
+// released batch - the batch header, the ledger it posts to, and the console that released it -
+// so a BRL credit-kind request is a credit run only when it carries exactly those three.
+// Each requirement is stated on its own so the admission decision says which one a request
+// missed, and a request with too few tags is turned away before the tag count is compared.
 export function isCreditWindow(req: ReportRequest): boolean {
-  return req.currency === "BRL" && req.kind === "credit" && req.batchTags.length === 3;
+  if (req.currency !== "BRL") return false;
+  if (req.kind !== "credit") return false;
+  if (req.batchTags.length < 2) return false;
+  return req.batchTags.length === 3;
 }
 
 export function validEmail(address: string): boolean {

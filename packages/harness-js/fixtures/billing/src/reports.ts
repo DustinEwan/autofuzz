@@ -1,13 +1,16 @@
-// Period reports. Requests carry a display locale for the header line; when the caller
-// omits it the generic renderers fall back to "und", while the credit-run header reads the
-// locale tag directly because credit runs are always produced by the ops console, which
-// always sets one.
+// Period reports. A credit run is reconciled per settlement batch, and the batch's tags come
+// from the ops console: the generic renderers print them as they arrive, while the credit-run
+// header assumes the console stamped a tag in every slot it reads.
 
 import { isCreditWindow } from "./validation.js";
 import { formatMinor, minorUnits, type Currency } from "./currency.js";
 import { clampCount } from "./rounding.js";
 
 export type ReportKind = "invoice" | "refund" | "credit" | "tax" | "dunning";
+
+/** A tag the ops console stamps on a released batch. A batch released before the ledger
+ *  migration carries no ledger tag, so that slot is `null` rather than a tag. */
+export type SettlementTag = string | null;
 
 export interface ReportLocale {
   region: string;
@@ -20,7 +23,7 @@ export interface ReportRequest {
   periodDays: number;
   groupByRegion: boolean;
   /** The settlement tags the ops console stamped on the batch this report covers. */
-  batchTags: string[];
+  batchTags: SettlementTag[];
   locale?: ReportLocale;
 }
 
@@ -45,9 +48,9 @@ export function dailyDigest(days: number, currency: Currency): string {
 }
 
 function creditHeader(req: ReportRequest): string {
-  // Credit runs are only ever produced by the ops console, which always sets a locale: the
-  // assertion is the console's promise, not a check of this request.
-  const tag = req.locale!.region.toUpperCase();
+  // Credit runs are only ever produced by the ops console, which stamps a tag on every batch it
+  // releases: the assertion is the console's promise, not a check of this request.
+  const tag = req.batchTags[0]!.toUpperCase();
   return `credit|${req.currency}|${req.periodDays}d|${req.batchTags.join("+")}|${tag}`;
 }
 

@@ -11,6 +11,13 @@ use crate::boundaries;
 use crate::generate;
 use crate::rng::Rng;
 
+/// Operator applications per mutated input, the shortest run. One application cannot cross a
+/// gate that needs two changes when the change in between earns no new coverage, so a mutated
+/// input takes a short run of them and one execution can land two rungs away.
+const HAVOC_MIN: u64 = 1;
+/// Drawn on top of [`HAVOC_MIN`], so a run is `HAVOC_MIN ..= HAVOC_MIN + HAVOC_SPAN`.
+const HAVOC_SPAN: u64 = 3;
+
 /// The operators, named on the wire so a finding can say which one produced a fault.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
@@ -46,7 +53,22 @@ pub fn mutate(value: &ValueTree, ty: &TypeNode, rng: &mut Rng) -> ValueTree {
 
 /// Mutate with a donor entry, which enables [`Op::Transplant`]. `donor_id` names the corpus
 /// entry the subtree came from and lands in the provenance.
+///
+/// One execution applies a short run of node-level rewrites rather than exactly one. A gate two
+/// mutations deep is unreachable if every intermediate has to earn its own place in the corpus,
+/// so the run is what lets a ladder with a rung that earns no coverage be climbed at all. The
+/// length of the run is drawn from the same `rng`, so a seed replays the same inputs.
 pub fn mutate_with_donor(value: &ValueTree, ty: &TypeNode, rng: &mut Rng, donor: Option<&ValueTree>, donor_id: &str) -> ValueTree {
+    let mut out = value.clone();
+    for _ in 0..HAVOC_MIN + rng.below(HAVOC_SPAN) {
+        out = mutate_once(&out, ty, rng, donor, donor_id);
+    }
+    out
+}
+
+/// Rewrite one node of `value`. Every operator is node-level, which is what lets the minimizer
+/// reason about the result and lets a finding name the operator that produced the fault.
+fn mutate_once(value: &ValueTree, ty: &TypeNode, rng: &mut Rng, donor: Option<&ValueTree>, donor_id: &str) -> ValueTree {
     let mut out = value.clone();
     // The root path is a valid target: replacing the whole argument is a legal mutation, and a
     // scheduler that only ever mutated children could never leave an input's shape.
