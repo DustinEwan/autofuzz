@@ -1,0 +1,63 @@
+// Step 6 acceptance: a target that Node's strip-only type removal cannot run.
+//
+// `fixtures/legacy/src/kind.ts` declares an `enum`, which `--experimental-strip-types` refuses
+// to load (`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`). Discovery still works, because discovery reads
+// the source with the TypeScript compiler and never executes the module. The call must succeed
+// anyway: the worker reports the unsupported-syntax error and the server re-runs the invocation
+// in a thread whose loader is `tsx`. Without that fallback the second test would see a `failed`
+// outcome instead of `ok`.
+
+import assert from "node:assert/strict";
+import { join } from "node:path";
+import test from "node:test";
+
+import { packageRoot, startPlugin } from "./support/plugin.mjs";
+
+const fixtureRoot = join(packageRoot, "fixtures", "legacy");
+
+async function discover(plugin) {
+  return plugin.call("discover", { root: fixtureRoot, include: ["**/*.ts"], exclude: [] });
+}
+
+test("discovery reads an enum-typed module without running it", async () => {
+  const plugin = startPlugin();
+  try {
+    const discovery = await discover(plugin);
+    assert.equal(discovery.targets.length, 1, JSON.stringify(discovery));
+    const [target] = discovery.targets;
+    assert.equal(target.name, "label");
+    assert.equal(target.targetClass, "design-time");
+    // The enum's members are the parameter's literal values, read out of the source text.
+    assert.deepEqual([...target.parameters[0].type.values].sort(), ["a", "b"]);
+  } finally {
+    plugin.close();
+  }
+});
+
+test("the call runs after the loader falls back to tsx", async () => {
+  const plugin = startPlugin();
+  try {
+    const discovery = await discover(plugin);
+    const target = discovery.targets[0];
+    const prepared = await plugin.call("prepare", { targetId: target.id, values: [] });
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    assert.equal(typeof prepared.materialized.handle, "string");
+    for (const [value, expected] of [
+      ["a", "first"],
+      ["b", "second"],
+    ]) {
+      const outcome = await plugin.call("invoke", {
+        invocationId: 1,
+        targetId: target.id,
+        values: [{ node: "literal", value }],
+        deadlineMs: 2000,
+        collectCoverage: false,
+      });
+      assert.equal(outcome.kind, "ok", JSON.stringify(outcome));
+      assert.equal(outcome.value.node, "string");
+      assert.equal(outcome.value.value, expected);
+    }
+  } finally {
+    plugin.close();
+  }
+});

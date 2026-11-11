@@ -2,3 +2,6 @@
 **/node_modules
 .autofuzz/
 *.tsbuildinfo
+
+# Built by `npm --prefix packages/harness-js run build`; the plugin's default command runs it.
+/packages/harness-js/dist
