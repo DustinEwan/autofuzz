@@ -227,6 +227,14 @@ fn matches(ty: &TypeNode, node: &ValueNode) -> bool {
             (afz_protocol::ScalarKind::Number, ValueNode::Number { .. }) => true,
             (afz_protocol::ScalarKind::BigInt, ValueNode::BigInt { .. }) => true,
             (afz_protocol::ScalarKind::String, ValueNode::String { .. }) => true,
+            // A literal is its base value at runtime, so a field declared `string` accepts a
+            // literal drawn from a union elsewhere in the input. Refusing it hid a whole class of
+            // gate: a free-text field compared against a literal-union field can only be made to
+            // agree by the paste, and the paste filters its sources through this predicate, so the
+            // gate was unreachable by every operator rather than merely unlikely.
+            (afz_protocol::ScalarKind::String, ValueNode::Literal { value }) => value.is_string(),
+            (afz_protocol::ScalarKind::Number, ValueNode::Literal { value }) => value.is_number(),
+            (afz_protocol::ScalarKind::Boolean, ValueNode::Literal { value }) => value.is_boolean(),
             _ => false,
         },
         (TypeNode::StringFormat { .. }, ValueNode::String { .. }) => true,

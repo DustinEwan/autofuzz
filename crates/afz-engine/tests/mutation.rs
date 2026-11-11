@@ -255,6 +255,51 @@ fn a_paste_copies_a_value_already_in_the_input() {
     assert!(saw_copied_equality, "no paste made the two string fields hold the same non-empty value");
 }
 
+/// A free-text field compared against a literal union is the shape of a real gate: an
+/// `issuedBy: string` that has to equal a `raisedBy: "ops-console" | "refund-bot" | "credit-desk"`.
+/// Generation draws the two from different vocabularies, so the paste is the only operator that can
+/// make them agree. `matches` rejected a literal at a `string` position, which filtered every such
+/// source out of the paste and left the gate unreachable for a whole scan rather than merely
+/// unlikely, and no other check noticed because every other operator stayed correct.
+#[test]
+fn a_paste_copies_a_literal_into_a_declared_string_field() {
+    let ty = TypeNode::Object {
+        name: Some("Reissue".into()),
+        id: None,
+        fields: vec![
+            Field { name: "issuedBy".into(), ty: TypeNode::string(), required: true },
+            Field {
+                name: "raisedBy".into(),
+                ty: TypeNode::Literal {
+                    values: vec!["ops-console".into(), "refund-bot".into(), "credit-desk".into()],
+                },
+                required: true,
+            },
+        ],
+    };
+    // The target reads both fields as strings, so the gate is satisfied when the two carry the same
+    // text, whichever node kind carries it.
+    let text = |node: &ValueNode| match node {
+        ValueNode::String { value } => Some(value.clone()),
+        ValueNode::Literal { value } => value.as_str().map(str::to_string),
+        _ => None,
+    };
+    let mut rng = Rng::seeded(0x11ce);
+    for _ in 0..600 {
+        let base = generate::generate(&ty, DEFAULT_DEPTH, &mut rng);
+        let after = mutate::mutate(&base, &ty, &mut rng);
+        let ValueNode::Object { fields } = &after.node else { panic!("the root of a Reissue stopped being an object") };
+        let field = |name: &str| fields.iter().find(|(n, _)| n == name).map(|(_, v)| &v.node);
+        let [Some(issued), Some(raised)] = [field("issuedBy").and_then(text), field("raisedBy").and_then(text)] else {
+            continue;
+        };
+        if issued == raised && !issued.is_empty() {
+            return;
+        }
+    }
+    panic!("no paste copied the raiser's login into the free-text issuer field across 600 mutations");
+}
+
 /// One execution rewrites a run of nodes rather than exactly one. The run is what lets a gate two
 /// changes deep be reached at all: an intermediate that earns no coverage is never retained, so it
 /// is never mutated again. Reverting to a single rewrite per execution is the regression this pins.
