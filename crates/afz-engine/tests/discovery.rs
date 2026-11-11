@@ -49,7 +49,7 @@ fn a_blocked_symbol_arrives_in_the_shape_the_engine_reads() {
         config_path: None,
     };
     let client = PluginClient::spawn(&launch()).expect("spawn the js-ts plugin");
-    let discovery = client.discover(&request, Duration::from_secs(120)).expect("discover the blocked fixture");
+    let discovery = client.discover(&request, Duration::from_secs(120)).expect("discover the blocked test target");
 
     let fuzzable: Vec<&str> = discovery.targets.iter().map(|t| t.name.as_str()).collect();
     assert_eq!(fuzzable, ["formatAmount"], "only the entry point with no blocked parameter is fuzzable");
