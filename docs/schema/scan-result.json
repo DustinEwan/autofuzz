@@ -1,0 +1,611 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScanDocument",
+  "description": "One scan's result.",
+  "type": "object",
+  "properties": {
+    "artifacts": {
+      "$ref": "#/$defs/Artifacts"
+    },
+    "engine": {
+      "$ref": "#/$defs/EngineInfo"
+    },
+    "execution": {
+      "$ref": "#/$defs/Execution"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/FindingRecord"
+      }
+    },
+    "finishedAt": {
+      "type": "string"
+    },
+    "inventory": {
+      "$ref": "#/$defs/Inventory"
+    },
+    "scanId": {
+      "description": "The run's directory name: eight Crockford-base32 characters of the start time, then two\nof randomness, so ids sort by time and two scans of the same tree still get two ids.",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "$ref": "#/$defs/ScanSchemaVersion"
+    },
+    "startedAt": {
+      "type": "string"
+    },
+    "target": {
+      "$ref": "#/$defs/TargetInfo"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "scanId",
+    "startedAt",
+    "finishedAt",
+    "engine",
+    "target",
+    "inventory",
+    "execution",
+    "findings",
+    "artifacts"
+  ],
+  "$defs": {
+    "Artifact": {
+      "type": "object",
+      "properties": {
+        "artifact": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "artifact"
+      ]
+    },
+    "Artifacts": {
+      "description": "Where the run's other files live, relative to the scan directory.",
+      "type": "object",
+      "properties": {
+        "corpus": {
+          "type": "string"
+        },
+        "coverage": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "log": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "corpus"
+      ]
+    },
+    "Blocker": {
+      "description": "The type that blocks a target, and where it sits.",
+      "type": "object",
+      "properties": {
+        "module": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "description": "Parameter or receiver path, e.g. `receiver.db`.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ]
+    },
+    "Capability": {
+      "description": "What a plugin declares at handshake. The engine adapts instead of assuming, and an\nabsent capability has a defined absent behavior.",
+      "oneOf": [
+        {
+          "description": "Per-invocation coverage digest is available. Absent: the scheduler uses\nschema-directed generation and outcome novelty only.",
+          "type": "string",
+          "const": "coverage"
+        },
+        {
+          "description": "The plugin can build receiver state. Absent: only entry points with fully\nconstructible parameter graphs are fuzzed.",
+          "type": "string",
+          "const": "stateful"
+        },
+        {
+          "description": "The plugin can shrink an input in target terms. Absent: the engine minimizes by\nremoving arguments and reducing structure only.",
+          "type": "string",
+          "const": "minimize"
+        },
+        {
+          "description": "Invocations may change external state. Present: the side-effect policy applies.",
+          "type": "string",
+          "const": "sideEffects"
+        },
+        {
+          "description": "The plugin tolerates parallel instances. Absent: the engine runs one instance.",
+          "type": "string",
+          "const": "concurrent"
+        }
+      ]
+    },
+    "EngineInfo": {
+      "type": "object",
+      "properties": {
+        "configHash": {
+          "type": "string"
+        },
+        "seed": {
+          "description": "The seed as the user typed it, `0x`-prefixed, because that is what `--seed` accepts back.",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "seed",
+        "configHash"
+      ]
+    },
+    "Execution": {
+      "type": "object",
+      "properties": {
+        "corpusSize": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "coverageEdges": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "coverageRatio": {
+          "type": "number",
+          "format": "double"
+        },
+        "deadlineExceeded": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "disabledTargets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "invocations": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "restarts": {
+          "description": "Plugin processes the engine restarted, and the targets it stopped using because they\ncaused too many of them. Both are the supervisor's, and a scan that says nothing about\nthem looks like a clean run that was actually fighting its harness.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "stoppedReason": {
+          "$ref": "#/$defs/StoppedReason"
+        },
+        "unattempted": {
+          "description": "Planned invocations that never started: their target was disabled or proved unbuildable,\nor the wall clock ended first.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "invocations",
+        "corpusSize",
+        "coverageEdges",
+        "coverageRatio",
+        "deadlineExceeded",
+        "stoppedReason",
+        "restarts",
+        "unattempted",
+        "disabledTargets"
+      ]
+    },
+    "FindingRecord": {
+      "description": "One reported problem, with pointers to the files that hold its details.",
+      "type": "object",
+      "properties": {
+        "fault": {
+          "$ref": "#/$defs/ScanFault"
+        },
+        "findingId": {
+          "type": "string"
+        },
+        "firstSeenInvocation": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "identity": {
+          "type": "string"
+        },
+        "input": {
+          "$ref": "#/$defs/InputArtifact"
+        },
+        "minimizedInput": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MinimizedArtifact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "oracle": {
+          "type": "string"
+        },
+        "reproduced": {
+          "description": "Whether the minimized input still produced the fault when the engine re-ran it.",
+          "type": "boolean"
+        },
+        "reproducer": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Artifact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "seenBefore": {
+          "description": "The engine has reported this identity for this project before. Skipped when false, so a\nfirst scan's document reads exactly like Part I's example.",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "targetId": {
+          "type": "string"
+        },
+        "via": {
+          "description": "The channel the plugin classified the outcome through.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "findingId",
+        "identity",
+        "targetId",
+        "oracle",
+        "severity",
+        "via",
+        "fault",
+        "input",
+        "firstSeenInvocation",
+        "reproduced"
+      ]
+    },
+    "HarnessInfo": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "targetClass": {
+          "$ref": "#/$defs/TargetClass"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "targetClass",
+        "capabilities"
+      ]
+    },
+    "InputArtifact": {
+      "type": "object",
+      "properties": {
+        "artifact": {
+          "type": "string"
+        },
+        "encoding": {
+          "$ref": "#/$defs/InputEncoding"
+        }
+      },
+      "required": [
+        "encoding",
+        "artifact"
+      ]
+    },
+    "InputEncoding": {
+      "oneOf": [
+        {
+          "description": "A JSON array of `ValueTree`, the same shape `invoke` carries.",
+          "type": "string",
+          "const": "value-tree+json"
+        }
+      ]
+    },
+    "Inventory": {
+      "type": "object",
+      "properties": {
+        "discovered": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "fuzzable": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "materializationCounts": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SkippedTarget"
+          }
+        }
+      },
+      "required": [
+        "discovered",
+        "fuzzable",
+        "skipped",
+        "materializationCounts"
+      ]
+    },
+    "MinimizedArtifact": {
+      "type": "object",
+      "properties": {
+        "artifact": {
+          "type": "string"
+        },
+        "bytesAfter": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "bytesBefore": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "artifact",
+        "bytesBefore",
+        "bytesAfter"
+      ]
+    },
+    "ScanFault": {
+      "description": "The fault, with paths made relative to the scan root so the document says the same thing on\nthe machine that produced it and on the one reading it.",
+      "type": "object",
+      "properties": {
+        "class": {
+          "type": "string"
+        },
+        "frames": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScanFrame"
+          }
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "class",
+        "message"
+      ]
+    },
+    "ScanFrame": {
+      "type": "object",
+      "properties": {
+        "column": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "file": {
+          "type": "string"
+        },
+        "fn": {
+          "description": "Renamed from `fnName`: Part I spells this one `fn`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "line": {
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "file",
+        "line"
+      ]
+    },
+    "ScanSchemaVersion": {
+      "description": "The document's version tag, pinned so a validator rejects anything else rather than accepting\na string it cannot interpret.",
+      "type": "string",
+      "enum": [
+        "afz-scan/1"
+      ]
+    },
+    "Severity": {
+      "description": "Oracle severities. `off` disables an oracle.",
+      "type": "string",
+      "enum": [
+        "off",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "SkipReason": {
+      "description": "Why a parameter graph cannot be built.",
+      "oneOf": [
+        {
+          "description": "A parameter or receiver field has no constructible representation.",
+          "type": "string",
+          "const": "unconstructible-parameter"
+        },
+        {
+          "description": "Discovery could not analyze the declaring file.",
+          "type": "string",
+          "const": "discovery-error"
+        },
+        {
+          "description": "The symbol is not public.",
+          "type": "string",
+          "const": "not-public"
+        },
+        {
+          "description": "The scan project excluded it.",
+          "type": "string",
+          "const": "excluded"
+        },
+        {
+          "description": "The plugin cannot call it: varargs-only, generator, or accessor.",
+          "type": "string",
+          "const": "unsupported-signature"
+        },
+        {
+          "description": "The engine disabled the target after repeated plugin losses.",
+          "type": "string",
+          "const": "target-disabled"
+        }
+      ]
+    },
+    "SkippedTarget": {
+      "description": "One non-fuzzed symbol, with a reason. Reported, never silently dropped.",
+      "type": "object",
+      "properties": {
+        "blockedBy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Blocker"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detail": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "reason": {
+          "$ref": "#/$defs/SkipReason"
+        },
+        "targetId": {
+          "type": "string"
+        },
+        "unlocksTargets": {
+          "description": "Entry points that share the blocker, which turns one missing type into one task.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "targetId",
+        "name",
+        "reason"
+      ]
+    },
+    "StoppedReason": {
+      "description": "Why the run ended. `budget` covers both limits, because the user reads the same sentence for\neither: the scan stopped before it finished planning.",
+      "oneOf": [
+        {
+          "description": "A budget limit ended the run: `budget.invocations` or `budget.wallClockMs`.",
+          "type": "string",
+          "const": "budget"
+        },
+        {
+          "description": "Every planned invocation ran.",
+          "type": "string",
+          "const": "complete"
+        },
+        {
+          "description": "The engine was asked to stop before the budget.",
+          "type": "string",
+          "const": "interrupted"
+        }
+      ]
+    },
+    "TargetClass": {
+      "description": "The two target classes. Design-time targets are symbols we call in a process we control;\nruntime targets are boundaries a live process exposes.",
+      "type": "string",
+      "enum": [
+        "design-time",
+        "runtime"
+      ]
+    },
+    "TargetInfo": {
+      "type": "object",
+      "properties": {
+        "harness": {
+          "$ref": "#/$defs/HarnessInfo"
+        },
+        "revision": {
+          "description": "`git:<short sha>` when the scan root is a repository, absent when it is not.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "root": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "harness"
+      ]
+    }
+  }
+}

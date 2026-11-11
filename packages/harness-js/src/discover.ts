@@ -255,7 +255,7 @@ function discoverClass(
   });
 
   const receiver = receiverMaterialization(classType, classSymbol, classDeclaration, checker, new TypeLowerer(checker));
-  let fuzzable = 0;
+  let reported = 0;
   const notes: string[] = [];
 
   for (const [memberName, member, isStatic] of members) {
@@ -280,17 +280,17 @@ function discoverClass(
       mutableNames,
       thisAware: !isStatic,
     });
-    if (collector.targets.length + collector.skipped.length > before) fuzzable += 1;
+    if (collector.targets.length + collector.skipped.length > before) reported += 1;
   }
 
-  if (fuzzable === 0 && notes.length === 0) {
+  if (reported === 0 && notes.length === 0) {
     collector.skipped.push({
       targetId: targetId(modulePath, className, "class"),
       name: className,
       reason: "unsupported-signature",
       detail: `class ${className} declares no public callable members`,
     });
-  } else if (fuzzable === 0) {
+  } else if (reported === 0) {
     for (const note of notes) {
       collector.skipped.push({
         targetId: targetId(modulePath, `${className}:${note}`, "class-note"),
@@ -405,6 +405,32 @@ function discoverCallable(
     line: nameNode !== undefined ? sourceFile.getLineAndCharacterOfPosition(nameNode.getStart(sourceFile)).line + 1 : undefined,
   };
 
+  if (materialization !== "constructible") {
+    // A symbol the engine cannot build inputs for is reported as skipped and never as a target.
+    // `fuzzable` counts what the engine can call, and the scan result's arithmetic
+    // (constructible + fixture-required + opaque = discovered) holds only when a symbol appears
+    // in exactly one of the two lists.
+    const unique = new Map<string, Blocker>();
+    for (const blocker of blockers) unique.set(`${blocker.type}@${blocker.module ?? "?"}`, blocker);
+    const reason: SkipReason = "unconstructible-parameter";
+    // The wire carries the one blocker a reader would act on and how many entry points share it,
+    // so `blockedBy` is a single blocker, not the list this symbol happened to notice.
+    const first = unique.values().next().value as Blocker | undefined;
+    collector.skipped.push({
+      targetId: id,
+      name: displayName,
+      reason,
+      detail: `${materialization}: ${[...unique.keys()].join(", ")}`,
+      ...(first !== undefined ? { blockedBy: first } : {}),
+    });
+    for (const key of unique.keys()) {
+      const ids = collector.blockersByKey.get(key) ?? [];
+      ids.push(id);
+      collector.blockersByKey.set(key, ids);
+    }
+    return;
+  }
+
   collector.targets.push({
     id,
     targetClass: "design-time",
@@ -425,24 +451,6 @@ function discoverCallable(
     ...(context.memberName !== undefined ? { memberName: context.memberName } : {}),
     ...(context.isStatic === true ? { isStatic: true } : {}),
   });
-
-  if (materialization !== "constructible") {
-    const unique = new Map<string, Blocker>();
-    for (const blocker of blockers) unique.set(`${blocker.type}@${blocker.module ?? "?"}`, blocker);
-    const reason: SkipReason = "unconstructible-parameter";
-    collector.skipped.push({
-      targetId: id,
-      name: displayName,
-      reason,
-      detail: `${materialization}: ${[...unique.keys()].join(", ")}`,
-      blockedBy: [...unique.values()],
-    });
-    for (const key of unique.keys()) {
-      const ids = collector.blockersByKey.get(key) ?? [];
-      ids.push(id);
-      collector.blockersByKey.set(key, ids);
-    }
-  }
 }
 
 // ------------------------------------------------------------------ receivers
@@ -644,14 +652,10 @@ function targetId(modulePath: string, name: string, signature: string): string {
 
 function finishSkips(collector: Collector): void {
   for (const skipped of collector.skipped) {
-    if (skipped.blockedBy === undefined || skipped.blockedBy.length === 0) continue;
-    const shared = new Set<string>();
-    for (const blocker of skipped.blockedBy) {
-      for (const id of collector.blockersByKey.get(`${blocker.type}@${blocker.module ?? "?"}`) ?? []) {
-        if (id !== skipped.targetId) shared.add(id);
-      }
-    }
-    if (shared.size > 0) skipped.unlocksTargets = [...shared].sort(compareStrings);
+    if (skipped.blockedBy === undefined) continue;
+    const key = `${skipped.blockedBy.type}@${skipped.blockedBy.module ?? "?"}`;
+    const shared = (collector.blockersByKey.get(key) ?? []).filter((id) => id !== skipped.targetId);
+    if (shared.length > 0) skipped.unlocksTargets = shared.length;
   }
 }
 

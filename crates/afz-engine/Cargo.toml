@@ -17,4 +17,7 @@ sha2.workspace = true
 num_cpus.workspace = true
 
 [dev-dependencies]
+# `scan.json` is validated against the committed schema in tests, and the
+# validator is not something the engine needs at run time.
 afz-xtask = { path = "../xtask" }
+jsonschema = { version = "0.61.1", default-features = false }

@@ -19,6 +19,9 @@ name = "afz-fakeplugin"
 path = "src/fakeplugin.rs"
 
 [dependencies]
+# The scan-result schema is generated from the engine's document type, so the schema tool reads
+# the same type the writer uses. `afz-engine` dev-depends on this crate, which Cargo allows.
+afz-engine = { path = "../afz-engine" }
 afz-protocol.workspace = true
 serde.workspace = true
 schemars.workspace = true

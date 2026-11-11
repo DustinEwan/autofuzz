@@ -249,8 +249,10 @@ export interface SkippedTarget {
   name: string;
   reason: SkipReason;
   detail?: string;
-  blockedBy?: Blocker[];
-  unlocksTargets?: string[];
+  /** The blocking type and where it sits. One blocker, the one a reader would resolve first. */
+  blockedBy?: Blocker;
+  /** Entry points that share that blocker, so one missing type reads as one task. */
+  unlocksTargets?: number;
 }
 
 export interface Discovery {

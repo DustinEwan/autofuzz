@@ -29,6 +29,14 @@ pub fn write_schemas(dir: &Path) -> Result<Vec<String>, String> {
     emit(dir, &mut written, "discover-req", &schema_for!(afz_protocol::DiscoverReq))?;
     emit(dir, &mut written, "materialized-call", &schema_for!(afz_protocol::MaterializedCall))?;
     emit(dir, &mut written, "call-input", &schema_for!(afz_protocol::CallInput))?;
+    // The scan result is the engine's document, not a plugin message, but it is published the
+    // same way: one file in `docs/schema/`, generated from the type that writes it.
+    emit(
+        dir,
+        &mut written,
+        "scan-result",
+        &schema_for!(afz_engine::report::scanresult::ScanDocument),
+    )?;
     Ok(written)
 }
 
