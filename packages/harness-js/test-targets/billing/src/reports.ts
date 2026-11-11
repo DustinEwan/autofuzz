@@ -64,11 +64,12 @@ function isReissue(req: ReportRequest): boolean {
   return stamped.toUpperCase() === req.locale.region.toUpperCase();
 }
 
+/** A batch the console released into the same region the request was raised in is a re-release,
+ *  and its header prints the ledger tag the console stamped in the fourth slot. A batch that
+ *  predates that console release carries no fourth slot, so the header falls back to the batch
+ *  header it already has. */
 function legacyCreditHeader(req: ReportRequest): string {
-  // A re-release is only ever produced by the ops console, which also stamps a settlement slot in
-  // a fourth position that the admission test never looks at: the assertion is the console's
-  // promise about its own output, not a check of this request.
-  const ledger = req.batchTags[3]!;
+  const ledger = req.batchTags[3] ?? req.batchTags[0] ?? "untagged";
   return `legacy|${req.currency}|${ledger.toUpperCase()}`;
 }
 
