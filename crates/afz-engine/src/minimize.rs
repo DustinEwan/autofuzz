@@ -5,17 +5,25 @@
 //! which is exactly what a finding's identity is computed from, so a candidate cannot move the
 //! bug to a different line and still be accepted.
 //!
-/// The search is greedy with restarts. Each round lists every smaller input the current tree
-/// allows - each argument dropped, then a short ladder of smaller values for each node in a stable
-/// pre-order, most aggressive first - runs them, and keeps the first that still reproduces. The
-/// list is then rebuilt from the tree that was kept, so a path never points into a shape it was not
-/// taken from. A round that keeps nothing ends the search. Nothing here is random, and a candidate
-/// is accepted by its position in the list rather than by when its answer arrives, so the same input
-/// against the same target minimizes to the same bytes on every machine.
-///
-/// The caller supplies the re-run as a closure over a chunk of candidates, which keeps this module
-/// away from the transport: production runs a chunk across a pool of plugin connections, a test
-/// passes a table.
+//! The search is delta-debugging over the parts of each node, plus a pass that replaces scalars
+//! with smaller ones. For one node it tries the empty node first, then drops chunks of its parts -
+//! children of a collection, lines of a string, runs of a buffer - and halves the chunk size only
+//! when no chunk can go, so a long input sheds most of itself in a handful of trials rather than one
+//! trial per part. A successful drop restarts the walk from the shrunken tree, so a path is never
+//! carried across a change that moved what it addressed.
+//!
+//! Dropping whole lines and whole byte runs is what lets a defect near the end of a long string shed
+//! everything before it. Halving from the front cannot express that, and the reported input kept the
+//! irrelevant prefix.
+//!
+//! Candidates within one round all derive from the same base, so they are handed to the runner in
+//! chunks and answered in parallel. A candidate is accepted by its position in the round, never by
+//! when its answer arrives, so the same input against the same target minimizes to the same bytes on
+//! every machine.
+//!
+//! The caller supplies the re-run as a closure over a chunk of candidates, which keeps this module
+//! away from the transport: production runs a chunk across a pool of plugin connections, a test
+//! passes a table.
 
 use std::time::{Duration, Instant};
 
@@ -65,140 +73,139 @@ pub struct Minimized {
     pub reproduces: bool,
 }
 
-/// The position in the current input a candidate changes, rather than the whole tree it produces.
-/// A round lists positions once and then applies them to the base, so an accepted shrink rebuilds
-/// the list instead of carrying paths that no longer resolve.
-enum Shrink {
-    /// `undefined` in the argument's position, which is what a caller passing fewer arguments does.
-    DropArgument(usize),
-    /// A smaller node at this path of this argument.
-    Node { index: usize, path: NodePath, candidate: ValueNode },
-}
+/// How many runs a single-line string or a buffer is cut into when it has no natural boundary.
+/// Without a cap a one-megabyte string would become a million candidates.
+const MAX_RUNS: usize = 32;
 
-impl Shrink {
-    /// The candidate input, or `None` when the position no longer holds a node.
-    fn apply(&self, base: &[ValueTree]) -> Option<Vec<ValueTree>> {
-        let mut trial = base.to_vec();
-        match self {
-            Shrink::DropArgument(index) => {
-                let slot = trial.get_mut(*index)?;
-                *slot = ValueTree::undefined();
-                Some(trial)
-            }
-            Shrink::Node { index, path, candidate } => {
-                path.replace(&mut trial[*index], ValueTree::new(candidate.clone())).then_some(trial)
-            }
-        }
-    }
-}
-
-/// Every smaller input the tree allows, in the order a serial search would try them: whole
-/// arguments first, then each node's ladder, most aggressive first.
-fn shrink_candidates(base: &[ValueTree]) -> Vec<Shrink> {
-    let mut out: Vec<Shrink> = (0..base.len()).map(Shrink::DropArgument).collect();
-    for (index, tree) in base.iter().enumerate() {
-        for path in tree.paths() {
-            let Some(node) = node_at(tree, &path) else { continue };
-            for candidate in ladder(node) {
-                out.push(Shrink::Node { index, path: path.clone(), candidate });
-            }
-        }
-    }
-    out
-}
-
-/// Shrink `values` as far as it goes while `run` keeps reporting the same fault.
-///
-/// `run` receives a chunk of candidate inputs and answers each one, which lets the trials of a
-/// round share the machine: they all derive from the same base tree, so which candidate wins does
-/// not depend on when its answer arrives. `width` is how many candidates one call receives; 1 makes
-/// the search serial.
-///
-/// `max_attempts` and `budget` bound the work: a scan should not spend more shrinking one
-/// finding than it spent finding it. The time bound is the one that bites when the fault is a
-/// deadline, because an attempt that reproduces it costs the whole deadline every time.
-pub fn minimize<F>(values: &[ValueTree], max_attempts: u64, budget: Duration, width: usize, run: &mut F) -> Minimized
-where
-    F: FnMut(&[Vec<ValueTree>]) -> Vec<Outcome>,
-{
-    let width = width.max(1);
-    let bytes_before = total_bytes(values);
-    let mut current = values.to_vec();
-    let mut attempts = 0u64;
-    let started = Instant::now();
-
-    let Some(target) = (attempts < max_attempts)
-        .then(|| {
-            attempts += 1;
-            run(&[current.clone()]).first().and_then(FaultMatch::from_outcome)
-        })
-        .flatten()
-    else {
-        let bytes_after = total_bytes(&current);
-        return Minimized { values: current, attempts, bytes_before, bytes_after, reproduces: false };
-    };
-
-    loop {
-        let candidates = shrink_candidates(&current);
-        let mut accepted = false;
-        for chunk in candidates.chunks(width) {
-            let remaining = max_attempts.saturating_sub(attempts);
-            if remaining == 0 || started.elapsed() >= budget {
-                break;
-            }
-            let plans: Vec<Vec<ValueTree>> = chunk.iter().take(remaining as usize).filter_map(|candidate| candidate.apply(&current)).collect();
-            if plans.is_empty() {
-                continue;
-            }
-            attempts += plans.len() as u64;
-            let outcomes = run(&plans);
-            debug_assert_eq!(outcomes.len(), plans.len(), "the runner answers every candidate it was given");
-            if let Some((plan, _)) = plans.into_iter().zip(outcomes).find(|(_, outcome)| target.reproduces(outcome)) {
-                current = plan;
-                accepted = true;
-                break;
-            }
-        }
-        if !accepted {
-            break;
-        }
-    }
-
-    Minimized { bytes_after: total_bytes(&current), values: current, attempts, bytes_before, reproduces: true }
+/// A node whose contents can be made smaller by dropping parts, addressed by argument and path.
+struct Hole {
+    index: usize,
+    path: NodePath,
 }
 
 fn total_bytes(values: &[ValueTree]) -> usize {
     values.iter().map(ValueTree::wire_bytes).sum()
 }
 
-/// The node a path addresses. Paths come from a snapshot of the tree, so a shrink accepted
-/// earlier in the same pass can leave a later path pointing at nothing.
-fn node_at<'a>(tree: &'a ValueTree, path: &NodePath) -> Option<&'a ValueNode> {
-    path.get(tree).map(|node| &node.node)
+/// The line ranges of a string, or equal runs when it has no line break.
+fn ranges(text: &str) -> Vec<(usize, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for (at, c) in chars.iter().enumerate() {
+        if *c == '\n' {
+            out.push((start, at + 1));
+            start = at + 1;
+        }
+    }
+    if start < chars.len() {
+        out.push((start, chars.len()));
+    }
+    if out.len() > 1 {
+        return out;
+    }
+    runs_of(chars.len())
 }
 
-/// The smaller values to try for a node, most aggressive first. Every candidate is a node the
-/// generator could itself have produced, so a minimized input stays a legal `ValueTree`.
-fn ladder(node: &ValueNode) -> Vec<ValueNode> {
-    let candidates = match node {
-        // A stub's behavior is part of what the input means: turning `throw` into `returnFirst`
-        // changes the call rather than its size. An opaque node can only come from a fixture.
-        ValueNode::Function { .. } | ValueNode::Opaque { .. } | ValueNode::Undefined | ValueNode::Null => return Vec::new(),
-        ValueNode::Boolean { value } => {
-            if *value {
-                vec![ValueNode::Boolean { value: false }]
-            } else {
-                Vec::new()
-            }
-        }
+/// Equal byte or char runs, capped at `MAX_RUNS`.
+fn runs_of(len: usize) -> Vec<(usize, usize)> {
+    let step = len.div_ceil(MAX_RUNS).max(1);
+    let mut out = Vec::new();
+    let mut start = 0;
+    while start < len {
+        let end = (start + step).min(len);
+        out.push((start, end));
+        start = end;
+    }
+    out
+}
+
+/// How many parts a node offers the search. Zero means there is nothing to drop.
+fn part_count(node: &ValueNode) -> usize {
+    match node {
+        ValueNode::Array { items } | ValueNode::Set { items } | ValueNode::Tuple { items } | ValueNode::Stream { items, .. } => items.len(),
+        ValueNode::Map { entries } => entries.len(),
+        ValueNode::Object { fields } => fields.len(),
+        ValueNode::String { value } => ranges(value).len(),
+        ValueNode::Buffer { bytes } => runs_of(bytes.len()).len(),
+        _ => 0,
+    }
+}
+
+/// The same node with only the named parts kept. `parts` indexes the node as `part_count` saw it,
+/// so a caller that drops several chunks of one node still holds valid indices.
+fn keep(node: &ValueNode, parts: &[usize]) -> Option<ValueNode> {
+    let trees = |src: &[ValueTree]| -> Vec<ValueTree> {
+        src.iter().enumerate().filter(|(at, _)| parts.contains(at)).map(|(_, value)| value.clone()).collect()
+    };
+    let pairs = |src: &[(ValueTree, ValueTree)]| -> Vec<(ValueTree, ValueTree)> {
+        src.iter().enumerate().filter(|(at, _)| parts.contains(at)).map(|(_, entry)| entry.clone()).collect()
+    };
+    let named = |src: &[(String, ValueTree)]| -> Vec<(String, ValueTree)> {
+        src.iter().enumerate().filter(|(at, _)| parts.contains(at)).map(|(_, field)| field.clone()).collect()
+    };
+    match node {
+        ValueNode::Array { items } => Some(ValueNode::Array { items: trees(items) }),
+        ValueNode::Set { items } => Some(ValueNode::Set { items: trees(items) }),
+        ValueNode::Tuple { items } => Some(ValueNode::Tuple { items: trees(items) }),
+        ValueNode::Stream { iterable, items } => Some(ValueNode::Stream { iterable: *iterable, items: trees(items) }),
+        ValueNode::Map { entries } => Some(ValueNode::Map { entries: pairs(entries) }),
+        ValueNode::Object { fields } => Some(ValueNode::Object { fields: named(fields) }),
         ValueNode::String { value } => {
             let chars: Vec<char> = value.chars().collect();
-            let mut out = vec![ValueNode::string("")];
-            if chars.len() > 1 {
-                out.push(ValueNode::string(chars[..chars.len() / 2].iter().collect::<String>()));
-            }
-            out
+            let lines = ranges(value);
+            let text = parts
+                .iter()
+                .filter_map(|at| lines.get(*at))
+                .map(|(from, to)| chars[*from..*to].iter().collect::<String>())
+                .collect();
+            Some(ValueNode::String { value: text })
         }
+        ValueNode::Buffer { bytes } => {
+            let runs = runs_of(bytes.len());
+            let cut = parts
+                .iter()
+                .filter_map(|at| runs.get(*at))
+                .flat_map(|(from, to)| bytes[*from..*to].iter().copied())
+                .collect();
+            Some(ValueNode::Buffer { bytes: cut })
+        }
+        _ => None,
+    }
+}
+
+/// Every node with parts to drop, in the pre-order `paths` reports.
+fn holes(base: &[ValueTree]) -> Vec<Hole> {
+    let mut out = Vec::new();
+    for (index, tree) in base.iter().enumerate() {
+        for path in tree.paths() {
+            let Some(node) = path.get(tree).map(|node| &node.node) else { continue };
+            if part_count(node) > 0 {
+                out.push(Hole { index, path });
+            }
+        }
+    }
+    out
+}
+
+/// `base` with the node at the hole's path rebuilt from `original`, keeping only `parts`.
+fn with_kept(original: &ValueNode, base: &[ValueTree], hole: &Hole, parts: &[usize]) -> Option<Vec<ValueTree>> {
+    let mut trial = base.to_vec();
+    hole.path.replace(&mut trial[hole.index], ValueTree::new(keep(original, parts)?)).then_some(trial)
+}
+
+/// The parts in `n` near-equal chunks.
+fn split<T: Clone>(items: &[T], n: usize) -> Vec<Vec<T>> {
+    let size = items.len().div_ceil(n.max(1)).max(1);
+    items.chunks(size).map(|chunk| chunk.to_vec()).collect()
+}
+
+/// The smaller scalar to try for a node, most aggressive first. Collections, strings and buffers are
+/// not here: dropping their parts is the hole search's job, and a candidate the generator could not
+/// have produced is not a legal input.
+fn scalar_ladder(node: &ValueNode) -> Vec<ValueNode> {
+    let candidates = match node {
+        ValueNode::Boolean { value } if *value => vec![ValueNode::Boolean { value: false }],
         ValueNode::Number { value } => {
             let mut out = vec![ValueNode::number(0.0)];
             let half = value.as_f64() / 2.0;
@@ -207,13 +214,7 @@ fn ladder(node: &ValueNode) -> Vec<ValueNode> {
             }
             out
         }
-        ValueNode::BigInt { value } => {
-            if value == "0" {
-                Vec::new()
-            } else {
-                vec![ValueNode::BigInt { value: "0".to_string() }]
-            }
-        }
+        ValueNode::BigInt { value } if value != "0" => vec![ValueNode::BigInt { value: "0".to_string() }],
         ValueNode::Literal { value } => [
             serde_json::Value::Null,
             serde_json::Value::Bool(false),
@@ -224,34 +225,190 @@ fn ladder(node: &ValueNode) -> Vec<ValueNode> {
         .filter(|candidate| candidate != value)
         .map(|value| ValueNode::Literal { value })
         .collect(),
-        ValueNode::Buffer { bytes } => {
-            let mut out = vec![ValueNode::Buffer { bytes: Vec::new() }];
-            if bytes.len() > 1 {
-                out.push(ValueNode::Buffer { bytes: bytes[..bytes.len() / 2].to_vec() });
-            }
-            out
-        }
-        ValueNode::Array { items } => shrink(items, |kept| ValueNode::Array { items: kept }),
-        ValueNode::Set { items } => shrink(items, |kept| ValueNode::Set { items: kept }),
-        ValueNode::Tuple { items } => shrink(items, |kept| ValueNode::Tuple { items: kept }),
-        ValueNode::Stream { iterable, items } => {
-            let iterable = *iterable;
-            shrink(items, move |kept| ValueNode::Stream { iterable, items: kept })
-        }
-        ValueNode::Map { entries } => shrink(entries, |kept| ValueNode::Map { entries: kept }),
-        ValueNode::Object { fields } => shrink(fields, |kept| ValueNode::Object { fields: kept }),
+        _ => Vec::new(),
     };
     candidates.into_iter().filter(|candidate| candidate != node).collect()
 }
 
-/// `[]`, then the first element alone, then the list with one element removed at a time.
-fn shrink<T: Clone>(items: &[T], build: impl Fn(Vec<T>) -> ValueNode) -> Vec<ValueNode> {
-    let mut out = vec![build(Vec::new())];
-    if items.len() > 1 {
-        out.push(build(items[..1].to_vec()));
-        for skip in 0..items.len() {
-            out.push(build(items.iter().enumerate().filter(|(i, _)| *i != skip).map(|(_, v)| v.clone()).collect()));
+/// The candidate plans of one round, answered in chunks under the attempt and time bounds.
+struct Search<'r, F> {
+    run: &'r mut F,
+    width: usize,
+    max_attempts: u64,
+    budget: Duration,
+    started: Instant,
+    attempts: u64,
+}
+
+impl<F> Search<'_, F>
+where
+    F: FnMut(&[Vec<ValueTree>]) -> Vec<Outcome>,
+{
+    fn out_of_work(&self) -> bool {
+        self.attempts >= self.max_attempts || self.started.elapsed() >= self.budget
+    }
+
+    /// The index of the first plan that reproduces `target`, or `None`. Plans are answered in
+    /// `width`-sized chunks, so the answer is the same whether the runner is serial or parallel.
+    fn first_hit(&mut self, target: &FaultMatch, plans: &[Vec<ValueTree>]) -> Option<usize> {
+        let mut base = 0usize;
+        while base < plans.len() {
+            if self.out_of_work() {
+                break;
+            }
+            let room = (self.max_attempts - self.attempts) as usize;
+            let end = (base + self.width.min(room)).min(plans.len());
+            let chunk = &plans[base..end];
+            self.attempts += chunk.len() as u64;
+            let outcomes = (self.run)(chunk);
+            debug_assert_eq!(outcomes.len(), chunk.len(), "the runner answers every candidate it was given");
+            if let Some(offset) = outcomes.iter().position(|outcome| target.reproduces(outcome)) {
+                return Some(base + offset);
+            }
+            base = end;
+        }
+        None
+    }
+}
+
+/// Shrink `values` as far as it goes while `run` keeps reporting the same fault.
+///
+/// `run` receives a chunk of candidate inputs and answers each one. `width` is how many candidates
+/// one call receives; 1 makes the search serial.
+///
+/// `max_attempts` and `budget` bound the work: a scan should not spend more shrinking one
+/// finding than it spent finding it. The time bound is the one that bites when the fault is a
+/// deadline, because an attempt that reproduces it costs the whole deadline every time.
+pub fn minimize<F>(values: &[ValueTree], max_attempts: u64, budget: Duration, width: usize, run: &mut F) -> Minimized
+where
+    F: FnMut(&[Vec<ValueTree>]) -> Vec<Outcome>,
+{
+    let bytes_before = total_bytes(values);
+    let mut current = values.to_vec();
+    let mut search = Search { run, width: width.max(1), max_attempts, budget, started: Instant::now(), attempts: 0 };
+
+    let Some(target) = (search.attempts < max_attempts)
+        .then(|| {
+            search.attempts += 1;
+            (search.run)(&[current.clone()]).first().and_then(FaultMatch::from_outcome)
+        })
+        .flatten()
+    else {
+        let bytes_after = total_bytes(&current);
+        return Minimized { values: current, attempts: search.attempts, bytes_before, bytes_after, reproduces: false };
+    };
+
+    loop {
+        let mut changed = false;
+
+        // An argument the target never needed can go entirely: `undefined` in its position is what
+        // a caller who passed fewer arguments would produce.
+        while !search.out_of_work() {
+            let plans: Vec<Vec<ValueTree>> = (0..current.len())
+                .map(|index| {
+                    let mut trial = current.clone();
+                    trial[index] = ValueTree::undefined();
+                    trial
+                })
+                .collect();
+            let Some(hit) = search.first_hit(&target, &plans) else { break };
+            current = plans[hit].clone();
+            changed = true;
+        }
+
+        // Then the parts of each node. A drop restarts the walk, because the tree the remaining
+        // holes were collected from no longer exists.
+        'holes: loop {
+            for hole in holes(&current) {
+                if search.out_of_work() {
+                    break 'holes;
+                }
+                if let Some(shrunk) = ddmin(&mut search, &target, &current, &hole) {
+                    current = shrunk;
+                    changed = true;
+                    continue 'holes;
+                }
+            }
+            break 'holes;
+        }
+
+        // Then the scalars that dropping parts cannot reach.
+        while !search.out_of_work() {
+            let mut plans = Vec::new();
+            for (index, tree) in current.iter().enumerate() {
+                for path in tree.paths() {
+                    let Some(node) = path.get(tree).map(|node| &node.node) else { continue };
+                    for candidate in scalar_ladder(node) {
+                        let mut trial = current.clone();
+                        if path.replace(&mut trial[index], ValueTree::new(candidate)) {
+                            plans.push(trial);
+                        }
+                    }
+                }
+            }
+            let Some(hit) = search.first_hit(&target, &plans) else { break };
+            current = plans[hit].clone();
+            changed = true;
+        }
+
+        if !changed || search.out_of_work() {
+            break;
         }
     }
-    out
+
+    Minimized { bytes_after: total_bytes(&current), values: current, attempts: search.attempts, bytes_before, reproduces: true }
+}
+
+/// Delta-debugging over one node: drop a chunk of its parts, and halve the chunk only when no chunk
+/// can go. The node is rebuilt from the snapshot taken on entry, so part indices stay valid across
+/// the rounds.
+fn ddmin<F>(search: &mut Search<F>, target: &FaultMatch, base: &[ValueTree], hole: &Hole) -> Option<Vec<ValueTree>>
+where
+    F: FnMut(&[Vec<ValueTree>]) -> Vec<Outcome>,
+{
+    let original = hole.path.get(&base[hole.index]).map(|node| node.node.clone())?;
+    let total = part_count(&original);
+    if total == 0 {
+        return None;
+    }
+
+    let mut kept: Vec<usize> = (0..total).collect();
+    let mut current = base.to_vec();
+    let mut progress = false;
+    let mut chunks = 2;
+    loop {
+        let mut plan_parts: Vec<Vec<usize>> = Vec::new();
+        let mut plans: Vec<Vec<ValueTree>> = Vec::new();
+        if kept.len() == total {
+            if let Some(empty) = with_kept(&original, &current, hole, &[]) {
+                plan_parts.push(Vec::new());
+                plans.push(empty);
+            }
+        }
+        for drop in split(&kept, chunks) {
+            let parts: Vec<usize> = kept.iter().copied().filter(|part| !drop.contains(part)).collect();
+            if parts.len() == kept.len() {
+                continue;
+            }
+            if let Some(trial) = with_kept(&original, &current, hole, &parts) {
+                plan_parts.push(parts);
+                plans.push(trial);
+            }
+        }
+        let Some(hit) = search.first_hit(target, &plans) else {
+            if chunks >= kept.len() {
+                break;
+            }
+            chunks = (chunks * 2).min(kept.len());
+            continue;
+        };
+        current = plans[hit].clone();
+        kept = plan_parts[hit].clone();
+        progress = true;
+        chunks = 2;
+        if kept.is_empty() || search.out_of_work() {
+            break;
+        }
+    }
+    progress.then_some(current)
 }

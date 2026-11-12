@@ -185,3 +185,58 @@ fn minimization_refuses_a_candidate_that_changes_the_fault() {
         result.values[0]
     );
 }
+
+#[test]
+fn minimization_drops_the_lines_before_the_one_that_breaks() {
+    // The fault depends on one line near the end of a long document, which is the usual shape for a
+    // parser input. A shrink that can only empty a string or keep its first half cannot express
+    // "delete what came before", so every irrelevant line would stay in the reported input.
+    let filler = (0..200).map(|at| format!("filler{at}\n")).collect::<String>();
+    let values = vec![ValueTree::string(&format!("{filler}boom\n"))];
+    let run = |args: &[ValueTree]| -> Outcome {
+        let text = match &args[0].node {
+            afz_protocol::ValueNode::String { value } => value.clone(),
+            other => return Outcome::plugin_lost(0.0, format!("the argument shape changed: {other:?}")),
+        };
+        if text.contains("boom") {
+            broken()
+        } else {
+            accepted()
+        }
+    };
+
+    let result = minimize(&values, 2000, Duration::MAX, 6, &mut |batch| batch.iter().map(|candidate| run(candidate)).collect());
+    assert!(result.reproduces);
+    let shrunk = match &result.values[0].node {
+        afz_protocol::ValueNode::String { value } => value.clone(),
+        other => panic!("the argument shape changed: {other:?}"),
+    };
+    assert!(shrunk.contains("boom"), "the line the fault depends on did not survive: {shrunk:?}");
+    assert!(!shrunk.starts_with("filler0"), "the minimized input still carries the document's first line: {shrunk:?}");
+    assert!(result.bytes_after * 10 < result.bytes_before, "shrunk {} bytes to {}", result.bytes_before, result.bytes_after);
+    // Delta debugging halves what it rejects, so a return to one trial per line shows up here.
+    assert!(result.attempts < 60, "the search cost {} trials for a 201-line document", result.attempts);
+}
+
+/// The fault every candidate has to reproduce: one class, one frame.
+fn broken() -> Outcome {
+    Outcome::Failed(afz_protocol::FailedOutcome {
+        duration_ms: 1.0,
+        coverage: None,
+        via: "engine-error-outside-declared-channel".to_string(),
+        fault: afz_protocol::FaultSignature {
+            class: "TypeError".to_string(),
+            message: "Cannot read properties of undefined".to_string(),
+            frames: vec![afz_protocol::FaultFrame {
+                file: "/target/src/document.ts".to_string(),
+                line: 41,
+                column: None,
+                fn_name: None,
+            }],
+        },
+    })
+}
+
+fn accepted() -> Outcome {
+    Outcome::Ok(afz_protocol::OkOutcome { duration_ms: 1.0, memory_bytes: None, coverage: None, value: None })
+}
