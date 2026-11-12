@@ -342,7 +342,7 @@ pub fn instrument(bytes: &[u8]) -> Result<Instrumented, Error> {
     check(bytes, true)?;
     let (skip, names) = plumbing_functions(bytes)?;
     let guards = count_blocks(bytes, &skip)?.max(1);
-    let pages = (guards as u64 + 65_535) / 65_536;
+    let pages = (guards as u64).div_ceil(65_536);
     let (declared, counters_name_taken) = scan_layout(bytes)?;
     if counters_name_taken {
         return Err(Error::CountersNameTaken);

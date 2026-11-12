@@ -1,0 +1,57 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # The engine and the protocol crate. `cargo test --workspace` includes the Rust tests that
+  # spawn the js-ts plugin over stdio, so this job builds the harness before running them.
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packages/harness-js/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Build the js-ts harness
+        run: |
+          npm --prefix packages/harness-js ci
+          npm --prefix packages/harness-js run build
+
+      # The gate: any clippy warning in any target, including tests, fails the job.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace
+
+  # The plugin's own suite. It needs no Rust binary, so it runs on its own.
+  harness-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: packages/harness-js/package-lock.json
+
+      - name: Install
+        run: npm --prefix packages/harness-js ci
+
+      - name: Tests
+        run: npm --prefix packages/harness-js test

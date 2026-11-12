@@ -192,7 +192,7 @@ fn minimization_drops_the_lines_before_the_one_that_breaks() {
     // parser input. A shrink that can only empty a string or keep its first half cannot express
     // "delete what came before", so every irrelevant line would stay in the reported input.
     let filler = (0..200).map(|at| format!("filler{at}\n")).collect::<String>();
-    let values = vec![ValueTree::string(&format!("{filler}boom\n"))];
+    let values = vec![ValueTree::string(format!("{filler}boom\n"))];
     let run = |args: &[ValueTree]| -> Outcome {
         let text = match &args[0].node {
             afz_protocol::ValueNode::String { value } => value.clone(),

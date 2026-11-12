@@ -2,7 +2,7 @@
 //! reported it only when a plugin was already lost, so a scan whose plugin died on its own recorded
 //! `plugin exited with code 1` and nothing else, and the reason was gone.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use afz_engine::config::Strategy;
@@ -36,9 +36,9 @@ fn project(name: &str, script: &str) -> PathBuf {
     root
 }
 
-fn scan(root: &PathBuf) -> scan::ScanReport {
+fn scan(root: &Path) -> scan::ScanReport {
     let loaded = afz_engine::config::load(&root.join("autofuzz.json")).expect("the scan project validates");
-    let mut options = Options::new(loaded, root.clone());
+    let mut options = Options::new(loaded, root.to_path_buf());
     options.invocations = 4;
     options.workers = 1;
     options.seed = 0x5e3a_91c4;

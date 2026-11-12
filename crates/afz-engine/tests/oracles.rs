@@ -65,8 +65,10 @@ fn a_guard_site_rejection_is_not_a_finding() {
     assert!(evaluate(&outcome, &OraclesConfig::default()).is_empty());
 
     // The audit switch: turning `rejected` on lists it, at the severity the user chose.
-    let mut config = OraclesConfig::default();
-    config.rejected = OracleConfig { severity: Severity::Low, ms: None, mb: None };
+    let config = OraclesConfig {
+        rejected: OracleConfig { severity: Severity::Low, ms: None, mb: None },
+        ..Default::default()
+    };
     let findings = evaluate(&outcome, &config);
     assert_eq!(oracles_of(&findings), vec!["rejected"]);
     assert_eq!(findings[0].severity, Severity::Low);
@@ -113,8 +115,10 @@ fn a_slow_ok_outcome_trips_the_deadline_oracle() {
 
 #[test]
 fn turning_the_deadline_oracle_off_removes_the_engine_deadline() {
-    let mut config = OraclesConfig::default();
-    config.deadline = OracleConfig { severity: Severity::Off, ms: Some(2000), mb: None };
+    let config = OraclesConfig {
+        deadline: OracleConfig { severity: Severity::Off, ms: Some(2000), mb: None },
+        ..Default::default()
+    };
     let engine = Oracles::new(&config);
     // The supervisor reads this as "let the call run", so a slow target is not a finding either.
     assert_eq!(engine.invocation_deadline(), None);
@@ -154,12 +158,14 @@ fn harness_channels_are_run_errors_not_findings() {
 
 #[test]
 fn an_override_can_make_a_declared_channel_a_failure() {
-    let mut config = OraclesConfig::default();
-    config.overrides = vec![OracleOverride {
-        target: None,
-        via: "guard-site".to_string(),
-        treat_as: "failed".to_string(),
-    }];
+    let config = OraclesConfig {
+        overrides: vec![OracleOverride {
+            target: None,
+            via: "guard-site".to_string(),
+            treat_as: "failed".to_string(),
+        }],
+        ..Default::default()
+    };
     let findings = evaluate(&rejected("guard-site", "RangeError: bad rate"), &config);
     assert_eq!(oracles_of(&findings), vec!["failed"]);
     let fault = findings[0].fault.as_ref().expect("synthesised fault");
@@ -169,12 +175,14 @@ fn an_override_can_make_a_declared_channel_a_failure() {
 
 #[test]
 fn an_override_named_for_one_target_leaves_the_others_alone() {
-    let mut config = OraclesConfig::default();
-    config.overrides = vec![OracleOverride {
-        target: Some("afz:t:other".to_string()),
-        via: "guard-site".to_string(),
-        treat_as: "failed".to_string(),
-    }];
+    let config = OraclesConfig {
+        overrides: vec![OracleOverride {
+            target: Some("afz:t:other".to_string()),
+            via: "guard-site".to_string(),
+            treat_as: "failed".to_string(),
+        }],
+        ..Default::default()
+    };
     let engine = Oracles::new(&config);
     assert!(engine.evaluate(TARGET, 1, &rejected("guard-site", "RangeError")).is_empty());
     assert_eq!(engine.evaluate("afz:t:other", 1, &rejected("guard-site", "RangeError")).len(), 1);
@@ -182,55 +190,64 @@ fn an_override_named_for_one_target_leaves_the_others_alone() {
 
 #[test]
 fn an_override_can_silence_a_channel_entirely() {
-    let mut config = OraclesConfig::default();
-    config.overrides = vec![OracleOverride {
-        target: None,
-        via: "engine-error-outside-declared-channel".to_string(),
-        treat_as: "ok".to_string(),
-    }];
+    let config = OraclesConfig {
+        overrides: vec![OracleOverride {
+            target: None,
+            via: "engine-error-outside-declared-channel".to_string(),
+            treat_as: "ok".to_string(),
+        }],
+        ..Default::default()
+    };
     let outcome = failed("engine-error-outside-declared-channel", "TypeError", "nope");
     assert!(evaluate(&outcome, &config).is_empty());
 }
 
 #[test]
 fn an_override_to_rejected_needs_the_rejected_oracle_enabled() {
-    let mut config = OraclesConfig::default();
-    config.overrides = vec![OracleOverride {
+    let overrides = vec![OracleOverride {
         target: None,
         via: "unhandled-rejection".to_string(),
         treat_as: "rejected".to_string(),
     }];
+    let config = OraclesConfig { overrides, ..Default::default() };
     let outcome = failed("unhandled-rejection", "Error", "db connection lost");
     assert!(evaluate(&outcome, &config).is_empty());
 
-    config.rejected = OracleConfig { severity: Severity::Medium, ms: None, mb: None };
-    let findings = evaluate(&outcome, &config);
+    let enabled = OraclesConfig {
+        rejected: OracleConfig { severity: Severity::Medium, ms: None, mb: None },
+        ..config
+    };
+    let findings = evaluate(&outcome, &enabled);
     assert_eq!(oracles_of(&findings), vec!["rejected"]);
     assert!(findings[0].summary.contains("Error: db connection lost"), "{}", findings[0].summary);
 }
 
 #[test]
 fn the_first_matching_override_wins() {
-    let mut config = OraclesConfig::default();
-    config.rejected = OracleConfig { severity: Severity::Low, ms: None, mb: None };
-    config.overrides = vec![
-        OracleOverride { target: None, via: "guard-site".to_string(), treat_as: "ok".to_string() },
-        OracleOverride {
-            target: None,
-            via: "guard-site".to_string(),
-            treat_as: "failed".to_string(),
-        },
-    ];
+    let config = OraclesConfig {
+        rejected: OracleConfig { severity: Severity::Low, ms: None, mb: None },
+        overrides: vec![
+            OracleOverride { target: None, via: "guard-site".to_string(), treat_as: "ok".to_string() },
+            OracleOverride {
+                target: None,
+                via: "guard-site".to_string(),
+                treat_as: "failed".to_string(),
+            },
+        ],
+        ..Default::default()
+    };
     assert!(evaluate(&rejected("guard-site", "RangeError"), &config).is_empty());
 }
 
 #[test]
 fn an_ok_outcome_cannot_be_overridden_because_it_names_no_channel() {
-    let mut config = OraclesConfig::default();
-    config.overrides = vec![OracleOverride {
-        target: None,
-        via: "guard-site".to_string(),
-        treat_as: "failed".to_string(),
-    }];
+    let config = OraclesConfig {
+        overrides: vec![OracleOverride {
+            target: None,
+            via: "guard-site".to_string(),
+            treat_as: "failed".to_string(),
+        }],
+        ..Default::default()
+    };
     assert!(evaluate(&ok(1.0, None), &config).is_empty());
 }
