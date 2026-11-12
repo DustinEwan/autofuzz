@@ -29,11 +29,16 @@ Every skipped symbol is named in the document. `$URL.append` is skipped twice wi
 `unconstructible-parameter`: it takes a `$URL` receiver the harness cannot build. `hasProtocol` is
 skipped twice with `unsupported-signature`.
 
-Those four rows are two symbols listed twice, and the materialization counts sum to 107 against 105
-fuzzable, which is the same duplication. Discovery emits one row per declaration site rather than one
-per target id, so a symbol exported from more than one module is enumerated twice and planned twice.
-It costs a little throughput and nothing in correctness, because a finding's identity is the target
-id plus the fault, not the row.
+Most of those 105 targets are the same function reached from two modules. `decode` is exported by
+`src/encoding.ts` and re-exported by `src/index.ts`, discovery gives each export site its own target id, and
+44 names therefore appear twice in the inventory and are fuzzed twice. That costs throughput and nothing in
+correctness, because a finding's identity is a target id plus the fault, and `afz probe-plugin` reports 105
+targets under 105 distinct ids.
+
+`materializationCounts` sums to 107 against 105 fuzzable, which is not that duplication: the writer counts
+the skipped symbols that report a materialization as well (`scan.rs` adds `skipped[].materialization` after
+the fuzzable targets). The markdown renderer prints those rows without saying they include skipped symbols,
+so the table reads as though two targets had gone missing.
 
 ## Finding
 
