@@ -16,7 +16,7 @@ only block is `runtime` validates, and a scan of it exits with `runtime targets 
 ## Requirements
 
 - Linux or macOS.
-- Rust 1.85 or newer.
+- Rust 1.88 or newer.
 - Node 24 or newer, for the `js-ts` harness.
 
 ## Build
@@ -130,6 +130,28 @@ a commit that changed only `.rs` files reports that the scope touches no fuzzabl
 that breaks an unchanged *importer* of a changed file is outside the scope; omit `--git` to ask the
 whole-tree question.
 
+## Drive it from a coding harness
+
+`afz-mcp` speaks the Model Context Protocol on stdio, so an agent in Claude Code, Cursor, VS Code
+Copilot, Zed, or Codex CLI can ask "does this change set fuzz clean?" without a shell. It needs no
+configuration: every call names the directory it acts on, so the agent reaches a different tree by
+calling a tool again, the same way it does with the shell it already has. A scan project's
+`codebase.command` is code the engine runs, so scan trees you already trust - the same trust
+`afz scan` asks for.
+
+```json
+{"mcpServers": {"autofuzz": {"command": "afz-mcp"}}}
+```
+
+|Tool|What it answers|
+|---|---|
+|`afz_probe`|Which harness plugin a directory uses and which targets it would fuzz; cheap, no invocations.|
+|`afz_scan`|Starts a coverage-guided scan and answers at once with a `jobId`; `git` scopes it to a change set.|
+|`afz_scan_status`|One scan's state and live progress, answered immediately.|
+|`await_scan`|Blocks until a scan ends; run it as a background task to be woken when the scan finishes. `timeoutSeconds` answers early with the state as it is then.|
+|`afz_scan_cancel`|Ends a running scan early; the scan still writes its result, with `stoppedReason: interrupted`.|
+|`afz_findings`|A finished scan's findings, newest scan first, each naming the input and reproducer files it came from.|
+
 ## Output
 
 A scan writes `<output.dir>/<scanId>/`:
@@ -169,6 +191,7 @@ Build both halves with `cargo build --release -p afz-wasm` and
 |`crates/afz-protocol/`|Wire types and JSON-RPC framing. No policy.|
 |`crates/afz-engine/`|Generator, corpus, scheduler, supervisor, oracles, minimizer, scan-result writer.|
 |`crates/afz-cli/`|The `afz` binary.|
+|`crates/afz-mcp/`|The `afz-mcp` binary: an MCP server on stdio driving the engine in process.|
 |`crates/afz-wasm/`|The WebAssembly harness plugin.|
 |`crates/xtask/`|Fake plugin for protocol tests, and the JSON Schema generator.|
 |`packages/harness-js/`|The `js-ts` plugin and its test targets.|

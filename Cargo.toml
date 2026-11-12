@@ -4,6 +4,7 @@ members = [
     "crates/afz-protocol",
     "crates/afz-engine",
     "crates/afz-cli",
+    "crates/afz-mcp",
     "crates/afz-wasm",
     "crates/xtask",
 ]
@@ -11,7 +12,7 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 license = "MIT"
 
 [workspace.dependencies]
@@ -30,6 +31,8 @@ num_cpus = "1.17.0"
 wasmtime = "50.0.1"
 wasmparser = "0.263.0"
 wasm-encoder = "0.263.0"
+rmcp = { version = "3.9.0", features = ["transport-io"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 
 [profile.release]
 overflow-checks = true
