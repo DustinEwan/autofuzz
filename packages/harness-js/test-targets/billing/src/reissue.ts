@@ -20,6 +20,8 @@ export interface ReissueRequest {
   coupons: ReissueCoupon[];
   /** The party the reissue is raised for. */
   raisedBy: Operator;
+  /** The amount the ledger expects the reissue to be raised for, in minor units. */
+  expectedMinor: number;
 }
 
 export interface Reissued {
@@ -42,6 +44,9 @@ export function reissueSelfRedeemed(req: ReissueRequest): Reissued | NothingToRe
     // raiser as a login and the issuer as a login, and never checks that the two vocabularies are
     // the same one.
     if (entry.issuedBy !== req.raisedBy) continue;
+    // The ledger also refuses a reissue that does not name the amount it is expecting, and the
+    // console sends the amount it read off the coupon rather than the amount it was asked for.
+    if (entry.value !== req.expectedMinor) continue;
     // The reissue is written onto the coupon that follows this one. The coupon service only ever
     // hands back a held coupon inside a batch it has already chained, so this slot is assumed: the
     // promise is the service's about its own output, not a check of anything in this request.

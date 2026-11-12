@@ -8,10 +8,11 @@
 // `issuedBy` is free text, which no boundary value reaches.
 //
 // The conjunction this pins, on `reissueSelfRedeemed`: a batch with at least one coupon, that
-// coupon `fixed` rather than `percent`, and its `issuedBy` equal to `raisedBy`. Only the last is
-// hard, because generation draws a literal from one vocabulary and a random string from another,
-// and the only operator that can make them agree copies one over the other inside one input. The
-// crash is the slot after the match, which nothing in the request guarantees.
+// coupon `fixed` rather than `percent`, its `issuedBy` equal to `raisedBy`, and its `value` equal
+// to `expectedMinor`. The last two are hard, and they are hard inside one coupon object:
+// generation draws a literal from one vocabulary and a free-text or numeric value from another, so
+// the only operator that can satisfy both is the copy-within-input, applied twice. The crash is the
+// slot after the match, which nothing in the request guarantees.
 //
 // The old path is pinned as well. `creditSummary` still walks its six-condition re-release test,
 // and it must now return without breaking: a hard path that leads nowhere is a red herring, and a
@@ -32,15 +33,16 @@ const boolean = (value) => ({ node: "boolean", value });
 const array = (items) => ({ node: "array", items });
 const object = (fields) => ({ node: "object", fields });
 
-const coupon = (code, issuedBy, kind = "fixed") =>
+const coupon = (code, issuedBy, kind = "fixed", value = 500) =>
   object([
     ["code", text(code)],
     ["kind", literal(kind)],
-    ["value", number(500)],
+    ["value", number(value)],
     ["issuedBy", text(issuedBy)],
   ]);
 
-const reissue = (coupons, raisedBy) => object([["coupons", array(coupons)], ["raisedBy", literal(raisedBy)]]);
+const reissue = (coupons, raisedBy, expectedMinor = 500) =>
+  object([["coupons", array(coupons)], ["raisedBy", literal(raisedBy)], ["expectedMinor", number(expectedMinor)]]);
 
 // The six-condition input the previous defect needed: the two literal gates, exactly three tags,
 // a non-empty first tag, a `locale`, and a region that agrees with that tag apart from case.
@@ -117,6 +119,18 @@ test("a coupon issued to somebody else is not the raiser's to reissue", async ()
   try {
     const id = await targetId(plugin, "reissueSelfRedeemed");
     const outcome = await invoke(plugin, id, reissue([coupon("CREDIT-1", "ops-console")], "credit-desk"));
+    assert.equal(outcome.kind, "ok", JSON.stringify(outcome));
+    assert.equal(field(outcome.value, "status")?.value, "nothing-to-reissue");
+  } finally {
+    plugin.close();
+  }
+});
+
+test("a coupon issued to the raiser for an amount the ledger did not expect reissues nothing", async () => {
+  const plugin = startPlugin();
+  try {
+    const id = await targetId(plugin, "reissueSelfRedeemed");
+    const outcome = await invoke(plugin, id, reissue([coupon("CREDIT-1", "credit-desk")], "credit-desk", 700));
     assert.equal(outcome.kind, "ok", JSON.stringify(outcome));
     assert.equal(field(outcome.value, "status")?.value, "nothing-to-reissue");
   } finally {
