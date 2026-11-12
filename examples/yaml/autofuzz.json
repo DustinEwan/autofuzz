@@ -1,0 +1,32 @@
+{
+  "project": "yaml",
+  "codebase": {
+    "harness": "js-ts",
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "**/*.test.ts",
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/*.d.ts",
+      "src/cli.ts",
+      "src/test-events.ts"
+    ]
+  },
+  "oracles": {},
+  "budget": {
+    "invocations": 20000,
+    "wallClockMs": 600000,
+    "workers": 0,
+    "maxCorpus": 2048,
+    "strategy": "guided"
+  },
+  "output": {
+    "dir": ".autofuzz",
+    "renderers": [
+      "json",
+      "markdown"
+    ]
+  }
+}
