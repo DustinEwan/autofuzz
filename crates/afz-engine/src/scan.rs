@@ -199,10 +199,12 @@ pub fn run(options: &Options, on_progress: &mut impl FnMut(&Progress)) -> Result
     };
 
     let started_at = SystemTime::now();
+    let setup_at = Instant::now();
     let probe = PluginClient::spawn(&launch)?;
     let handshake = probe.handshake()?;
     let discovery = probe.discover(&request, DISCOVERY_TIMEOUT)?;
     let mut scanner = Scanner::open(options, launch, handshake, discovery, request, probe)?;
+    scanner.setup_ms = setup_at.elapsed().as_millis();
     scanner.loop_until_budget(on_progress)?;
     scanner.finish(started_at)
 }
@@ -256,6 +258,13 @@ struct Scanner {
     /// thread, so the count is a cost the finding list hides: identities deduplicate the report,
     /// not the thread restarts.
     failed: u64,
+    /// Wall time from the scan entry to the first batch: spawn, handshake, discovery and
+    /// scanner construction. No worker is executing targets during this, so it is where a scan's
+    /// idle cores usually come from.
+    setup_ms: u128,
+    /// Wall time spent asking the workers for their reachable-edge tables, at each sample and at the
+    /// end of the run. The answer waits for the slowest process while every other worker is idle.
+    coverage_ms: u128,
 }
 
 /// The plugin connection minimization runs against, with the targets it has prepared.
@@ -355,6 +364,8 @@ impl Scanner {
             account_ms: 0,
             batches: 0,
             failed: 0,
+            setup_ms: 0,
+            coverage_ms: 0,
         };
         scanner.log.push(format!(
             "harness {} {} ({}), strategy {:?}, seed 0x{:08x}",
@@ -745,10 +756,12 @@ impl Scanner {
         if !self.handshake.capabilities.contains(&Capability::Coverage) {
             return;
         }
+        let asked_at = Instant::now();
         if let Some(map) = self.supervisor.coverage_map(COVERAGE_TIMEOUT) {
             self.coverage_total = map.entries.len() as u64;
             self.coverage_map = Some(map);
         }
+        self.coverage_ms += asked_at.elapsed().as_millis();
     }
 
     /// Write the document, the files it names, and the identities this scan reported.
@@ -761,12 +774,14 @@ impl Scanner {
             sample.coverage_ratio = Self::ratio_of(sample.coverage_edges, total);
         }
         self.log.push(format!(
-            "{} batches over {} ms: plan {} ms, run {} ms, account {} ms",
+            "{} batches over {} ms: plan {} ms, run {} ms, account {} ms, setup {} ms, coverage map {} ms",
             self.batches,
             started_at.elapsed().unwrap_or_default().as_millis(),
             self.plan_ms,
             self.run_ms,
             self.account_ms,
+            self.setup_ms,
+            self.coverage_ms,
         ));
         self.log.push(format!("{} invocations answered failed, each retiring the plugin's invoke worker", self.failed));
         let finished_at = SystemTime::now();
