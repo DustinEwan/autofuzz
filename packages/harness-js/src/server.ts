@@ -69,6 +69,8 @@ interface WarmWorker {
   busy: boolean;
   /** Jobs this thread has answered; the thread is retired at `INVOCATIONS_PER_WORKER`. */
   calls: number;
+  /** The job this thread answered last, which is what an orphan rejection names. */
+  lastJob: number | null;
 }
 
 /**
@@ -232,6 +234,7 @@ export class Harness {
       primed: new Set<string>(),
       busy: false,
       calls: 0,
+      lastJob: null,
     };
     entry.thread.on("message", (reply: WorkerReply) => this.accept(reply));
     entry.thread.once("error", (error: Error) => this.lost(entry, error.message));
@@ -251,6 +254,8 @@ export class Harness {
     const { promise, resolve } = Promise.withResolvers<RunResult>();
     entry.busy = true;
     this.pending.set(job.id, { entry, settle: resolve });
+    // Recorded before the job runs: a rejection that settles after the reply names this job.
+    entry.lastJob = job.id;
     entry.thread.postMessage({ ...job } satisfies WorkerRequest);
     const result = await promise;
     entry.calls += 1;
@@ -261,6 +266,12 @@ export class Harness {
   }
 
   private accept(reply: WorkerReply): void {
+    // A rejection that settled between calls answers no open request, so it is not in `pending`: it is
+    // a report about the thread that ran the call that started it.
+    if (reply.type === "orphan") {
+      this.orphan(reply);
+      return;
+    }
     const waiting = this.pending.get(reply.id);
     if (waiting === undefined) return;
     // A warm worker can still be sending an answer to a call this plugin already settled, such as
@@ -268,6 +279,21 @@ export class Harness {
     this.pending.delete(reply.id);
     waiting.entry.busy = false;
     waiting.settle({ reply, detail: "" });
+  }
+
+  /**
+   * A target that fired an unawaited async failure. The design counts an unhandled rejection as a
+   * failure, and this one is real, but the invocation that started it answered before it settled, so
+   * there is no open call whose input could be recorded as the finding's reproducible input. It goes to
+   * the engine's log instead, and the thread is retired so state the rejected path left behind cannot
+   * reach the next invocation.
+   */
+  private orphan(reply: Extract<WorkerReply, { type: "orphan" }>): void {
+    const reason = reply.reason.replaceAll("\n", " ");
+    process.stderr.write(`unhandled rejection, no invocation in flight (last invocation ${reply.id ?? "none"}): ${reason}\n`);
+    if (reply.id === null) return;
+    const entry = [...this.workers].find((candidate) => candidate.lastJob === reply.id);
+    if (entry !== undefined) this.retire(entry);
   }
 
   /** A thread that died or exited: nothing more will be heard about its job, or from it. */

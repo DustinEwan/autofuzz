@@ -85,7 +85,13 @@ export type WorkerReply =
       entries: CoverageEntry[];
       reachable: CoverageEntry[];
     }
-  | { type: "load-error"; id: number; code: string; message: string };
+  | { type: "load-error"; id: number; code: string; message: string }
+  /**
+   * A rejection that settled after the call that started it had already answered, so there is no open
+   * request to report it against. `id` is the invocation that started it, or `null` when the thread has
+   * answered nothing yet.
+   */
+  | { type: "orphan"; id: number | null; reason: string };
 
 interface Resolved {
   call: Callable;
@@ -99,8 +105,11 @@ const graphs = new Map<string, ModuleGraph>();
 const coverage = new CoverageProbe();
 /** The job whose reply has not gone out yet, or `null` between calls. */
 let inFlight: number | null = null;
+/** The job this thread answered last, so a rejection that settles between calls can name its call. */
+let answered: number | null = null;
 
 function send(reply: WorkerReply): void {
+  if (reply.type !== "orphan") answered = reply.id;
   parentPort?.postMessage(reply);
 }
 
@@ -438,17 +447,18 @@ async function finish(
 }
 
 /**
- * An unhandled rejection means the target started work it never awaited. The design calls that a
- * failure, so it is reported rather than swallowed by the thread exiting quietly. In a warm worker
- * it can surface while a later call is running, and it is reported against that call: the call
- * that was in flight is the only one it can be attributed to. With no call in flight there is
- * nothing to attribute it to, so the thread exits and the engine sees a lost plugin rather than a
- * clean result.
+ * An unhandled rejection means the target started work it never awaited, which the design counts as a
+ * failure. While a call is in flight it is reported against that call, the only one it can be attributed
+ * to. After that call has answered there is no open request to carry it, so it is posted as an orphan
+ * naming the invocation that started it: the server logs it and retires this thread, and the next call
+ * runs on a fresh one. Ending the thread here instead lost the reason: the scan recorded that a warm
+ * worker had gone, and never said the target had failed to await something.
  */
 process.on("unhandledRejection", (reason) => {
   const id = inFlight;
   if (id === null) {
-    process.exit(1);
+    send({ type: "orphan", id: answered, reason: String(reason) });
+    return;
   }
   inFlight = null;
   send({
