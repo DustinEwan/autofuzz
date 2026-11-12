@@ -5,13 +5,17 @@
 //! which is exactly what a finding's identity is computed from, so a candidate cannot move the
 //! bug to a different line and still be accepted.
 //!
-//! The search is greedy with restarts. Each pass walks every node of every argument in a stable
-//! pre-order and tries a short ladder of smaller values for it, most aggressive first. A pass
-//! that changes nothing ends the search. Nothing here is random, so the same input against the
-//! same target minimizes to the same bytes on every machine.
-//!
-//! The caller supplies the re-run as a closure, which keeps this module away from the transport:
-//! production passes a plugin call, a test passes a table.
+/// The search is greedy with restarts. Each round lists every smaller input the current tree
+/// allows - each argument dropped, then a short ladder of smaller values for each node in a stable
+/// pre-order, most aggressive first - runs them, and keeps the first that still reproduces. The
+/// list is then rebuilt from the tree that was kept, so a path never points into a shape it was not
+/// taken from. A round that keeps nothing ends the search. Nothing here is random, and a candidate
+/// is accepted by its position in the list rather than by when its answer arrives, so the same input
+/// against the same target minimizes to the same bytes on every machine.
+///
+/// The caller supplies the re-run as a closure over a chunk of candidates, which keeps this module
+/// away from the transport: production runs a chunk across a pool of plugin connections, a test
+/// passes a table.
 
 use std::time::{Duration, Instant};
 
@@ -61,69 +65,101 @@ pub struct Minimized {
     pub reproduces: bool,
 }
 
+/// The position in the current input a candidate changes, rather than the whole tree it produces.
+/// A round lists positions once and then applies them to the base, so an accepted shrink rebuilds
+/// the list instead of carrying paths that no longer resolve.
+enum Shrink {
+    /// `undefined` in the argument's position, which is what a caller passing fewer arguments does.
+    DropArgument(usize),
+    /// A smaller node at this path of this argument.
+    Node { index: usize, path: NodePath, candidate: ValueNode },
+}
+
+impl Shrink {
+    /// The candidate input, or `None` when the position no longer holds a node.
+    fn apply(&self, base: &[ValueTree]) -> Option<Vec<ValueTree>> {
+        let mut trial = base.to_vec();
+        match self {
+            Shrink::DropArgument(index) => {
+                let slot = trial.get_mut(*index)?;
+                *slot = ValueTree::undefined();
+                Some(trial)
+            }
+            Shrink::Node { index, path, candidate } => {
+                path.replace(&mut trial[*index], ValueTree::new(candidate.clone())).then_some(trial)
+            }
+        }
+    }
+}
+
+/// Every smaller input the tree allows, in the order a serial search would try them: whole
+/// arguments first, then each node's ladder, most aggressive first.
+fn shrink_candidates(base: &[ValueTree]) -> Vec<Shrink> {
+    let mut out: Vec<Shrink> = (0..base.len()).map(Shrink::DropArgument).collect();
+    for (index, tree) in base.iter().enumerate() {
+        for path in tree.paths() {
+            let Some(node) = node_at(tree, &path) else { continue };
+            for candidate in ladder(node) {
+                out.push(Shrink::Node { index, path: path.clone(), candidate });
+            }
+        }
+    }
+    out
+}
+
 /// Shrink `values` as far as it goes while `run` keeps reporting the same fault.
+///
+/// `run` receives a chunk of candidate inputs and answers each one, which lets the trials of a
+/// round share the machine: they all derive from the same base tree, so which candidate wins does
+/// not depend on when its answer arrives. `width` is how many candidates one call receives; 1 makes
+/// the search serial.
 ///
 /// `max_attempts` and `budget` bound the work: a scan should not spend more shrinking one
 /// finding than it spent finding it. The time bound is the one that bites when the fault is a
 /// deadline, because an attempt that reproduces it costs the whole deadline every time.
-pub fn minimize<F>(values: &[ValueTree], max_attempts: u64, budget: Duration, run: &mut F) -> Minimized
+pub fn minimize<F>(values: &[ValueTree], max_attempts: u64, budget: Duration, width: usize, run: &mut F) -> Minimized
 where
-    F: FnMut(&[ValueTree]) -> Outcome,
+    F: FnMut(&[Vec<ValueTree>]) -> Vec<Outcome>,
 {
+    let width = width.max(1);
     let bytes_before = total_bytes(values);
     let mut current = values.to_vec();
     let mut attempts = 0u64;
     let started = Instant::now();
 
-    let Some(target) = (attempts < max_attempts).then(|| {
-        attempts += 1;
-        FaultMatch::from_outcome(&run(&current))
-    }).flatten() else {
+    let Some(target) = (attempts < max_attempts)
+        .then(|| {
+            attempts += 1;
+            run(&[current.clone()]).first().and_then(FaultMatch::from_outcome)
+        })
+        .flatten()
+    else {
         let bytes_after = total_bytes(&current);
         return Minimized { values: current, attempts, bytes_before, bytes_after, reproduces: false };
     };
 
-    'passes: loop {
-        let mut changed = false;
-
-        // An argument the target never needed can go entirely: `undefined` in its position is
-        // what a caller who passed fewer arguments would produce.
-        for index in 0..current.len() {
-            if attempts >= max_attempts || started.elapsed() >= budget {
-                break 'passes;
+    loop {
+        let candidates = shrink_candidates(&current);
+        let mut accepted = false;
+        for chunk in candidates.chunks(width) {
+            let remaining = max_attempts.saturating_sub(attempts);
+            if remaining == 0 || started.elapsed() >= budget {
+                break;
             }
-            attempts += 1;
-            let mut trial = current.clone();
-            trial[index] = ValueTree::undefined();
-            if target.reproduces(&run(&trial)) {
-                current = trial;
-                changed = true;
+            let plans: Vec<Vec<ValueTree>> = chunk.iter().take(remaining as usize).filter_map(|candidate| candidate.apply(&current)).collect();
+            if plans.is_empty() {
+                continue;
             }
-        }
-
-        // Then every node inside the arguments, in the order `paths` reports them.
-        for index in 0..current.len() {
-            for path in current[index].paths() {
-                let Some(node) = node_at(&current[index], &path) else { continue };
-                for candidate in ladder(node) {
-                    if attempts >= max_attempts || started.elapsed() >= budget {
-                        break 'passes;
-                    }
-                    attempts += 1;
-                    let mut trial = current.clone();
-                    if !path.replace(&mut trial[index], ValueTree::new(candidate)) {
-                        continue;
-                    }
-                    if target.reproduces(&run(&trial)) {
-                        current = trial;
-                        changed = true;
-                        break;
-                    }
-                }
+            attempts += plans.len() as u64;
+            let outcomes = run(&plans);
+            debug_assert_eq!(outcomes.len(), plans.len(), "the runner answers every candidate it was given");
+            if let Some((plan, _)) = plans.into_iter().zip(outcomes).find(|(_, outcome)| target.reproduces(outcome)) {
+                current = plan;
+                accepted = true;
+                break;
             }
         }
-
-        if !changed {
+        if !accepted {
             break;
         }
     }

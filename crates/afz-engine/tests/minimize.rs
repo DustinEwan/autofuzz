@@ -80,7 +80,7 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
         .expect("prepare the target");
     assert!(matches!(prepared, afz_protocol::PrepareResp::Ok { .. }), "the target must be buildable: {prepared:?}");
 
-    let mut invoke = |args: &[ValueTree]| -> Outcome {
+    let invoke = |args: &[ValueTree]| -> Outcome {
         client
             .invoke(
                 &InvokeReq {
@@ -102,12 +102,11 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
     let (file, line) = (top.file.clone(), top.line);
     assert!(file.ends_with("src/order.ts"), "{file}");
 
-    let result = minimize(&values, 2000, Duration::MAX, &mut invoke);
+    let result = minimize(&values, 2000, Duration::MAX, 4, &mut |batch| batch.iter().map(|candidate| invoke(candidate)).collect());
     assert!(result.reproduces, "the original input must reproduce before anything is shrunk");
-    // The plan's bound. The run reaches 116 bytes in 13 attempts, leaving `{ lines: [] }`: the
-    // empty list is what makes `lines[0]` undefined, and everything else was noise.
-    // 116 bytes is well under the bound, so a minimizer that stops dropping fields is caught
-    // here rather than in a scan report.
+    // The plan's bound. The empty list is what makes `lines[0]` undefined, so a search that stops
+    // dropping fields shows up here as a byte count that stays near the original, rather than in a
+    // scan report where nobody compares it to anything.
     assert!(result.bytes_after < 200, "minimized to {} bytes after {} attempts", result.bytes_after, result.attempts);
     assert!(result.bytes_after < bytes_before / 4, "the shrink must be substantial, not cosmetic");
 
@@ -147,7 +146,7 @@ fn minimization_refuses_a_candidate_that_changes_the_fault() {
     let values = vec![ValueTree::new(afz_protocol::ValueNode::Array {
         items: vec![ValueTree::string("padding"), ValueTree::string("")],
     })];
-    let mut run = |args: &[ValueTree]| -> Outcome {
+    let run = |args: &[ValueTree]| -> Outcome {
         let items = match &args[0].node {
             afz_protocol::ValueNode::Array { items } => items,
             _ => return Outcome::plugin_lost(0.0, "shape changed"),
@@ -174,7 +173,7 @@ fn minimization_refuses_a_candidate_that_changes_the_fault() {
         }
     };
 
-    let result = minimize(&values, 200, Duration::MAX, &mut run);
+    let result = minimize(&values, 200, Duration::MAX, 4, &mut |batch| batch.iter().map(|candidate| run(candidate)).collect());
     assert!(result.reproduces);
     let kept = match &result.values[0].node {
         afz_protocol::ValueNode::Array { items } => items,

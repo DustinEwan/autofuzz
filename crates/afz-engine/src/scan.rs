@@ -52,6 +52,10 @@ const MINIMIZE_ATTEMPTS: u64 = 2_000;
 /// whole deadline, so the attempt count alone would let one slow finding hold the finish phase
 /// for the better part of an hour.
 const MINIMIZE_BUDGET: Duration = Duration::from_secs(300);
+/// Shrink trials run at once. The guided workers are idle while a finding is minimized, so
+/// minimization gets its own plugin connections instead of borrowing theirs; the cap exists because
+/// every connection is a plugin process with its own V8 heap.
+const MINIMIZE_PARALLEL: usize = 6;
 /// How long one minimization call may take over the wire. The plugin enforces the invocation
 /// deadline; this is the transport bound on top of it.
 const MINIMIZE_SLACK: Duration = Duration::from_secs(10);
@@ -267,43 +271,90 @@ struct Scanner {
     coverage_ms: u128,
 }
 
-/// The plugin connection minimization runs against, with the targets it has prepared.
+/// The plugin connections minimization runs against, with the targets each has prepared.
 struct Minimizer {
-    client: PluginClient,
-    prepared: BTreeSet<String>,
+    launch: Launch,
+    /// `pool[0]` is the connection that already did the handshake and discovery; the rest appear
+    /// only when a finding is actually being shrunk, so a scan with no findings never pays for them.
+    pool: Vec<PluginClient>,
+    /// Prepared target ids per connection, index-matched with `pool`.
+    prepared: Vec<BTreeSet<String>>,
     deadline: Duration,
 }
 
 impl Minimizer {
-    fn run(&mut self, target_id: &str, values: &[ValueTree]) -> Outcome {
-        if self.client.lost().is_some() {
-            // A shrink step that killed the plugin is a candidate like any other: the next call
-            // starts a fresh process, and the candidate is kept only if the fault comes back.
-            match PluginClient::spawn(self.launch()) {
-                Ok(fresh) => self.client = fresh,
-                Err(_) => return Outcome::plugin_lost(0.0, "the minimizer plugin could not be restarted"),
-            }
-            self.prepared.clear();
+    /// Answer each candidate on its own connection, in the order given. The order is the contract:
+    /// the caller accepts the first candidate that reproduces, not the first to answer.
+    fn run_batch(&mut self, target_id: &str, candidates: &[Vec<ValueTree>]) -> Vec<Outcome> {
+        self.grow(candidates.len());
+        let deadline = self.deadline;
+        let launch = &self.launch;
+        let mut outcomes = Vec::with_capacity(candidates.len());
+        for chunk in candidates.chunks(self.pool.len()) {
+            let answered = std::thread::scope(|scope| {
+                let threads = self
+                    .pool
+                    .iter_mut()
+                    .zip(self.prepared.iter_mut())
+                    .zip(chunk)
+                    .map(|((client, prepared), values)| {
+                        scope.spawn(move || run_trial(client, prepared, launch, target_id, values, deadline))
+                    })
+                    .collect::<Vec<_>>();
+                threads.into_iter().map(|thread| thread.join().unwrap_or_else(|_| Outcome::plugin_lost(0.0, "the minimizer trial thread panicked"))).collect::<Vec<_>>()
+            });
+            outcomes.extend(answered);
         }
-        if !self.prepared.contains(target_id) {
-            let prepare = PrepareReq { target_id: target_id.to_string(), values: values.to_vec() };
-            if self.client.prepare(&prepare, PREPARE_TIMEOUT).is_ok() {
-                self.prepared.insert(target_id.to_string());
-            }
-        }
-        let request = InvokeReq {
-            invocation_id: 0,
-            target_id: target_id.to_string(),
-            values: values.to_vec(),
-            deadline_ms: self.deadline.as_millis() as u64,
-            collect_coverage: false,
-        };
-        self.client.invoke_or_lose(&request, self.deadline + MINIMIZE_SLACK)
+        outcomes
     }
 
-    fn launch(&self) -> &Launch {
-        self.client.launch()
+    /// Bring the pool up to `want` connections, capped at `MINIMIZE_PARALLEL`, and stop at the
+    /// first spawn failure: a machine that cannot start another plugin process shrinks on whatever
+    /// connections it already has rather than failing the scan.
+    fn grow(&mut self, want: usize) {
+        while self.pool.len() < want.min(MINIMIZE_PARALLEL) {
+            match PluginClient::spawn(&self.launch) {
+                Ok(client) => {
+                    self.pool.push(client);
+                    self.prepared.push(BTreeSet::new());
+                }
+                Err(_) => break,
+            }
+        }
     }
+}
+
+/// One shrink trial. A trial that killed the plugin is a candidate like any other: the next call
+/// starts a fresh process, and the candidate is kept only if the fault comes back.
+fn run_trial(
+    client: &mut PluginClient,
+    prepared: &mut BTreeSet<String>,
+    launch: &Launch,
+    target_id: &str,
+    values: &[ValueTree],
+    deadline: Duration,
+) -> Outcome {
+    if client.lost().is_some() {
+        match PluginClient::spawn(launch) {
+            Ok(fresh) => *client = fresh,
+            Err(_) => return Outcome::plugin_lost(0.0, "the minimizer plugin could not be restarted"),
+        }
+        prepared.clear();
+    }
+    if !prepared.contains(target_id) {
+        let prepare = PrepareReq { target_id: target_id.to_string(), values: values.to_vec() };
+        if client.prepare(&prepare, PREPARE_TIMEOUT).is_ok() {
+            prepared.insert(target_id.to_string());
+        }
+    }
+    let request = InvokeReq {
+        invocation_id: 0,
+        target_id: target_id.to_string(),
+        values: values.to_vec(),
+        deadline_ms: deadline.as_millis() as u64,
+        collect_coverage: false,
+    };
+    client.invoke_or_lose(&request, deadline + MINIMIZE_SLACK)
 }
 
 impl Scanner {
@@ -329,7 +380,7 @@ impl Scanner {
             Strategy::Guided => Scheduler::guided(),
             Strategy::Random => Scheduler::random(),
         };
-        let supervisor = Supervisor::new(launch, options.workers, deadline, DISABLE_AFTER, discovery_request);
+        let supervisor = Supervisor::new(launch.clone(), options.workers, deadline, DISABLE_AFTER, discovery_request);
         let mut scanner = Scanner {
             options: options.clone(),
             handshake,
@@ -341,7 +392,7 @@ impl Scanner {
             corpus: Corpus::new(options.max_corpus),
             seen,
             rng: Rng::seeded_u64(options.seed),
-            minimizer: Minimizer { client: probe, prepared: BTreeSet::new(), deadline },
+            minimizer: Minimizer { launch, pool: vec![probe], prepared: vec![BTreeSet::new()], deadline },
             supervisor,
             attempted: BTreeSet::new(),
             planned: 0,
@@ -699,10 +750,11 @@ impl Scanner {
         ));
     }
 
-    /// Shrink a finding's input against the same fault. The minimizer runs on its own plugin
-    /// process, so shrinking never displaces the guided workers.
+    /// Shrink a finding's input against the same fault. Trials run on the minimizer's own plugin
+    /// connections, so shrinking never displaces the guided workers, and a round of candidates runs
+    /// on all of them at once because the workers that found the bug have nothing to do meanwhile.
     fn shrink(&mut self, target_id: &str, values: &[ValueTree]) -> Minimized {
-        minimize::minimize(values, MINIMIZE_ATTEMPTS, MINIMIZE_BUDGET, &mut |candidate| self.minimizer.run(target_id, candidate))
+        minimize::minimize(values, MINIMIZE_ATTEMPTS, MINIMIZE_BUDGET, MINIMIZE_PARALLEL, &mut |candidates| self.minimizer.run_batch(target_id, candidates))
     }
 
     fn scan_fault(&self, fault: &FaultSignature) -> ScanFault {
