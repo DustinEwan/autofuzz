@@ -55,6 +55,10 @@ pub fn run(
         options.resume = Some(dir.clone());
     }
 
+    // Before the banner: a scan the engine will refuse should report the reason as its first line,
+    // not after it has announced 12 workers and a budget it will never spend.
+    scan::preflight(&options).map_err(|e| e.to_string())?;
+
     let stop = Arc::new(AtomicBool::new(false));
     install_interrupt(&stop);
 

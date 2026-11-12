@@ -196,10 +196,23 @@ impl From<io::Error> for ScanError {
     }
 }
 
+/// Reject a scan the engine cannot run, before any work starts, so a caller can report the reason
+/// as its first line instead of after announcing a scan.
+pub fn preflight(options: &Options) -> Result<(), ScanError> {
+    // Part I reserves the runtime target class: its block validates so a project can declare it
+    // before that design lands, and a scan of it stops here with the fact rather than with a
+    // complaint about a missing `codebase` block, which reads like a typo in the file.
+    if options.config.project.codebase.is_none() && options.config.project.runtime.is_some() {
+        return Err(ConfigError::msg("runtime targets are not implemented").into());
+    }
+    Ok(())
+}
+
 /// Run one scan and write its result. `on_progress` is called at every [`SAMPLE_EVERY`]
 /// invocations, which is how a caller watches coverage without reading the output directory while
 /// the run is still going.
 pub fn run(options: &Options, on_progress: &mut impl FnMut(&Progress)) -> Result<ScanReport, ScanError> {
+    preflight(options)?;
     let launch = options.config.launch_for(Block::Codebase)?;
     let codebase = options
         .config

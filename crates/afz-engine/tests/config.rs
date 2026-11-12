@@ -5,6 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use afz_engine::config::{self, Block, ScanProject};
+use afz_engine::scan;
 
 fn tmp(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("afz-config-{}-{name}", std::process::id()));
@@ -120,6 +121,24 @@ fn a_runtime_block_validates_but_names_its_host_requirement() {
         message(&config::load(&path).unwrap_err()),
         "`runtime.baseUrl` is required: requests to a host the user did not name are refused"
     );
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn a_runtime_only_project_stops_the_scan_with_the_reserved_message() {
+    // Part I reserves the runtime class: the block validates, and a scan of it says the class is
+    // not implemented. Reporting a missing `codebase` block instead reads as a typo in a file the
+    // user wrote correctly.
+    let dir = tmp("runtime-scan");
+    let path = write(
+        &dir,
+        r#"{ "project": "p",
+             "runtime": { "baseUrl": "http://127.0.0.1:3000", "openapi": "./openapi.json" } }"#,
+    );
+    let loaded = config::load(&path).expect("the block validates");
+    let options = scan::Options::new(loaded, dir.clone());
+    let err = scan::run(&options, &mut |_| {}).unwrap_err();
+    assert_eq!(message(&err), "runtime targets are not implemented");
     std::fs::remove_dir_all(dir).ok();
 }
 
