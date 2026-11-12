@@ -493,5 +493,14 @@ function errorToObject(id: number, error: unknown): Response {
 
 const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
 if (invokedDirectly) {
+  // A write to a pipe whose reader is gone is an `'error'` event on the stream, and Node ends the
+  // process over an unhandled one. The channel is unusable either way, so say so where the engine can
+  // read it and stay up: the engine notices the silence and restarts the process, instead of filing a
+  // `processExit` finding against whichever target the failed write interrupted.
+  process.stdout.on("error", (error: Error) => process.stderr.write(`stdout write failed: ${error.message}\n`));
+  process.stderr.on("error", () => {
+    // There is no second channel to report a failed stderr write on, and silence answers better here
+    // than a crash the engine would misattribute to a target.
+  });
   await serve(process.stdin, process.stdout);
 }

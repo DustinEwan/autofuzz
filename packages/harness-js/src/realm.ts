@@ -16,6 +16,7 @@
 //   is registered: the linker is the only loader.
 
 import vm from "node:vm";
+import { Console } from "node:console";
 import type { ModuleGraph, RealmModule } from "./transpile.js";
 import type { SourceMap } from "./sourcemap.js";
 
@@ -45,7 +46,7 @@ const NOT_FOR_THE_REALM: Record<string, true> = {
 };
 
 /**
- * The globals a target module would have if Node loaded it directly: the primordials, `console`,
+ * The globals a target module would have if Node loaded it directly: the primordials, a console,
  * the timers, `process`, `URL`, `Buffer`, the fetch types. Sharing the worker's primordials is
  * deliberate — the arguments the harness materializes come from this realm, and a target that
  * checks `value instanceof Date` or `value instanceof Map` on an argument must not be told it is
@@ -63,6 +64,10 @@ function realmGlobals(): Record<string, unknown> {
       // A global whose getter refuses to run is simply absent from the realm.
     }
   }
+  // The plugin's stdout is its JSON-RPC channel, and a target that logs is ordinary: `yaml`'s `debug`
+  // is `console.log(...messages)`. A realm console that writes to stderr keeps target output out of the
+  // framing, and the engine reads stderr as a diagnostic, so the line is reported instead of lost.
+  globals.console = new Console({ stdout: process.stderr, stderr: process.stderr });
   return globals;
 }
 
