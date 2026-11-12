@@ -316,7 +316,12 @@ where
         }
         let found = holes(&current);
         let widest = found.iter().map(|hole| parts_at(&current, hole)).max().unwrap_or(0);
+        // A slot that is already `undefined` offers no candidate: dropping that argument is the
+        // input it already is, and a candidate identical to its base is accepted by every fault, so
+        // the search would re-accept it every round until the attempt bound ended the run. One such
+        // candidate cost a real scan 2000 trials and 189 s to shed nothing.
         let mut plans: Vec<Vec<ValueTree>> = (0..current.len())
+            .filter(|index| !matches!(current[*index].node, ValueNode::Undefined))
             .map(|index| {
                 let mut trial = current.clone();
                 trial[index] = ValueTree::undefined();

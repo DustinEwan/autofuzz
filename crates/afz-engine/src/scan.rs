@@ -71,8 +71,12 @@ const MINIMIZE_SLACK: Duration = Duration::from_secs(10);
 /// so this only has to cover writing a few thousand entries over a pipe; it is asked after every
 /// batch, and a worker that cannot answer would cost this much per batch.
 const COVERAGE_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long one `prepare` may take: the plugin imports the target module here.
-const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long one `prepare` may take: the plugin imports the target module here, so the cost is the
+/// target's module graph rather than one call. Both the guided workers and the shrink pool use this
+/// bound. The invocation deadline does not apply to `prepare`, because preparing is not the target
+/// executing; holding it there killed a plugin on the first call into any package with a deep
+/// module graph, and the scan reported those kills as `processExit` findings.
+pub(crate) const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
 /// Planning gives up after this many consecutive draws whose target is no longer usable, so a
 /// corpus full of disabled targets ends the run instead of spinning.
 const MAX_PLAN_SKIPS: usize = 64;

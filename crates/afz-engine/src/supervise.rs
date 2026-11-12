@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use afz_protocol::{CoverageEntry, CoverageMap, DiscoverReq, EdgeId, FaultSignature, InvokeReq, Outcome, ValueTree};
 
 use crate::rpc::client::{Launch, LostReason, PluginClient};
+use crate::scan::PREPARE_TIMEOUT;
 
 /// Restarts attributed to one target before the engine disables it. The design's number.
 pub const DISABLE_AFTER: u64 = 50;
@@ -387,9 +388,14 @@ impl Worker {
                 // `prepare` is asked once per target per process: it builds the receiver, and
                 // the plugin keeps it so `invoke` does not rebuild it. A refusal is a fact about
                 // the target rather than about this input, so the invocation is not run and the
-                // target is reported instead.
+                // target is reported instead. Its bound is the transport allowance for `prepare`,
+                // never the invocation deadline: preparing imports the target's modules, which is
+                // the harness's work rather than the target's, and a package with a deep module
+                // graph costs more than a target's own call should. Holding it to the invocation
+                // deadline killed a plugin on every first call into such a package, and the scan
+                // reported those kills as `processExit` findings.
                 if self.prepared.insert(job.target_id.clone()) {
-                    match client.prepare(&afz_protocol::PrepareReq { target_id: job.target_id.clone(), values: job.values.clone() }, deadline) {
+                    match client.prepare(&afz_protocol::PrepareReq { target_id: job.target_id.clone(), values: job.values.clone() }, PREPARE_TIMEOUT) {
                         Ok(afz_protocol::PrepareResp::Ok { .. }) => {}
                         Ok(afz_protocol::PrepareResp::Skip { reason }) => {
                             self.prepared.remove(&job.target_id);
