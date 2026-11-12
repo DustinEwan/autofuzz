@@ -52,6 +52,18 @@ const MINIMIZE_ATTEMPTS: u64 = 2_000;
 /// whole deadline, so the attempt count alone would let one slow finding hold the finish phase
 /// for the better part of an hour.
 const MINIMIZE_BUDGET: Duration = Duration::from_secs(300);
+/// Wall clock a scan may overrun its budget by, covering the write of the result. Minimization
+/// stops at the budget plus this, summed across every finding, so a run reports the inputs that
+/// failed at the time its operator expects a document instead of spending one more per-finding
+/// allowance on each finding it found late.
+const SHRINK_GRACE: Duration = Duration::from_secs(30);
+
+/// How much wall clock one minimization may use: the smaller of the per-finding allowance and what
+/// is left of the scan's budget plus the write grace. Zero means the finding is reported unshrunk.
+fn shrink_budget(elapsed: Duration, wall_clock: Duration) -> Duration {
+    (wall_clock + SHRINK_GRACE).saturating_sub(elapsed).min(MINIMIZE_BUDGET)
+}
+
 /// Shrink trials run at once. The guided workers are idle while a finding is minimized, so
 /// minimization gets its own plugin connections instead of borrowing theirs; the cap exists because
 /// every connection is a plugin process with its own V8 heap.
@@ -251,6 +263,9 @@ struct Scanner {
     coverage_total: u64,
     coverage_map: Option<CoverageMap>,
     stopped: StoppedReason,
+    /// When the loop started, so minimization is bounded by the scan's wall clock rather than by
+    /// its own allowance alone. See [`shrink_budget`].
+    started: Instant,
     /// Wall time each phase of the batch loop took across the whole run, written to the engine log
     /// so a scan that is slow says which of its three phases is the reason instead of leaving the
     /// reader to guess between planning, executing and scoring.
@@ -410,6 +425,7 @@ impl Scanner {
             coverage_total: 0,
             coverage_map: None,
             stopped: StoppedReason::Complete,
+            started: Instant::now(),
             plan_ms: 0,
             run_ms: 0,
             account_ms: 0,
@@ -753,8 +769,32 @@ impl Scanner {
     /// Shrink a finding's input against the same fault. Trials run on the minimizer's own plugin
     /// connections, so shrinking never displaces the guided workers, and a round of candidates runs
     /// on all of them at once because the workers that found the bug have nothing to do meanwhile.
+    ///
+    /// Delta-debugging rounds are sequential - each is built from the tree the previous round kept -
+    /// so a round of a one-argument target offers only a few candidates and the other connections
+    /// wait. That is why the work is bounded by the scan's clock: without the bound, a run whose
+    /// invocations finished on time still spent half an hour shrinking, on one plugin connection,
+    /// with every guided worker idle.
     fn shrink(&mut self, target_id: &str, values: &[ValueTree]) -> Minimized {
-        minimize::minimize(values, MINIMIZE_ATTEMPTS, MINIMIZE_BUDGET, MINIMIZE_PARALLEL, &mut |candidates| self.minimizer.run_batch(target_id, candidates))
+        let left = shrink_budget(self.started.elapsed(), self.options.wall_clock);
+        if left.is_zero() {
+            self.log.push(format!(
+                "finding on {target_id} not shrunk: the wall clock budget of {} ms is spent",
+                self.options.wall_clock.as_millis()
+            ));
+            let bytes = values.iter().map(ValueTree::wire_bytes).sum();
+            return Minimized { values: values.to_vec(), attempts: 0, bytes_before: bytes, bytes_after: bytes, reproduces: false };
+        }
+        let started_at = Instant::now();
+        let result = minimize::minimize(values, MINIMIZE_ATTEMPTS, left, MINIMIZE_PARALLEL, &mut |candidates| self.minimizer.run_batch(target_id, candidates));
+        self.log.push(format!(
+            "shrunk {target_id}: {} attempts, {} -> {} bytes in {:.1} s",
+            result.attempts,
+            result.bytes_before,
+            result.bytes_after,
+            started_at.elapsed().as_secs_f64()
+        ));
+        result
     }
 
     fn scan_fault(&self, fault: &FaultSignature) -> ScanFault {
@@ -1034,6 +1074,17 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    #[test]
+    fn shrink_work_stops_when_the_scan_budget_is_spent() {
+        // A finding found late must not spend its own per-finding allowance after the run is over.
+        // The bound is the scan's clock, so the sum across findings cannot overrun it by more than
+        // the grace the result write needs.
+        assert_eq!(shrink_budget(Duration::ZERO, Duration::from_secs(600)), MINIMIZE_BUDGET);
+        assert_eq!(shrink_budget(Duration::from_secs(500), Duration::from_secs(600)), Duration::from_secs(130));
+        assert_eq!(shrink_budget(Duration::from_secs(631), Duration::from_secs(600)), Duration::ZERO);
+    }
 
     fn signatures() -> HashMap<String, String> {
         HashMap::from([
