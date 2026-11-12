@@ -341,6 +341,20 @@ impl Minimizer {
             }
         }
     }
+
+    /// Give back the connections a shrink grew, keeping the one that did the handshake and
+    /// discovery. A scan finds few findings and the gap between them is minutes, so a second full set
+    /// of plugin processes - each with a warm V8 heap and the target's modules loaded - would
+    /// otherwise sit idle for the rest of the run. A measured yaml scan carried 24 plugin processes
+    /// while 12 did the work, the extra twelve having grown for one shrink in its ninth minute.
+    fn release(&mut self) {
+        while self.pool.len() > 1 {
+            if let Some(client) = self.pool.pop() {
+                client.kill();
+            }
+            self.prepared.pop();
+        }
+    }
 }
 
 /// One shrink trial. A trial that killed the plugin is a candidate like any other: the next call
@@ -792,6 +806,7 @@ impl Scanner {
         let started_at = Instant::now();
         let width = self.minimizer.cap;
         let result = minimize::minimize(values, MINIMIZE_ATTEMPTS, left, width, &mut |candidates| self.minimizer.run_batch(target_id, candidates));
+        self.minimizer.release();
         self.log.push(format!(
             "shrunk {target_id}: {} attempts, {} -> {} bytes in {:.1} s",
             result.attempts,
