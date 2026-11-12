@@ -68,6 +68,10 @@ pub fn run(
 
     let stop = Arc::new(AtomicBool::new(false));
     install_interrupt(&stop);
+    // The flag `Options::new` installed is a different `Arc` (crates/afz-engine/src/scan.rs),
+    // so without this assignment Ctrl-C would print the graceful-stop message and the engine
+    // would never see it.
+    options.stop = Arc::clone(&stop);
 
     if !quiet {
         println!(
