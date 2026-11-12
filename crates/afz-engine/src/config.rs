@@ -320,18 +320,12 @@ impl LoadedConfig {
                 )
             }
         };
-        let argv = match command {
-            Some(argv) if !argv.is_empty() => argv,
-            _ => default_command(harness).ok_or_else(|| {
-                ConfigError::msg(format!(
-                    "harness \"{harness}\" has no built-in command; set `command` to the plugin argv"
-                ))
-            })?,
-        };
-        // The plugin runs with the scan root as its working directory, so a path written the way a
-        // person types it - relative to where `afz` was run - has to become absolute here. The
-        // built-in `packages/harness-js/dist/server.js` would otherwise be looked up inside the
-        // scanned project.
+        let argv = command.filter(|argv| !argv.is_empty()).ok_or_else(|| {
+            ConfigError::msg(format!("`command` is required for harness \"{harness}\": the engine does not guess a runtime"))
+        })?;
+        // The plugin runs with the scan root as its working directory, so a path written the way
+        // a person types it - relative to where `afz` was run - has to become absolute here,
+        // or it would be looked up inside the scanned project.
         let argv: Vec<String> = argv
             .into_iter()
             .enumerate()
@@ -357,7 +351,7 @@ impl LoadedConfig {
                 .codebase
                 .as_ref()
                 .map(|c| c.harness.clone())
-                .unwrap_or_else(|| "js-ts".to_string()),
+                .unwrap_or_else(|| "unknown".to_string()),
             Block::Runtime => self
                 .project
                 .runtime
@@ -369,8 +363,8 @@ impl LoadedConfig {
 
     /// Discovery scope for a codebase block: root plus include and exclude globs.
     ///
-    /// The scan's own output directory is always excluded. A scan writes generated `.ts`
-    /// reproducers into the tree it scans, so a second scan of the same project would otherwise
+    /// The scan's own output directory is always excluded. A scan writes reproducers and
+    /// inputs into the tree it scans, so a second scan of the same project would otherwise
     /// discover its previous run's output as targets.
     pub fn discovery_scope(&self) -> Result<DiscoveryScope, ConfigError> {
         let codebase = self
@@ -427,18 +421,6 @@ fn absolutized(index: usize, argument: String, exists: impl Fn(&Path) -> bool) -
     path.canonicalize().map(|p| p.display().to_string()).unwrap_or(argument)
 }
 
-/// The built-in plugin command for a known harness, relative to the repository or project
-/// root. An unknown harness must declare `command`.
-fn default_command(harness: &str) -> Option<Vec<String>> {
-    match harness {
-        "js-ts" => Some(vec![
-            "node".to_string(),
-            "packages/harness-js/dist/server.js".to_string(),
-        ]),
-        _ => None,
-    }
-}
-
 impl ScanProject {
     /// Reject a configuration the engine cannot honor. Every message is user-facing.
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -451,11 +433,12 @@ impl ScanProject {
             if codebase.harness.is_empty() {
                 return Err(ConfigError::msg("`codebase.harness` must name a harness, e.g. \"js-ts\""));
             }
-            // Fail at load time rather than at the first spawn: an unknown harness with no
-            // declared argv cannot run, whatever the scan does later.
-            if codebase.command.as_deref().unwrap_or(&[]).is_empty() && default_command(&codebase.harness).is_none() {
+            // Fail at load time rather than at the first spawn: a harness with no declared
+            // argv cannot run, whatever the scan does later. The engine names no runtime, so
+            // `command` is never optional.
+            if codebase.command.as_deref().unwrap_or(&[]).is_empty() {
                 return Err(ConfigError::msg(format!(
-                    "harness \"{}\" has no built-in command; set `command` to the plugin argv",
+                    "`command` is required for harness \"{}\": the engine does not guess a runtime",
                     codebase.harness
                 )));
             }

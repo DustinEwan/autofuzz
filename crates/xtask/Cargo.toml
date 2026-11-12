@@ -23,6 +23,8 @@ path = "src/fakeplugin.rs"
 # the same type the writer uses. `afz-engine` dev-depends on this crate, which Cargo allows.
 afz-engine = { path = "../afz-engine" }
 afz-protocol.workspace = true
+# `check-harness` is a thin CLI over the product-side conformance library.
+afz-conformance.workspace = true
 serde.workspace = true
 schemars.workspace = true
 serde_json.workspace = true

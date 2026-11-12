@@ -26,6 +26,8 @@ pub fn write_schemas(dir: &Path) -> Result<Vec<String>, String> {
     emit(dir, &mut written, "prepare-resp", &schema_for!(afz_protocol::PrepareResp))?;
     emit(dir, &mut written, "minimize-req", &schema_for!(afz_protocol::MinimizeReq))?;
     emit(dir, &mut written, "minimize-resp", &schema_for!(afz_protocol::MinimizeResp))?;
+    emit(dir, &mut written, "reproducer-req", &schema_for!(afz_protocol::ReproducerReq))?;
+    emit(dir, &mut written, "reproducer-resp", &schema_for!(afz_protocol::ReproducerResp))?;
     emit(dir, &mut written, "discover-req", &schema_for!(afz_protocol::DiscoverReq))?;
     emit(dir, &mut written, "materialized-call", &schema_for!(afz_protocol::MaterializedCall))?;
     emit(dir, &mut written, "call-input", &schema_for!(afz_protocol::CallInput))?;

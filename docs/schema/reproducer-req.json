@@ -1,0 +1,460 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReproducerReq",
+  "description": "`reproducer` request: render a standalone script that replays the call with these values.\nThe engine has minimized the input and confirmed it reproduces; the plugin, which owns the\ntarget language, renders the call in it. The engine stores the script verbatim.",
+  "type": "object",
+  "properties": {
+    "targetId": {
+      "type": "string"
+    },
+    "values": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ValueTree"
+      }
+    }
+  },
+  "required": [
+    "targetId",
+    "values"
+  ],
+  "$defs": {
+    "FunctionBehavior": {
+      "description": "A `function` node's configurable stub behavior. The generator emits a callable; this\nsays what the callable does when the target calls it.",
+      "type": "string",
+      "enum": [
+        "returnFirst",
+        "throw",
+        "captureArguments"
+      ]
+    },
+    "NumberValue": {
+      "description": "A number that survives JSON round-trip exactly: finite values as `f64`, everything else as\na name. JSON has no token for `NaN` or `Infinity`, so they travel as names and the plugin\nre-materializes them.",
+      "anyOf": [
+        {
+          "type": "number",
+          "format": "double"
+        },
+        {
+          "$ref": "#/$defs/SpecialNumber"
+        }
+      ]
+    },
+    "Provenance": {
+      "description": "Why a node exists.",
+      "oneOf": [
+        {
+          "description": "Drawn from the type by the generator.",
+          "type": "string",
+          "const": "generated"
+        },
+        {
+          "description": "Drawn from the shared boundary table in `crates/afz-engine/src/boundaries.rs`.",
+          "type": "string",
+          "const": "boundary"
+        },
+        {
+          "description": "Rewritten by one mutation operator. `op` names it, `from` names the target or corpus\nentry the operation is attributed to.",
+          "type": "object",
+          "properties": {
+            "mutated": {
+              "type": "object",
+              "properties": {
+                "from": {
+                  "type": "string"
+                },
+                "op": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "op",
+                "from"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "mutated"
+          ]
+        },
+        {
+          "description": "Copied whole from another corpus entry.\n\nRenamed explicitly: serde's container-level `rename_all` covers variant names, not the\nfields of a struct variant, and the wire format is camelCase everywhere.",
+          "type": "object",
+          "properties": {
+            "transplanted": {
+              "type": "object",
+              "properties": {
+                "fromEntry": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "fromEntry"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "transplanted"
+          ]
+        },
+        {
+          "description": "Produced by the minimizer at this step count.",
+          "type": "object",
+          "properties": {
+            "minimized": {
+              "type": "object",
+              "properties": {
+                "step": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "step"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "minimized"
+          ]
+        },
+        {
+          "description": "Supplied by a user fixture.",
+          "type": "string",
+          "const": "user"
+        }
+      ]
+    },
+    "SpecialNumber": {
+      "type": "string",
+      "enum": [
+        "naN",
+        "infinity",
+        "negativeInfinity"
+      ]
+    },
+    "ValueTree": {
+      "description": "A node plus the provenance that made it.",
+      "type": "object",
+      "properties": {
+        "provenance": {
+          "$ref": "#/$defs/Provenance",
+          "default": "generated"
+        }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "null"
+            }
+          },
+          "required": [
+            "node"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "undefined"
+            }
+          },
+          "required": [
+            "node"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "boolean"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "node",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "number"
+            },
+            "value": {
+              "$ref": "#/$defs/NumberValue"
+            }
+          },
+          "required": [
+            "node",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "bigInt"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "string"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "literal"
+            },
+            "value": true
+          },
+          "required": [
+            "node",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ValueTree"
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "array"
+            }
+          },
+          "required": [
+            "node",
+            "items"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ValueTree"
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "set"
+            }
+          },
+          "required": [
+            "node",
+            "items"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "entries": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "$ref": "#/$defs/ValueTree"
+                  },
+                  {
+                    "$ref": "#/$defs/ValueTree"
+                  }
+                ]
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "map"
+            }
+          },
+          "required": [
+            "node",
+            "entries"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "fields": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/ValueTree"
+                  }
+                ]
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "object"
+            }
+          },
+          "required": [
+            "node",
+            "fields"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ValueTree"
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "tuple"
+            }
+          },
+          "required": [
+            "node",
+            "items"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "bytes": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0
+              }
+            },
+            "node": {
+              "type": "string",
+              "const": "buffer"
+            }
+          },
+          "required": [
+            "node",
+            "bytes"
+          ]
+        },
+        {
+          "description": "A callable stub. `behavior` selects what the stub does when the target calls it.",
+          "type": "object",
+          "properties": {
+            "behavior": {
+              "$ref": "#/$defs/FunctionBehavior"
+            },
+            "node": {
+              "type": "string",
+              "const": "function"
+            },
+            "returns": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ValueTree"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "node",
+            "behavior"
+          ]
+        },
+        {
+          "description": "A stream or iterable source, generated as an in-memory item list.",
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/ValueTree"
+              }
+            },
+            "iterable": {
+              "type": "boolean"
+            },
+            "node": {
+              "type": "string",
+              "const": "stream"
+            }
+          },
+          "required": [
+            "node",
+            "iterable",
+            "items"
+          ]
+        },
+        {
+          "description": "A node the plugin must supply from a fixture. The engine never invents one.",
+          "type": "object",
+          "properties": {
+            "node": {
+              "type": "string",
+              "const": "opaque"
+            },
+            "ty": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "node",
+            "ty"
+          ]
+        }
+      ]
+    }
+  }
+}

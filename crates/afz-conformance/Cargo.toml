@@ -1,0 +1,16 @@
+[package]
+name = "afz-conformance"
+description = "the harness-plugin conformance suite behind `afz validate-harness` and `afz-xtask check-harness`."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# The suite drives the same `Launch`/`PluginClient` transport the engine uses in a scan, so a
+# validated plugin is driven exactly as production drives it.
+afz-engine.workspace = true
+afz-protocol.workspace = true
+# Every plugin response is validated as an instance of the committed schema before deserialization.
+jsonschema = { version = "0.61.1", default-features = false }
+serde.workspace = true
+serde_json.workspace = true

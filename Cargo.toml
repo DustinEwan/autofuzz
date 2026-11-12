@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/afz-protocol",
     "crates/afz-engine",
+    "crates/afz-conformance",
     "crates/afz-cli",
     "crates/afz-mcp",
     "crates/afz-wasm",
@@ -18,6 +19,7 @@ license = "MIT"
 [workspace.dependencies]
 afz-protocol = { path = "crates/afz-protocol" }
 afz-engine = { path = "crates/afz-engine" }
+afz-conformance = { path = "crates/afz-conformance" }
 
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

@@ -2,6 +2,7 @@
   "project": "destr",
   "codebase": {
     "harness": "js-ts",
+    "command": ["node", "packages/harness-js/dist/server.js"],
     "include": [
       "src/**/*.ts"
     ],

@@ -93,25 +93,31 @@ A plugin declares what it can do at handshake. The engine adapts instead of assu
 | `coverage` | Per-invocation coverage digest is available | Scheduler uses schema-directed generation and response/outcome novelty only |
 | `stateful` | Plugin can build receiver state (instances, clients, fixtures) | Only entry points with fully constructible parameter graphs are fuzzed |
 | `minimize` | Plugin can shrink an input in target terms | Engine minimizes by removing arguments and reducing structure only |
+| `reproducer` | Plugin can render a standalone replay script for a confirmed finding in the target language | Engine ships the minimized input JSON as the only artifact |
 | `sideEffects` | Invocations may change external state | Engine applies the side-effect policy below |
 | `concurrent` | Plugin tolerates parallel instances | Engine runs one instance |
 
 ## Harness plugin contract
 
-Defined in TypeScript for readability; the wire form is the same shape as JSON. Versioned: every request carries `protocolVersion`.
+Defined in TypeScript for readability; the wire form is the same shape as JSON, and `docs/schema/` is the authority for every field — it is generated from the Rust types that the engine compiles against. The handshake *answer* carries `protocolVersion`; requests carry none, because the engine assigns each request an increasing `id` per plugin process and echoes nothing else.
+
+Validation of this contract is template-driven: `crates/afz-conformance` embeds a conformance template (v1: ten semantic properties no schema can express), the harness package emits a manifest mapping its own fixtures onto those properties, and `afz validate-harness` drives every property over the protocol and judges the answers. The wire contract stays stable; new rules arrive only as a new template version.
 
 ```ts
 export interface HarnessPlugin {
   handshake(): Promise<{
     protocolVersion: string;          // "afz/1"
-    name: string;                     // "autofuzz-harness-js"
+    name: string;                     // "afz-fakeplugin"
+    version: string;
     targetClass: "design-time" | "runtime";
     capabilities: Capability[];
     languages: string[];              // ["typescript", "javascript"]
+    discoverRequiresExecution: boolean;
   }>;
 
   /** Enumerate fuzzable entry points. Must terminate; discovery never executes target code. */
-  discover(req: { root: string; include?: string[]; exclude?: string[] }): Promise<{
+  discover(req: { root: string; include?: string[]; exclude?: string[];
+                  configPath?: string }): Promise<{
     targets: TargetDescriptor[];
     skipped: SkippedTarget[];         // every non-fuzzed symbol, with a reason
   }>;
@@ -121,17 +127,23 @@ export interface HarnessPlugin {
     Promise<{ ok: true; materialized: MaterializedCall } | { ok: false; reason: SkipReason }>;
 
   /** One invocation. Never throws over the wire; faults are Outcome values. */
-  invoke(req: { invocationId: string; targetId: string; values: ValueTree[];
+  invoke(req: { invocationId: number; targetId: string; values: ValueTree[];
                 deadlineMs: number; collectCoverage: boolean }): Promise<Outcome>;
 
-  /** Optional: shrink a failing input while it still reproduces the same fault class. */
-  minimize?(req: { targetId: string; values: ValueTree[]; fault: FaultSignature;
-                   budgetMs: number }): Promise<{ values: ValueTree[]; steps: number }>;
+  /** Shrink a failing input while it still reproduces the same fault class. */
+  minimize(req: { targetId: string; values: ValueTree[]; fault: FaultSignature;
+                  budgetMs: number }): Promise<{ values: ValueTree[]; steps: number }>;
 
-  /** Optional: turn a coverage digest into stable edge identifiers. */
-  coverageMap?(): Promise<CoverageMap>;
+  /** Render a standalone script that replays the confirmed call in the target language. */
+  reproducer(req: { targetId: string; values: ValueTree[] }):
+    Promise<{ extension: string; script: string }>;
+
+  /** Map coverage edge ids to the source ranges they stand for. */
+  coverageMap(): Promise<CoverageMap>;
 }
 ```
+
+All seven methods are on the wire and every one of them must be answered. `minimize`, `reproducer` and `coverageMap` are optional only in this sense: a plugin that cannot do the work leaves the capability out of its handshake and answers the method with a `-32601` or `-32600` error frame, which is what both shipped harnesses do for `minimize`. The engine reads `coverage` from the handshake to decide whether to ask for digests, it sends `minimize` to no plugin today: minimization is engine-side delta debugging over repeated `invoke`, and it sends `reproducer` only to a plugin that declared the capability, after a finding's minimized input is confirmed to still reproduce. [`harness-authoring.md`](harness-authoring.md) states what each answer costs, the timeouts the engine applies to it, and what the engine does with a wrong one.
 
 `discover` must not execute target code. Discovery that imports the user's module runs arbitrary user code inside our process, so JS discovery reads declarations statically, and runtime discovery reads route metadata. A plugin that genuinely needs to import the target to enumerate it declares `discoverRequiresExecution: true`, and the engine then runs that discovery inside the same isolation and deadline it applies to invocations.
 

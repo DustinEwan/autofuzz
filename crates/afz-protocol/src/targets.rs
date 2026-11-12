@@ -34,6 +34,9 @@ pub enum Capability {
     /// Per-invocation coverage digest is available. Absent: the scheduler uses
     /// schema-directed generation and outcome novelty only.
     Coverage,
+    /// The plugin can render a standalone reproducer script in the target language. Absent:
+    /// findings carry no script, and the `inputs/` JSON stays the replayable artifact.
+    Reproducer,
     /// The plugin can build receiver state. Absent: only entry points with fully
     /// constructible parameter graphs are fuzzed.
     Stateful,

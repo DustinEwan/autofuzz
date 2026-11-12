@@ -130,6 +130,11 @@
           "const": "coverage"
         },
         {
+          "description": "The plugin can render a standalone reproducer script in the target language. Absent:\nfindings carry no script, and the `inputs/` JSON stays the replayable artifact.",
+          "type": "string",
+          "const": "reproducer"
+        },
+        {
           "description": "The plugin can build receiver state. Absent: only entry points with fully\nconstructible parameter graphs are fuzzed.",
           "type": "string",
           "const": "stateful"

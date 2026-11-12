@@ -11,6 +11,7 @@ export const METHOD_DISCOVER = "discover";
 export const METHOD_PREPARE = "prepare";
 export const METHOD_INVOKE = "invoke";
 export const METHOD_MINIMIZE = "minimize";
+export const METHOD_REPRODUCER = "reproducer";
 export const METHOD_COVERAGE_MAP = "coverageMap";
 
 // The runtime vocabulary. `test/contract.ts` compares each list against the JSON Schema that
@@ -65,13 +66,14 @@ export const SKIP_REASONS = [
 ] as const;
 export const OUTCOME_KINDS = ["ok", "rejected", "failed"] as const;
 export const MATERIALIZATIONS = ["constructible", "fixture-required", "opaque"] as const;
-export const CAPABILITY_NAMES = ["coverage", "stateful", "minimize", "sideEffects", "concurrent"] as const;
+export const CAPABILITY_NAMES = ["coverage", "stateful", "minimize", "reproducer", "sideEffects", "concurrent"] as const;
 export const METHOD_NAMES = [
   METHOD_HANDSHAKE,
   METHOD_DISCOVER,
   METHOD_PREPARE,
   METHOD_INVOKE,
   METHOD_MINIMIZE,
+  METHOD_REPRODUCER,
   METHOD_COVERAGE_MAP,
 ] as const;
 
@@ -330,7 +332,7 @@ export interface CoverageMap {
 
 // ---------------------------------------------------------------- capabilities
 
-export type Capability = "coverage" | "stateful" | "minimize" | "sideEffects" | "concurrent";
+export type Capability = "coverage" | "stateful" | "minimize" | "reproducer" | "sideEffects" | "concurrent";
 
 export interface Handshake {
   protocolVersion: string;

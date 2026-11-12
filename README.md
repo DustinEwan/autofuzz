@@ -6,9 +6,10 @@ every call as `ok`, `rejected`, or `failed`, minimizes what it finds, and writes
 machine-readable scan result that other tools turn into deliverables.
 
 The engine is language-neutral. Everything that touches a specific language or runtime lives in a
-harness plugin, which runs out of process and speaks JSON-RPC over stdio. A second harness,
-WebAssembly, is the proof that the boundary holds: the same `afz` binary, the same oracle
-configuration, and the same scan result schema drive both, with no engine source difference.
+harness plugin, which runs out of process and speaks JSON-RPC over stdio. Two more harnesses are
+the proof that the boundary holds: WebAssembly and Python — a stdlib-only plugin with no build
+step. The same `afz` binary, the same oracle configuration, and the same scan result schema drive
+all three, with no engine source difference.
 
 Design-time targets are implemented. The `runtime` target class is reserved: a scan project whose
 only block is `runtime` validates, and a scan of it exits with `runtime targets are not implemented`.
@@ -18,6 +19,7 @@ only block is `runtime` validates, and a scan of it exits with `runtime targets 
 - Linux or macOS.
 - Rust 1.88 or newer.
 - Node 24 or newer, for the `js-ts` harness.
+- Python 3.12 or newer, for the `python` harness (it uses `sys.monitoring`).
 
 ## Build
 
@@ -30,6 +32,8 @@ npm --prefix packages/harness-js run build
 The engine binary is `target/release/afz`. The `js-ts` plugin is
 `packages/harness-js/dist/server.js`, which the engine starts as one process per worker, so the
 plugin build must exist before a scan runs.
+The `python` plugin is `packages/harness-py/src/server.py`. It imports nothing outside the
+standard library, so there is nothing to build before a scan runs.
 
 ## Try it
 
@@ -161,7 +165,7 @@ A scan writes `<output.dir>/<scanId>/`:
 |`scan.json`|The scan result: inventory, execution counts, coverage, findings, artifact paths, and the `git` change set when the scan was scoped. Validates against `docs/schema/scan-result.json`.|
 |`report.md`|Markdown rendered from `scan.json` alone: one section per finding with severity, the minimized input, and the reproducer path.|
 |`inputs/`|The original and minimized input for each finding, as `ValueTree` JSON.|
-|`repros/`|A standalone `.ts` reproducer per finding.|
+|`repros/`|A standalone reproducer script per finding, rendered by the harness that found it via the `reproducer` method; the extension is the plugin's (`repro-<id>.py`, `repro-<id>.mjs`). A finding whose harness does not declare `reproducer`, or fails the call, ships only its minimized input in `inputs/`, which is the replayable artifact.|
 |`corpus/`|The retained inputs, which `--resume` reloads.|
 |`coverage.json`|The edge-id map the plugin published.|
 |`engine.log`|Per-worker and per-target accounting: restarts, deadline cuts, disabled targets.|
@@ -171,8 +175,8 @@ A scan writes `<output.dir>/<scanId>/`:
 |Harness|Discovery|Coverage|Status|
 |---|---|---|---|
 |`js-ts`|TypeScript compiler API over the scan project's declarations.|Per invocation, from `node:inspector` precise coverage in a worker thread.|Implemented, built-in command.|
+|`python`|`ast` parse of the scan project's modules; no import.|Per invocation, from `sys.monitoring` line events.|Implemented, `packages/harness-py/`.|
 |`wasm`|Exported functions of a core wasm module.|Post-hoc block instrumentation with `wasmparser` and `wasm-encoder`; the host reads the counter table from guest memory.|Implemented, `targets/wasm-probe/`.|
-|`http`|Route table or OpenAPI document.|Only if the serving process is instrumented.|Reserved. Not implemented.|
 
 The `wasm` harness has no built-in command, so its scan project names one:
 
@@ -184,6 +188,17 @@ The `wasm` harness has no built-in command, so its scan project names one:
 Build both halves with `cargo build --release -p afz-wasm` and
 `cargo build --release --target wasm32-unknown-unknown --manifest-path targets/wasm-probe/Cargo.toml`.
 
+Like `wasm`, the `python` harness has no built-in command, so its scan project names one:
+`"command": ["python3", "packages/harness-py/src/server.py"]`.
+
+Adding another harness needs no engine change: `codebase.command` names the plugin's argv.
+[`docs/harness-authoring.md`](docs/harness-authoring.md) is the contract a plugin must satisfy, the
+measured cost of every operation it is asked to perform, and the traps the shipped harnesses paid
+for. Check a plugin against it with `afz validate-harness --path <dir> --command <plugin argv…>`,
+which drives the wire rules and the conformance template; inside this repository the same suite
+runs as `cargo run -p afz-xtask -- check-harness`. The harnesses this repository maintains, and
+what each one declares against the template, are in [`docs/harnesses.md`](docs/harnesses.md).
+
 ## Layout
 
 |Path|Contents|
@@ -193,8 +208,10 @@ Build both halves with `cargo build --release -p afz-wasm` and
 |`crates/afz-cli/`|The `afz` binary.|
 |`crates/afz-mcp/`|The `afz-mcp` binary: an MCP server on stdio driving the engine in process.|
 |`crates/afz-wasm/`|The WebAssembly harness plugin.|
-|`crates/xtask/`|Fake plugin for protocol tests, and the JSON Schema generator.|
+|`crates/afz-conformance/`|The plugin conformance suite: wire rules, template v1, runtime lifecycle. Shared by `afz validate-harness` and `xtask check-harness`.|
+|`crates/xtask/`|Fake plugin for protocol tests and negative controls, the JSON Schema generator, and the in-repo `check-harness` entry point.|
 |`packages/harness-js/`|The `js-ts` plugin and its test targets.|
+|`packages/harness-py/`|The `python` plugin and its test targets.|
 |`targets/wasm-probe/`|A wasm module with one deliberate panic and one deliberate spin.|
 |`docs/schema/`|Generated JSON Schema for every protocol type and for the scan result.|
 |`docs/decisions/`|Architecture decision records.|
@@ -206,6 +223,7 @@ Build both halves with `cargo build --release -p afz-wasm` and
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 npm --prefix packages/harness-js test
+python3 -m unittest discover -s packages/harness-py/test -t packages/harness-py
 ```
 
 The same commands run in `.github/workflows/ci.yml` on every push to `master` and on every pull
@@ -222,6 +240,8 @@ the committed bytes differ, so a drift between the Rust types and the schema is 
 
 - [`docs/architecture.md`](docs/architecture.md) — the design: the plugin contract, the interface IR,
   the outcome classification rule, and the scan result shape.
+- [`docs/harness-authoring.md`](docs/harness-authoring.md) — what a harness plugin must answer, what
+  each answer costs, and the traps it can fall into. Read this before writing a plugin.
 - [`docs/decisions/`](docs/decisions/) — the decisions behind it, each with what it excludes.
 - [`docs/dogfood/ufo.md`](docs/dogfood/ufo.md) — a scan of a real package with a human verdict per
   finding.

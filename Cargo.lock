@@ -15,6 +15,7 @@ dependencies = [
 name = "afz-cli"
 version = "0.1.0"
 dependencies = [
+ "afz-conformance",
  "afz-engine",
  "afz-protocol",
  "afz-xtask",
@@ -23,6 +24,17 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "afz-conformance"
+version = "0.1.0"
+dependencies = [
+ "afz-engine",
+ "afz-protocol",
+ "jsonschema",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -85,6 +97,7 @@ dependencies = [
 name = "afz-xtask"
 version = "0.1.0"
 dependencies = [
+ "afz-conformance",
  "afz-engine",
  "afz-protocol",
  "schemars",

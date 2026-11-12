@@ -1,15 +1,14 @@
 //! Step 8 acceptance: the committed 1842-byte input minimizes below 200 bytes against the real
-//! plugin, and the `.ts` reproducer written for the minimized input reproduces the fault when
-//! Node runs it on its own, with no engine and no plugin in sight.
+//! plugin, and the reproducer the plugin renders for the minimized input reproduces the fault
+//! when Node runs it on its own, with no engine and no plugin process in sight.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 use afz_engine::minimize::{minimize, FaultMatch};
-use afz_engine::report::repro::{reproducer, ReproTarget};
 use afz_engine::rpc::client::{Launch, PluginClient};
-use afz_protocol::{DiscoverReq, InvokeReq, Outcome, ValueTree};
+use afz_protocol::{DiscoverReq, InvokeReq, Outcome, ReproducerReq, ValueTree};
 
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -73,7 +72,6 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
         .iter()
         .find(|t| t.name == "describe")
         .unwrap_or_else(|| panic!("discovery reported no `describe`; got {:?}", discovery.targets.iter().map(|t| &t.name).collect::<Vec<_>>()));
-    let origin = target.origin.file.clone().expect("a design-time target reports its source file");
 
     let prepared = client
         .prepare(&afz_protocol::PrepareReq { target_id: target.id.clone(), values: values.clone() }, Duration::from_secs(30))
@@ -116,17 +114,18 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
     let after_top = after.fault().and_then(|f| f.top_frame().cloned()).expect("the minimized fault keeps its frame");
     assert_eq!((after_top.file.as_str(), after_top.line), (file.as_str(), line), "the bug moved to another line");
 
-    // The reproducer is the artifact a triager runs. It has to fail the same way on its own.
-    let script = reproducer(
-        &ReproTarget { target_id: &target.id, file: &origin, symbol: &target.name },
-        &result.values,
-    );
+    // The reproducer is the artifact a triager runs. The plugin renders it — the engine holds
+    // no target-language code — and it has to fail the same way on its own.
+    let resp = client
+        .reproducer(&ReproducerReq { target_id: target.id.clone(), values: result.values.clone() }, Duration::from_secs(10))
+        .expect("the js-ts plugin renders a reproducer");
+    assert_eq!(resp.extension, "mjs", "the js-ts plugin renders a Node-runnable module");
+    let script = resp.script;
     let run_dir = std::env::temp_dir().join(format!("afz-minimize-{}", std::process::id()));
     std::fs::create_dir_all(&run_dir).expect("temp dir for the reproducer");
-    let script_path = run_dir.join("repro.ts");
+    let script_path = run_dir.join(format!("repro.{}", resp.extension));
     std::fs::write(&script_path, &script).expect("write the reproducer");
     let output = Command::new(node())
-        .arg("--experimental-strip-types")
         .arg(&script_path)
         .output()
         .expect("run the reproducer");

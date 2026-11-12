@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// The six methods a harness plugin may answer.
+/// The seven methods a harness plugin may answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum Method {
@@ -18,6 +18,7 @@ pub enum Method {
     Prepare,
     Invoke,
     Minimize,
+    Reproducer,
     CoverageMap,
 }
 
@@ -29,6 +30,7 @@ impl Method {
             Method::Prepare => "prepare",
             Method::Invoke => "invoke",
             Method::Minimize => "minimize",
+            Method::Reproducer => "reproducer",
             Method::CoverageMap => "coverageMap",
         }
     }
@@ -40,6 +42,7 @@ impl Method {
             "prepare" => Some(Method::Prepare),
             "invoke" => Some(Method::Invoke),
             "minimize" => Some(Method::Minimize),
+            "reproducer" => Some(Method::Reproducer),
             "coverageMap" => Some(Method::CoverageMap),
             _ => None,
         }

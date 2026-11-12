@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use afz_protocol::{CoverageEntry, CoverageMap, DiscoverReq, EdgeId, FaultSignature, InvokeReq, Outcome, ValueTree};
 
-use crate::rpc::client::{Launch, LostReason, PluginClient};
+use crate::rpc::client::{spawn_discovered, Launch, LostReason, PluginClient};
 use crate::scan::PREPARE_TIMEOUT;
 
 /// Restarts attributed to one target before the engine disables it. The design's number.
@@ -171,7 +171,22 @@ impl Supervisor {
     /// resolves a `targetId` only against an inventory that process discovered itself, so a
     /// restart has to discover again: the new process knows nothing.
     pub fn new(launch: Launch, workers: usize, deadline: Duration, disable_after: u64, discovery: DiscoverReq) -> Supervisor {
-        let pool = (0..workers.max(1)).map(|index| Worker::spawn(index, &launch, &discovery)).collect();
+        // `Worker::spawn` blocks on that process's `discover`, so mapping over the indices serially
+        // would make a default scan pay `(workers + 1)` discoveries before its first invocation and
+        // again on every restart. They overlap instead.
+        //
+        // Joining in index order is load-bearing, not tidiness: `Vec<Worker>` order decides which
+        // process pulls which job, and `docs/decisions/0011-….md` records that changing the worker
+        // count changed which findings a seed produced. The trajectory must stay a function of the
+        // seed and the worker count, never of which process answered first.
+        let pool = {
+            let (launch, discovery) = (&launch, &discovery);
+            std::thread::scope(|scope| {
+                let starting: Vec<_> =
+                    (0..workers.max(1)).map(|index| scope.spawn(move || Worker::spawn(index, launch, discovery))).collect();
+                starting.into_iter().map(|thread| thread.join().expect("worker spawn thread")).collect()
+            })
+        };
         Supervisor { launch, discovery, workers: pool, deadline, watchdog: Watchdog::new(disable_after) }
     }
 
@@ -372,8 +387,8 @@ impl Worker {
     /// fails discovery stays up: every `prepare` then reports the plugin's own reason, which is
     /// the diagnostic the scan result should carry rather than a swallowed error here.
     fn start(index: usize, launch: &Launch, discovery: &DiscoverReq) -> Option<PluginClient> {
-        let client = PluginClient::spawn(launch).ok()?;
-        if let Err(reason) = client.discover(discovery, DISCOVERY_TIMEOUT) {
+        let (client, lost) = spawn_discovered(launch, discovery).ok()?;
+        if let Some(reason) = lost {
             eprintln!("afz: worker {index} discovery failed: {}", reason.detail());
         }
         Some(client)

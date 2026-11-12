@@ -37,6 +37,7 @@ import {
   METHOD_NOT_FOUND,
   METHOD_PREPARE,
   METHOD_COVERAGE_MAP,
+  METHOD_REPRODUCER,
   PARSE_ERROR,
   PLUGIN_ERROR,
   PROTOCOL_VERSION,
@@ -47,6 +48,7 @@ import { DEFAULT_REJECT_CLASSES, failureWithCause, VIA_MODULE_LOAD, VIA_WORKER_D
 import { isRecord } from "./guards.js";
 import { discover } from "./discover.js";
 import { Transpiler, type ModuleGraph } from "./transpile.js";
+import { render as renderReproducer, type ReproducerResp } from "./repro.js";
 import type { WorkerJob, WorkerReply, WorkerRequest } from "./invoke.js";
 
 export const HARNESS_NAME = "js-ts";
@@ -55,8 +57,10 @@ export const HARNESS_VERSION = "0.1.0";
 /**
  * What this build can do. `minimize` is absent until the plugin can shrink a call in target
  * terms; the engine then falls back to removing arguments and reducing structure.
+ * `reproducer` is declared and answered: the engine asks the plugin that owns the language
+ * to render the script, and stores the bytes verbatim.
  */
-export const CAPABILITIES: Capability[] = ["coverage", "stateful", "concurrent"];
+export const CAPABILITIES: Capability[] = ["coverage", "stateful", "concurrent", "reproducer"];
 
 /**
  * A live worker thread and what it currently holds. One job runs at a time on a thread; a second
@@ -372,6 +376,16 @@ export class Harness {
     throw new InvalidRequest("this build of the js-ts harness does not implement minimize");
   }
 
+  reproducer(req: { targetId: string; values: ValueTree[] }): ReproducerResp {
+    const target = this.targets.get(req.targetId);
+    if (target === undefined) {
+      throw new InvalidRequest(`targetId ${req.targetId} was not discovered on this connection`);
+    }
+    const file = target.origin.file;
+    if (file === undefined) throw new InvalidRequest(`target ${req.targetId} has no source file to import`);
+    return renderReproducer(req.targetId, file, target.name, req.values);
+  }
+
   coverageMap(): { entries: CoverageEntry[] } {
     const entries = [...this.edges.values()].sort((a, b) => a.edge - b.edge);
     return { entries };
@@ -445,6 +459,8 @@ async function dispatch(harness: Harness, method: string, params: unknown): Prom
       return harness.invoke(parseInvoke(params));
     case METHOD_MINIMIZE:
       return harness.minimize();
+    case METHOD_REPRODUCER:
+      return harness.reproducer(parseCall(params));
     case METHOD_COVERAGE_MAP:
       return harness.coverageMap();
     default:

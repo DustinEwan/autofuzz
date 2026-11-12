@@ -20,7 +20,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use afz_protocol::{
     Capability, CoverageMap, DiscoverReq, FaultSignature, Handshake, InvokeReq, Materialization, Outcome, PrepareReq,
-    TargetDescriptor, ValueTree,
+    ReproducerReq, TargetDescriptor, ValueTree,
 };
 
 use crate::config::{Block, ConfigError, LoadedConfig, Strategy};
@@ -30,11 +30,10 @@ use crate::generate::generate_arguments;
 use crate::minimize::{self, Minimized};
 use crate::mutate::mutate_with_donor;
 use crate::oracles::{self, Finding, Oracles};
-use crate::report::repro::{self, ReproTarget};
 use crate::report::render_markdown;
 use crate::report::scanresult::*;
 use crate::rng::Rng;
-use crate::rpc::client::{Launch, LostReason, PluginClient};
+use crate::rpc::client::{spawn_discovered, Launch, LostReason, PluginClient};
 use crate::schedule::{Plan, Scheduler};
 use crate::supervise::{Completed, DISABLE_AFTER, DISCOVERY_TIMEOUT, Job, RunReport, Supervisor};
 
@@ -71,6 +70,18 @@ const MINIMIZE_SLACK: Duration = Duration::from_secs(10);
 /// so this only has to cover writing a few thousand entries over a pipe; it is asked after every
 /// batch, and a worker that cannot answer would cost this much per batch.
 const COVERAGE_TIMEOUT: Duration = Duration::from_secs(10);
+/// The `reproducer` call answers from string concatenation in the plugin, so a slow answer is
+/// a stuck plugin, not work.
+const REPRODUCER_TIMEOUT: Duration = Duration::from_secs(10);
+/// The largest script a plugin may hand back. A reproducer is a dozen lines; a megabyte is a bug.
+const MAX_REPRO_SCRIPT_BYTES: usize = 1 << 20;
+
+/// Whether a plugin-named extension is a safe file suffix: short and alphanumeric, so the
+/// artifact cannot name a path outside `repros/`.
+fn valid_extension(extension: &str) -> bool {
+    !extension.is_empty() && extension.len() <= 8 && extension.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
 /// How long one `prepare` may take: the plugin imports the target module here, so the cost is the
 /// target's module graph rather than one call. Both the guided workers and the shrink pool use this
 /// bound. The invocation deadline does not apply to `prepare`, because preparing is not the target
@@ -437,6 +448,11 @@ struct Scanner {
 /// The plugin connections minimization runs against, with the targets each has prepared.
 struct Minimizer {
     launch: Launch,
+    /// The inventory every connection this pool grows is given at spawn. `prepare` resolves a
+    /// `targetId` only against a `discover` that ran in that same process, so a connection that
+    /// never discovered answers every shrink trial with an RPC error, which the scan files as a
+    /// `plugin-lost` finding against the target.
+    discovery: DiscoverReq,
     /// `pool[0]` is the connection that already did the handshake and discovery; the rest appear
     /// only when a finding is actually being shrunk, so a scan with no findings never pays for them.
     pool: Vec<PluginClient>,
@@ -456,6 +472,7 @@ impl Minimizer {
         self.grow(candidates.len());
         let deadline = self.deadline;
         let launch = &self.launch;
+        let discovery = &self.discovery;
         let mut outcomes = Vec::with_capacity(candidates.len());
         for chunk in candidates.chunks(self.pool.len()) {
             let answered = std::thread::scope(|scope| {
@@ -465,7 +482,7 @@ impl Minimizer {
                     .zip(self.prepared.iter_mut())
                     .zip(chunk)
                     .map(|((client, prepared), values)| {
-                        scope.spawn(move || run_trial(client, prepared, launch, target_id, values, deadline))
+                        scope.spawn(move || run_trial(client, prepared, launch, discovery, target_id, values, deadline))
                     })
                     .collect::<Vec<_>>();
                 threads.into_iter().map(|thread| thread.join().unwrap_or_else(|_| Outcome::plugin_lost(0.0, "the minimizer trial thread panicked"))).collect::<Vec<_>>()
@@ -480,8 +497,13 @@ impl Minimizer {
     /// connections it already has rather than failing the scan.
     fn grow(&mut self, want: usize) {
         while self.pool.len() < want.min(self.cap) {
-            match PluginClient::spawn(&self.launch) {
-                Ok(client) => {
+            match spawn_discovered(&self.launch, &self.discovery) {
+                Ok((client, Some(reason))) => {
+                    eprintln!("afz: minimizer discovery failed: {}", reason.detail());
+                    self.pool.push(client);
+                    self.prepared.push(BTreeSet::new());
+                }
+                Ok((client, None)) => {
                     self.pool.push(client);
                     self.prepared.push(BTreeSet::new());
                 }
@@ -511,13 +533,14 @@ fn run_trial(
     client: &mut PluginClient,
     prepared: &mut BTreeSet<String>,
     launch: &Launch,
+    discovery: &DiscoverReq,
     target_id: &str,
     values: &[ValueTree],
     deadline: Duration,
 ) -> Outcome {
     if client.lost().is_some() {
-        match PluginClient::spawn(launch) {
-            Ok(fresh) => *client = fresh,
+        match spawn_discovered(launch, discovery) {
+            Ok((fresh, _)) => *client = fresh,
             Err(_) => return Outcome::plugin_lost(0.0, "the minimizer plugin could not be restarted"),
         }
         prepared.clear();
@@ -561,7 +584,7 @@ impl Scanner {
             Strategy::Guided => Scheduler::guided(),
             Strategy::Random => Scheduler::random(),
         };
-        let supervisor = Supervisor::new(launch.clone(), options.workers, deadline, DISABLE_AFTER, discovery_request);
+        let supervisor = Supervisor::new(launch.clone(), options.workers, deadline, DISABLE_AFTER, discovery_request.clone());
         let mut scanner = Scanner {
             options: options.clone(),
             handshake,
@@ -574,7 +597,14 @@ impl Scanner {
             corpus: Corpus::new(options.max_corpus),
             seen,
             rng: Rng::seeded_u64(options.seed),
-            minimizer: Minimizer { launch, pool: vec![probe], prepared: vec![BTreeSet::new()], deadline, cap: options.workers.max(1) },
+            minimizer: Minimizer {
+                launch,
+                discovery: discovery_request,
+                pool: vec![probe],
+                prepared: vec![BTreeSet::new()],
+                deadline,
+                cap: options.workers.max(1),
+            },
             supervisor,
             attempted: BTreeSet::new(),
             planned: 0,
@@ -875,15 +905,34 @@ impl Scanner {
         let seen_before = !self.seen.record(&identity);
         let id = finding::finding_id(&identity);
         let minimized = (!seen_before).then(|| self.shrink(&finding.target_id, values));
-        let target = self.target(&finding.target_id);
-        let reproducer = minimized.as_ref().filter(|m| m.reproduces).map(|m| {
-            let script_target = ReproTarget {
-                target_id: &finding.target_id,
-                file: target.and_then(|t| t.origin.file.as_deref()).unwrap_or(""),
-                symbol: target.map(|t| t.name.as_str()).unwrap_or(""),
-            };
-            repro::reproducer(&script_target, &m.values)
+        // The plugin renders the reproducer. The engine owns no target-language knowledge: it
+        // stores the plugin's bytes verbatim, under an extension the plugin names and the
+        // engine sanitizes. A plugin that does not declare `reproducer`, fails the call, or
+        // answers unsafely gets no script; the finding's `inputs/` artifact is replayable
+        // either way.
+        let repro_attempt = minimized.as_ref().filter(|m| m.reproduces).and_then(|m| {
+            if !self.handshake.capabilities.contains(&Capability::Reproducer) {
+                return None;
+            }
+            let client = self.minimizer.pool.first()?;
+            let req = ReproducerReq { target_id: finding.target_id.clone(), values: m.values.clone() };
+            Some(client.reproducer(&req, REPRODUCER_TIMEOUT))
         });
+        let repro = match repro_attempt {
+            Some(Ok(resp)) => {
+                if resp.script.is_empty() || resp.script.len() > MAX_REPRO_SCRIPT_BYTES || !valid_extension(&resp.extension) {
+                    self.log.push(format!("finding {id} gets no reproducer: the plugin answered an empty or oversized script, or the unsafe extension {:?}", resp.extension));
+                    None
+                } else {
+                    Some(ReproFile { artifact: reproducer_artifact_path(&id, &resp.extension), content: resp.script })
+                }
+            }
+            Some(Err(reason)) => {
+                self.log.push(format!("finding {id} gets no reproducer: {}", reason.detail()));
+                None
+            }
+            None => None,
+        };
         let shrunk = minimized.as_ref().filter(|m| m.reproduces && m.bytes_after < m.bytes_before);
         let record = FindingRecord {
             finding_id: id.clone(),
@@ -899,7 +948,7 @@ impl Scanner {
                 bytes_before: m.bytes_before,
                 bytes_after: m.bytes_after,
             }),
-            reproducer: reproducer.as_ref().map(|_| Artifact { artifact: reproducer_artifact_path(&id) }),
+            reproducer: repro.as_ref().map(|r| Artifact { artifact: r.artifact.clone() }),
             first_seen_invocation: finding.invocation_id,
             reproduced: minimized.as_ref().is_some_and(|m| m.reproduces),
             seen_before,
@@ -940,7 +989,7 @@ impl Scanner {
                     bytes_before: m.bytes_before,
                     bytes_after: m.bytes_after,
                 }),
-                reproducer,
+                reproducer: repro,
             },
         ));
     }
@@ -993,10 +1042,6 @@ impl Scanner {
                 })
                 .collect(),
         }
-    }
-
-    fn target(&self, target_id: &str) -> Option<&TargetDescriptor> {
-        self.targets.iter().find(|t| t.id == target_id)
     }
 
     fn progress(&self, invocations: u64) -> Progress {

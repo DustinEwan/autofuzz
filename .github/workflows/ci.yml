@@ -10,7 +10,8 @@ env:
 
 jobs:
   # The engine and the protocol crate. `cargo test --workspace` includes the Rust tests that
-  # spawn the js-ts plugin over stdio, so this job builds the harness before running them.
+  # spawn the js-ts and python plugins over stdio, so this job builds the harnesses and installs
+  # the runtimes before running them.
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -30,6 +31,10 @@ jobs:
         run: |
           npm --prefix packages/harness-js ci
           npm --prefix packages/harness-js run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
 
       # The gate: any clippy warning in any target, including tests, fails the job.
       - name: Clippy
@@ -55,3 +60,51 @@ jobs:
 
       - name: Tests
         run: npm --prefix packages/harness-js test
+
+  # The python plugin's own suite: stdlib unittest, no Rust binary, no third-party package.
+  python-harness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Tests
+        run: python3 -m unittest discover -s packages/harness-py/test -t packages/harness-py
+
+  # The conformance suite against the python harness, on its own so a Node failure never
+  # hides a Python one.
+  conformance-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Conformance
+        run: cargo test -p afz-xtask --test conformance the_python_harness_passes
+
+  # The wasm harness has no Node dependency, so it gates on its own job: the probe module needs
+  # the wasm32 target, and nothing else in CI does.
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Build the wasm harness and the probe module
+        run: |
+          cargo build --release -p afz-wasm
+          cargo build --release --target wasm32-unknown-unknown --manifest-path targets/wasm-probe/Cargo.toml
+
+      - name: Conformance
+        run: cargo test -p afz-xtask --test conformance -- --ignored

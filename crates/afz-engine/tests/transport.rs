@@ -81,7 +81,7 @@ fn handshake_discover_and_invoke_over_real_pipes() {
     assert_eq!(minimized.values.len(), 1, "the fake plugin shrinks to the first argument");
 
     let map = client.coverage_map(Duration::from_secs(5)).expect("coverageMap");
-    assert_eq!(map.entries.len(), 8);
+    assert_eq!(map.entries.len(), 64, "the map names every edge a digest can carry");
 }
 
 #[test]

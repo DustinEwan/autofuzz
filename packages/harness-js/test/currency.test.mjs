@@ -26,7 +26,7 @@ test("handshake declares the js-ts capabilities", async () => {
     assert.equal(handshake.targetClass, "design-time");
     assert.equal(handshake.discoverRequiresExecution, false);
     assert.deepEqual(handshake.languages, ["typescript", "javascript"]);
-    assert.deepEqual([...handshake.capabilities].sort(), ["concurrent", "coverage", "stateful"]);
+    assert.deepEqual([...handshake.capabilities].sort(), ["concurrent", "coverage", "reproducer", "stateful"]);
   } finally {
     plugin.close();
   }

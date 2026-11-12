@@ -354,9 +354,32 @@ impl PluginClient {
         self.request(Method::Minimize, Some(serde_json::to_value(req).expect("MinimizeReq")), timeout)
     }
 
+    pub fn reproducer(&self, req: &ReproducerReq, timeout: Duration) -> Call<ReproducerResp> {
+        self.request(Method::Reproducer, Some(serde_json::to_value(req).expect("ReproducerReq")), timeout)
+    }
+
     pub fn coverage_map(&self, timeout: Duration) -> Call<CoverageMap> {
         self.request(Method::CoverageMap, None, timeout)
     }
+}
+
+/// Start a plugin and give it the inventory it needs to answer `prepare`. Every connection the
+/// engine runs `prepare` or `invoke` on goes through here, because `prepare` resolves a
+/// `targetId` only against a `discover` that ran in that same process, and no protocol method
+/// carries an inventory from one process to another.
+///
+/// The `Err` arm is the one case that leaves no process: the plugin could not be started at all.
+/// A plugin that starts and then fails `discover` comes back in the `Ok` arm with the discovery
+/// loss beside it and the client still usable, the way `Worker::start` keeps such a process: every
+/// `prepare` then reports the plugin's own reason, which is the diagnostic a scan result should
+/// carry rather than a spawn error that hides it.
+pub fn spawn_discovered(
+    launch: &Launch,
+    discovery: &DiscoverReq,
+) -> Result<(PluginClient, Option<LostReason>), LostReason> {
+    let client = PluginClient::spawn(launch)?;
+    let lost = client.discover(discovery, crate::supervise::DISCOVERY_TIMEOUT).err();
+    Ok((client, lost))
 }
 
 /// A plugin client is mostly OS handles, so `Debug` reports what identifies it and nothing else.

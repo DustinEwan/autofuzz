@@ -1,4 +1,4 @@
-//! A harness plugin with no target language in it. It answers the six protocol methods and
+//! A harness plugin with no target language in it. It answers the seven protocol methods and
 //! takes its `invoke` behavior from a script, which is how the engine's deadline, restart,
 //! and process-exit tests work without a real target.
 //!
@@ -36,6 +36,9 @@ pub struct Directive {
     pub outcome: Option<Outcome>,
     /// Coverage edges to attach to the answer.
     pub coverage: Option<Vec<EdgeId>>,
+    /// Leave `coverage` off the answer instead of filling it, so a plugin that declares the
+    /// `coverage` capability and does not honor it can be modelled.
+    pub drop_coverage: Option<bool>,
     /// Fail the method with a JSON-RPC error instead of an outcome.
     pub rpc_error: Option<String>,
 }
@@ -47,6 +50,17 @@ pub struct Script {
     pub directives: Vec<Directive>,
     /// Overrides the fixed inventory, for tests that need a particular target set.
     pub discovery: Option<Discovery>,
+    /// Answers `handshake` with this document instead of the conforming one, for tests that
+    /// need a plugin reporting a different protocol revision or a capability it does not honor.
+    pub handshake: Option<Handshake>,
+    /// Refuses `prepare` and `invoke` until a `discover` has been served on this connection,
+    /// which is what both shipped harnesses do: they resolve a `targetId` only against the
+    /// inventory the same process discovered. Off by default, because the engine's transport
+    /// tests drive `prepare` and `invoke` on a connection that never discovered.
+    pub require_discover: Option<bool>,
+    /// Answers an unparseable request with nothing at all, modelling the plugin that drops the
+    /// bad line instead of writing a -32700 frame; `framing-intact` must catch it.
+    pub swallow_parse_error: Option<bool>,
 }
 
 impl Script {
@@ -61,7 +75,7 @@ impl Script {
         match serde_json::from_str::<Script>(&text) {
             Ok(script) => script,
             Err(struct_err) => match serde_json::from_str::<Vec<Directive>>(&text) {
-                Ok(directives) => Script { directives, discovery: None },
+                Ok(directives) => Script { directives, discovery: None, handshake: None, require_discover: None, swallow_parse_error: None },
                 Err(_) => {
                     eprintln!("{PLUGIN_NAME}: ignoring malformed script: {struct_err}");
                     Script::default()
@@ -93,6 +107,10 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
     // Script indices count `invoke` requests only: `at` is an invocation index, and a test
     // must not shift when the engine adds a handshake or a discover.
     let mut invocations = 0u64;
+    // `requireDiscover` models what both shipped harnesses do: they resolve a `targetId` only
+    // against the inventory this same process discovered, so `prepare` before `discover` is a
+    // refusal rather than an answer.
+    let mut discovered = false;
 
     loop {
         let line = match read_line(&mut reader, &mut buf) {
@@ -106,7 +124,9 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
         let req = match parse_request(&line) {
             Ok(req) => req,
             Err(_) => {
-                let _ = write_line(&mut write, &Response::err(0, PARSE_ERROR, "malformed request"));
+                if !script.swallow_parse_error.unwrap_or(false) {
+                    let _ = write_line(&mut write, &Response::err(0, PARSE_ERROR, "malformed request"));
+                }
                 continue;
             }
         };
@@ -118,9 +138,16 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
             continue;
         };
 
+        let gated = script.require_discover.unwrap_or(false) && !discovered;
+        let refused = Response::err(req.id, INVALID_REQUEST, "discover has not run on this connection");
         let resp = match method {
-            Method::Handshake => Response::ok(req.id, handshake()),
-            Method::Discover => Response::ok(req.id, script.discovery.clone().unwrap_or_else(inventory)),
+            Method::Handshake => Response::ok(req.id, script.handshake.clone().unwrap_or_else(handshake)),
+            Method::Discover => {
+                discovered = true;
+                Response::ok(req.id, script.discovery.clone().unwrap_or_else(inventory))
+            }
+            Method::Prepare if gated => refused,
+            Method::Invoke if gated => refused,
             Method::Prepare => Response::ok(req.id, prepare_resp(&req)),
             Method::CoverageMap => Response::ok(req.id, coverage_map()),
             Method::Invoke => {
@@ -128,6 +155,7 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
                 invoke_resp(req.id, &req, &script, invocations)
             }
             Method::Minimize => Response::ok(req.id, minimize_resp(&req)),
+            Method::Reproducer => Response::ok(req.id, reproducer_resp()),
         };
         if write_line(&mut write, &resp).is_err() {
             return;
@@ -141,7 +169,7 @@ fn handshake() -> Handshake {
         name: PLUGIN_NAME.to_string(),
         version: PLUGIN_VERSION.to_string(),
         target_class: TargetClass::DesignTime,
-        capabilities: vec![Capability::Coverage, Capability::Stateful, Capability::Minimize, Capability::Concurrent],
+        capabilities: vec![Capability::Coverage, Capability::Stateful, Capability::Minimize, Capability::Reproducer, Capability::Concurrent],
         languages: vec!["fake".to_string()],
         discover_requires_execution: false,
     }
@@ -331,9 +359,13 @@ fn prepare_resp(req: &Request) -> PrepareResp {
     }
 }
 
+/// The block table this plugin can name. It must cover every edge [`default_edges`] can put in
+/// a digest: the map is the denominator of `coverageRatio` and the table `coverage.json` is
+/// written from, so a digest edge the map does not name is reported as covered code no reader
+/// can locate.
 fn coverage_map() -> CoverageMap {
     CoverageMap {
-        entries: (1..=8)
+        entries: (1..=DIGEST_EDGES)
             .map(|i| CoverageEntry {
                 edge: i,
                 url: "src/fake.ts".to_string(),
@@ -357,12 +389,21 @@ fn minimize_resp(req: &Request) -> MinimizeResp {
     MinimizeResp { values, steps: 1 }
 }
 
+/// The fake plugin has no target language, so its script is a placeholder: the conformance
+/// suite checks the response shape, and the engine checks the extension and stores the bytes.
+fn reproducer_resp() -> ReproducerResp {
+    ReproducerResp {
+        extension: "txt".to_string(),
+        script: "afz fake reproducer: replay the finding's inputs/afz-f-*.json through the plugin.\n".to_string(),
+    }
+}
+
 fn invoke_resp(id: u64, req: &Request, script: &Script, index: u64) -> Response {
     let Ok(req) = serde_json::from_value::<InvokeReq>(req.params.clone().unwrap_or_default()) else {
         return Response::err(id, INVALID_REQUEST, "malformed invoke params");
     };
     let Some(d) = script.directive_for(index, &req.target_id) else {
-        return Response::ok(id, default_ok(index, &req));
+        return Response::ok(id, default_ok(index, &req, None));
     };
 
     if let Some(msg) = &d.stderr {
@@ -397,34 +438,47 @@ fn invoke_resp(id: u64, req: &Request, script: &Script, index: u64) -> Response 
             }
         }
     };
-    match d.outcome.clone() {
+    let mut outcome = match d.outcome.clone() {
         Some(Outcome::Ok(mut o)) => {
             if o.coverage.is_none() {
                 o.coverage = d.coverage.clone().or_else(|| Some(default_edges(index)));
             }
-            Response::ok(id, timed(Outcome::Ok(o)))
+            Outcome::Ok(o)
         }
         Some(Outcome::Rejected(mut o)) => {
             if o.coverage.is_none() {
                 o.coverage = d.coverage.clone().or_else(|| Some(default_edges(index)));
             }
-            Response::ok(id, timed(Outcome::Rejected(o)))
+            Outcome::Rejected(o)
         }
-        Some(outcome) => Response::ok(id, timed(outcome)),
-        None => Response::ok(id, timed(default_ok(index, &req))),
+        Some(outcome) => outcome,
+        None => default_ok(index, &req, d.coverage.clone()),
+    };
+    if d.drop_coverage.unwrap_or(false) {
+        match &mut outcome {
+            Outcome::Ok(o) => o.coverage = None,
+            Outcome::Rejected(o) => o.coverage = None,
+            Outcome::Failed(o) => o.coverage = None,
+        }
     }
+    Response::ok(id, timed(outcome))
 }
+
+/// How many distinct edges a digest can carry, which is also how many the coverage map names.
+const DIGEST_EDGES: u32 = 64;
 
 fn default_edges(index: u64) -> Vec<EdgeId> {
     // Deterministic and index-dependent, so the corpus sees novelty grow as invocations do.
-    vec![(index % 64) as u32 + 1]
+    vec![(index % u64::from(DIGEST_EDGES)) as u32 + 1]
 }
 
-fn default_ok(index: u64, req: &InvokeReq) -> Outcome {
+/// The `ok` a call answers with when nothing was scripted for it, or when the directive named
+/// edges but no whole outcome.
+fn default_ok(index: u64, req: &InvokeReq, edges: Option<Vec<EdgeId>>) -> Outcome {
     Outcome::Ok(OkOutcome {
         duration_ms: 0.5,
         memory_bytes: Some(1024),
-        coverage: Some(default_edges(index)),
+        coverage: Some(edges.unwrap_or_else(|| default_edges(index))),
         value: Some(ValueTree::number(f64::from(req.values.len() as u32))),
     })
 }

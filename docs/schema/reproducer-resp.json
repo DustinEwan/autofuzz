@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReproducerResp",
+  "description": "`reproducer` response.",
+  "type": "object",
+  "properties": {
+    "extension": {
+      "description": "File extension for the artifact, without a dot: `ts`, `py`. The engine accepts one to\neight ASCII alphanumeric characters and rejects anything else, so a plugin cannot name\na path outside `repros/`.",
+      "type": "string"
+    },
+    "script": {
+      "description": "The complete script. The engine writes these bytes untouched.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "extension",
+    "script"
+  ]
+}

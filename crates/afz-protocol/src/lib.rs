@@ -14,7 +14,7 @@ pub mod value;
 
 pub use methods::{
     CoverageMapResp, DiscoverReq, DiscoverResp, HandshakeResp, InvokeReq, InvokeResp, MinimizeReq,
-    MinimizeResp, PrepareReq, PrepareResp,
+    MinimizeResp, PrepareReq, PrepareResp, ReproducerReq, ReproducerResp,
 };
 pub use outcome::{EdgeId, FailedOutcome, FaultFrame, FaultSignature, OkOutcome, Outcome, RejectedOutcome};
 pub use rpc::{

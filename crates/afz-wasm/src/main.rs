@@ -161,6 +161,9 @@ fn handle(plugin: &mut Plugin, request: &Request) -> Response {
         // delta-debugging minimizer works on the value tree, and the handshake does not claim the
         // capability.
         Method::Minimize => Err((INVALID_REQUEST, "the wasm harness does not minimize in target terms".into())),
+        // A standalone reproducer needs a runner for a core module; the handshake does not
+        // claim the capability, and the finding's `inputs/` JSON is the replayable artifact.
+        Method::Reproducer => Err((rpc::METHOD_NOT_FOUND, "the wasm harness renders no reproducer script".into())),
         Method::CoverageMap => serde_json::to_value(plugin.coverage_map()).map_err(|e| (INVALID_REQUEST, e.to_string())),
     };
     match result {

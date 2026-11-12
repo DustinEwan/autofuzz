@@ -145,7 +145,7 @@ fn document() -> ScanDocument {
                     bytes_before: 1840,
                     bytes_after: 116,
                 }),
-                reproducer: Some(Artifact { artifact: scanresult::reproducer_artifact_path(FAILED_ID) }),
+                reproducer: Some(Artifact { artifact: scanresult::reproducer_artifact_path(FAILED_ID, "ts") }),
                 first_seen_invocation: 10412,
                 reproduced: true,
                 seen_before: true,
@@ -192,7 +192,10 @@ fn files() -> ScanFiles<'static> {
                     bytes_before: 1840,
                     bytes_after: 116,
                 }),
-                reproducer: Some("import { loadConfig } from \"../src/config\";\nloadConfig({ lines: [] });\n".to_string()),
+                reproducer: Some(ReproFile {
+                    artifact: scanresult::reproducer_artifact_path(FAILED_ID, "ts"),
+                    content: "import { loadConfig } from \"../src/config\";\nloadConfig({ lines: [] });\n".to_string(),
+                }),
             },
             FindingFiles {
                 finding_id: DEADLINE_ID.to_string(),
@@ -308,11 +311,11 @@ fn every_artifact_the_document_names_exists_and_round_trips() {
         serde_json::from_str(&std::fs::read_to_string(dir.join(minimized_artifact_path(FAILED_ID))).expect("minimized"))
             .expect("minimized artifact is a value tree array");
     assert_eq!(minimized, minimized_input());
-    assert!(dir.join(reproducer_artifact_path(FAILED_ID)).is_file());
+    assert!(dir.join(reproducer_artifact_path(FAILED_ID, "ts")).is_file());
 
     // The finding with no minimized input and no reproducer must not leave stray files behind.
     assert!(!dir.join(minimized_artifact_path(DEADLINE_ID)).exists());
-    assert!(!dir.join(reproducer_artifact_path(DEADLINE_ID)).exists());
+    assert!(!dir.join(reproducer_artifact_path(DEADLINE_ID, "ts")).exists());
 
     assert_eq!(std::fs::read_to_string(dir.join("coverage.json")).expect("coverage"), "{\"edges\":8312}");
     assert_eq!(std::fs::read_to_string(dir.join("engine.log")).expect("log"), "invocation 1 ok\n");
@@ -357,7 +360,7 @@ fn markdown_prints_one_section_per_finding() {
     assert!(text.contains("### afz:f:7a41c2e0 — failed (high)"), "severity belongs in the heading:\n{text}");
     assert!(text.contains("### afz:f:11b0aa99 — deadline (medium)"), "the second finding needs its own section:\n{text}");
     assert!(text.contains(&minimized_artifact_path(FAILED_ID)), "the minimized input belongs in the section:\n{text}");
-    assert!(text.contains(&reproducer_artifact_path(FAILED_ID)), "the reproducer path belongs in the section:\n{text}");
+    assert!(text.contains(&reproducer_artifact_path(FAILED_ID, "ts")), "the reproducer path belongs in the section:\n{text}");
     assert!(text.contains("1840 → 116") || text.contains("116 bytes, from 1840"), "byte counts:\n{text}");
     assert!(text.contains("src/config.ts:41:19"), "the fault frame:\n{text}");
     assert!(text.contains("stopped: budget"), "why the run ended:\n{text}");

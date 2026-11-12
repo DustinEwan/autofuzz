@@ -147,6 +147,28 @@ pub struct InvokeReq {
 /// `invoke` response.
 pub type InvokeResp = Outcome;
 
+/// `reproducer` request: render a standalone script that replays the call with these values.
+/// The engine has minimized the input and confirmed it reproduces; the plugin, which owns the
+/// target language, renders the call in it. The engine stores the script verbatim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReproducerReq {
+    pub target_id: String,
+    pub values: Vec<ValueTree>,
+}
+
+/// `reproducer` response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReproducerResp {
+    /// File extension for the artifact, without a dot: `ts`, `py`. The engine accepts one to
+    /// eight ASCII alphanumeric characters and rejects anything else, so a plugin cannot name
+    /// a path outside `repros/`.
+    pub extension: String,
+    /// The complete script. The engine writes these bytes untouched.
+    pub script: String,
+}
+
 /// `minimize` request: shrink a failing input while it still reproduces the same fault.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

@@ -1,0 +1,74 @@
+{
+  "$comment": [
+    "Conformance template version 1. A published version is immutable: new rules add version 2,",
+    "they never edit this file. Each property states a wire-level expectation - outcome kind,",
+    "via string, skip reason - never code shape and never a content-derived id. The harness",
+    "package's emitter renders a fixture that realizes every property and writes the manifest",
+    "naming the symbols; the suite, not the emitter, decides pass/fail. A property a language",
+    "cannot express is declared not-applicable in the manifest with a reason, and the report",
+    "shows that line rather than a silent pass."
+  ],
+  "version": 1,
+  "properties": [
+    {
+      "id": "crash-unguarded",
+      "requires": null,
+      "expectation": "Invoking the named symbol with the manifest's input answers kind `failed`, and at least one fault frame names a file inside the rendered root (trap 11: frames must name the target's code).",
+      "emitterNotes": "A symbol that dereferences past its input with no guard: an index past the end, a missing key, a null field. The fault must originate in fixture source, not in the runtime's library."
+    },
+    {
+      "id": "guard-refusal",
+      "requires": null,
+      "expectation": "Invoking the named symbol with the manifest's out-of-range input answers kind `rejected` with via `guard-site` or `reject-class`.",
+      "emitterNotes": "A symbol that validates its arguments and refuses an out-of-range value through the language's ordinary refusal channel (a raised ValueError/RangeError, a 4xx status). The input must be the one that trips the guard."
+    },
+    {
+      "id": "private-symbol",
+      "requires": null,
+      "expectation": "Discovery lists the named symbol in `skipped` with reason `not-public` and never in `targets`.",
+      "emitterNotes": "A callable the language's visibility convention excludes from the public API: an underscore-prefixed function, a module-local def, a non-exported symbol. It must otherwise be fuzzable-shaped, so the skip can only come from visibility."
+    },
+    {
+      "id": "unrepresentable-symbol",
+      "requires": null,
+      "expectation": "Discovery lists the named symbol in `skipped` with reason `unsupported-signature`.",
+      "emitterNotes": "A public callable whose signature the generator cannot drive: an unannotated parameter, varargs, a bare callback with no type. The skip must come from the signature, not from visibility."
+    },
+    {
+      "id": "unconstructible-receiver",
+      "requires": null,
+      "expectation": "Discovery lists the named symbol in `skipped` with reason `unconstructible-parameter` and a `blockedBy` whose `type` names the manifest's `blockedByType`.",
+      "emitterNotes": "A callable taking (or a method whose receiver needs) a value the harness cannot build from generated values alone: a project-local class whose constructor requires an argument, a database handle, a live socket."
+    },
+    {
+      "id": "method-receiver",
+      "requires": null,
+      "expectation": "`prepare` answers `ok: true` for the named method with the manifest's input.",
+      "emitterNotes": "A method on a class the harness can construct with no arguments. The realization proves the plugin builds receivers, not just free functions."
+    },
+    {
+      "id": "coverage-digest-live",
+      "requires": "coverage",
+      "expectation": "Driving the named multi-line symbol with the manifest's two inputs answers non-empty coverage digests that differ from each other (traps 1, 3, 14: an armed-once, never-reset probe is the only shape that passes).",
+      "emitterNotes": "A multi-line symbol with two branches the two inputs take separately. Inputs must be valid - the property is about the digest, not the outcome kind."
+    },
+    {
+      "id": "stdout-purity",
+      "requires": null,
+      "expectation": "After driving the named noise symbol, the same connection still answers a `handshake` with a well-formed response (trap 9: target code writing to stdout must not corrupt the protocol channel).",
+      "emitterNotes": "A symbol that writes to the process's standard output as its first act, then returns. The plugin must keep the protocol channel clean while the target shouts."
+    },
+    {
+      "id": "reproducer-script",
+      "requires": "reproducer",
+      "expectation": "`reproducer` for the named crash symbol with the manifest's input answers a non-empty script with a valid extension, and the script text names the fixture file the fault came from.",
+      "emitterNotes": "Reuse the `crash-unguarded` symbol and input. The suite stores the bytes; it does not run them - running the script is the harness's own test (guide section 11)."
+    },
+    {
+      "id": "deadline-sleep",
+      "requires": null,
+      "expectation": "Driving the named slow symbol at the suite's deadline answers `failed` with via `deadline-cut`, or the engine's kill arrives and `process-alive` still holds; answering `ok` inside the deadline fails the property (the fixture's sleep is shorter than the deadline, so it did not do its job).",
+      "emitterNotes": "A symbol that sleeps well past any deadline the suite can pass (the suite's default deadline is 1000 ms; sleep at least 10 s). The input must reach the sleep unconditionally."
+    }
+  ]
+}

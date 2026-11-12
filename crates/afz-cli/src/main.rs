@@ -2,6 +2,7 @@
 
 mod probe;
 mod scan;
+mod validate;
 
 use std::path::PathBuf;
 
@@ -63,6 +64,24 @@ enum Command {
         #[arg(long, short)]
         quiet: bool,
     },
+    /// Drive a harness plugin through the conformance suite and report rule by rule.
+    ValidateHarness {
+        /// Plugin argv, e.g. `--command node packages/harness-js/dist/server.js`.
+        #[arg(long, num_args = 1..)]
+        command: Vec<String>,
+        /// Scan project to discover against. Defaults to the working directory.
+        #[arg(long)]
+        path: Option<String>,
+        /// How many discovered targets `prepare` and `invoke` run on.
+        #[arg(long)]
+        targets: Option<usize>,
+        /// `deadlineMs` for every driven invocation.
+        #[arg(long)]
+        deadline: Option<u64>,
+        /// Print the machine-readable report instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() {
@@ -71,6 +90,9 @@ fn main() {
         Command::ProbePlugin { command, path, json } => probe::run(command, path, json),
         Command::Scan { path, config, budget, seed, resume, strategy, git, workers, quiet } => {
             scan::run(path, config, &budget, seed, resume, strategy, git, workers, quiet)
+        }
+        Command::ValidateHarness { command, path, targets, deadline, json } => {
+            validate::run(command, path, targets.unwrap_or(8), deadline.unwrap_or(1000), json)
         }
     };
     match result {

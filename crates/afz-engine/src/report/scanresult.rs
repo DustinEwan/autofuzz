@@ -264,7 +264,16 @@ pub struct FindingFiles {
     pub finding_id: String,
     pub input: Vec<ValueTree>,
     pub minimized: Option<MinimizedInput>,
-    pub reproducer: Option<String>,
+    /// The rendered script and the exact document path it must land at, so the writer cannot
+    /// drift from the path `scan.rs` recorded in the document.
+    pub reproducer: Option<ReproFile>,
+}
+
+/// A rendered reproducer script and the relative artifact path the document names for it.
+#[derive(Debug, Clone)]
+pub struct ReproFile {
+    pub artifact: String,
+    pub content: String,
 }
 
 /// The minimized input, with the sizes the document reports for it.
@@ -314,8 +323,8 @@ pub fn minimized_artifact_path(finding_id: &str) -> String {
     format!("{INPUTS_DIR}/{}.min.json", artifact_stem(finding_id))
 }
 
-pub fn reproducer_artifact_path(finding_id: &str) -> String {
-    format!("{REPROS_DIR}/{}.ts", artifact_stem(finding_id))
+pub fn reproducer_artifact_path(finding_id: &str, extension: &str) -> String {
+    format!("{REPROS_DIR}/{}.{extension}", artifact_stem(finding_id))
 }
 
 /// A short sortable run id: the millisecond in Crockford base 32, then two characters that keep
@@ -348,8 +357,8 @@ pub fn write(out_dir: &Path, document: &ScanDocument, files: &ScanFiles<'_>) -> 
         if let Some(minimized) = &finding.minimized {
             write_json(&dir.join(minimized_artifact_path(&finding.finding_id)), &minimized.values)?;
         }
-        if let Some(script) = &finding.reproducer {
-            std::fs::write(dir.join(reproducer_artifact_path(&finding.finding_id)), script)?;
+        if let Some(repro) = &finding.reproducer {
+            std::fs::write(dir.join(&repro.artifact), &repro.content)?;
         }
     }
 
