@@ -245,6 +245,17 @@ struct Scanner {
     coverage_total: u64,
     coverage_map: Option<CoverageMap>,
     stopped: StoppedReason,
+    /// Wall time each phase of the batch loop took across the whole run, written to the engine log
+    /// so a scan that is slow says which of its three phases is the reason instead of leaving the
+    /// reader to guess between planning, executing and scoring.
+    plan_ms: u128,
+    run_ms: u128,
+    account_ms: u128,
+    batches: u64,
+    /// Invocations the plugin answered `failed`. Each one retires that plugin's invoke worker
+    /// thread, so the count is a cost the finding list hides: identities deduplicate the report,
+    /// not the thread restarts.
+    failed: u64,
 }
 
 /// The plugin connection minimization runs against, with the targets it has prepared.
@@ -339,6 +350,11 @@ impl Scanner {
             coverage_total: 0,
             coverage_map: None,
             stopped: StoppedReason::Complete,
+            plan_ms: 0,
+            run_ms: 0,
+            account_ms: 0,
+            batches: 0,
+            failed: 0,
         };
         scanner.log.push(format!(
             "harness {} {} ({}), strategy {:?}, seed 0x{:08x}",
@@ -394,6 +410,7 @@ impl Scanner {
                 self.stopped = StoppedReason::Budget;
                 break;
             }
+            let planned_at = Instant::now();
             let jobs = self.plan_batch();
             if jobs.is_empty() {
                 // Nothing left to try: every target is disabled or proved unbuildable.
@@ -402,9 +419,15 @@ impl Scanner {
             }
             let values_by_invocation: HashMap<u64, Vec<ValueTree>> =
                 jobs.iter().map(|job| (job.invocation_id, job.values.clone())).collect();
+            self.plan_ms += planned_at.elapsed().as_millis();
             let remaining = self.options.wall_clock.saturating_sub(elapsed);
+            let ran_at = Instant::now();
             let report = self.supervisor.run(jobs, remaining);
+            self.run_ms += ran_at.elapsed().as_millis();
+            let accounted_at = Instant::now();
             self.account(report, &values_by_invocation, on_progress);
+            self.account_ms += accounted_at.elapsed().as_millis();
+            self.batches += 1;
         }
         Ok(())
     }
@@ -536,21 +559,27 @@ impl Scanner {
                 ));
             }
             self.ran += 1;
+            if matches!(completed.outcome, Outcome::Failed { .. }) {
+                self.failed += 1;
+            }
             let input = values.get(&completed.invocation_id).cloned().unwrap_or_default();
             self.learn(completed, &input);
             if completed.invocation_id >= self.next_sample {
                 while self.next_sample <= completed.invocation_id {
                     self.next_sample += SAMPLE_EVERY;
                 }
+                // Reachable edges come from the processes that have run targets, and each worker
+                // loads only the modules of the targets it invoked, so the pool's union has to be
+                // re-read. It is asked for at a sample boundary and at `finish`, not after every
+                // batch: the walk waits for the slowest process to serialize its whole map, and
+                // every other worker is idle while it does, and `finish` restates each sample
+                // against the final count anyway. Between samples the number is a display value.
+                self.refresh_coverage();
                 let sample = self.progress(completed.invocation_id);
                 self.samples.push(sample.clone());
                 on_progress(&sample);
             }
         }
-        // Reachable edges come from the processes that have run targets, and each worker has
-        // loaded only the modules of the targets it invoked, so the pool's union is re-read after
-        // every batch and only grows. `finish` restates each sample against the final count.
-        self.refresh_coverage();
     }
 
     fn learn(&mut self, completed: &Completed, values: &[ValueTree]) {
@@ -731,6 +760,15 @@ impl Scanner {
         for sample in &mut self.samples {
             sample.coverage_ratio = Self::ratio_of(sample.coverage_edges, total);
         }
+        self.log.push(format!(
+            "{} batches over {} ms: plan {} ms, run {} ms, account {} ms",
+            self.batches,
+            started_at.elapsed().unwrap_or_default().as_millis(),
+            self.plan_ms,
+            self.run_ms,
+            self.account_ms,
+        ));
+        self.log.push(format!("{} invocations answered failed, each retiring the plugin's invoke worker", self.failed));
         let finished_at = SystemTime::now();
         let document = self.document(started_at, finished_at);
         let coverage = self
