@@ -298,117 +298,83 @@ where
         return Minimized { values: current, attempts: search.attempts, bytes_before, bytes_after, reproduces: false };
     };
 
+    // One round is every smaller input that can be built from the current tree without waiting for
+    // another trial's answer: each argument dropped, the empty node at each node that has parts, a
+    // chunk of parts dropped at each such node, and every smaller scalar. The candidates are
+    // independent, so they are handed to the runner `width` at a time and answered on as many
+    // connections as there are. The dependency between rounds is real; the work inside one is not.
+    //
+    // A round that reproduces becomes the new base and the walk starts again, because a path is
+    // never carried across a change that moved what it addressed. A round that does not doubles the
+    // chunk count, so the search converges at one-part granularity, where every surviving part has
+    // been seen to be necessary. Attempts only ever grow, so even a candidate that changes nothing
+    // ends at `max_attempts` instead of looping.
+    let mut chunks = MIN_CHUNKS;
     loop {
-        let mut changed = false;
-
-        // An argument the target never needed can go entirely: `undefined` in its position is what
-        // a caller who passed fewer arguments would produce.
-        while !search.out_of_work() {
-            let plans: Vec<Vec<ValueTree>> = (0..current.len())
-                .map(|index| {
-                    let mut trial = current.clone();
-                    trial[index] = ValueTree::undefined();
-                    trial
-                })
-                .collect();
-            let Some(hit) = search.first_hit(&target, &plans) else { break };
-            current = plans[hit].clone();
-            changed = true;
+        if search.out_of_work() {
+            break;
         }
-
-        // Then the parts of each node. A drop restarts the walk, because the tree the remaining
-        // holes were collected from no longer exists.
-        'holes: loop {
-            for hole in holes(&current) {
-                if search.out_of_work() {
-                    break 'holes;
-                }
-                if let Some(shrunk) = ddmin(&mut search, &target, &current, &hole) {
-                    current = shrunk;
-                    changed = true;
-                    continue 'holes;
+        let found = holes(&current);
+        let widest = found.iter().map(|hole| parts_at(&current, hole)).max().unwrap_or(0);
+        let mut plans: Vec<Vec<ValueTree>> = (0..current.len())
+            .map(|index| {
+                let mut trial = current.clone();
+                trial[index] = ValueTree::undefined();
+                trial
+            })
+            .collect();
+        for hole in &found {
+            let Some(original) = hole.path.get(&current[hole.index]).map(|node| node.node.clone()) else { continue };
+            let total = part_count(&original);
+            if total == 0 {
+                continue;
+            }
+            // The empty node first: the most aggressive cut is also the cheapest to ask for.
+            if let Some(empty) = with_kept(&original, &current, hole, &[]) {
+                plans.push(empty);
+            }
+            for drop in split(&(0..total).collect::<Vec<usize>>(), chunks) {
+                let parts: Vec<usize> = (0..total).filter(|part| !drop.contains(part)).collect();
+                if let Some(trial) = with_kept(&original, &current, hole, &parts) {
+                    plans.push(trial);
                 }
             }
-            break 'holes;
         }
-
-        // Then the scalars that dropping parts cannot reach.
-        while !search.out_of_work() {
-            let mut plans = Vec::new();
-            for (index, tree) in current.iter().enumerate() {
-                for path in tree.paths() {
-                    let Some(node) = path.get(tree).map(|node| &node.node) else { continue };
-                    for candidate in scalar_ladder(node) {
-                        let mut trial = current.clone();
-                        if path.replace(&mut trial[index], ValueTree::new(candidate)) {
-                            plans.push(trial);
-                        }
+        for (index, tree) in current.iter().enumerate() {
+            for path in tree.paths() {
+                let Some(node) = path.get(tree).map(|node| &node.node) else { continue };
+                for candidate in scalar_ladder(node) {
+                    let mut trial = current.clone();
+                    if path.replace(&mut trial[index], ValueTree::new(candidate)) {
+                        plans.push(trial);
                     }
                 }
             }
-            let Some(hit) = search.first_hit(&target, &plans) else { break };
-            current = plans[hit].clone();
-            changed = true;
         }
-
-        if !changed || search.out_of_work() {
-            break;
+        match search.first_hit(&target, &plans) {
+            Some(hit) => {
+                current = plans[hit].clone();
+                chunks = MIN_CHUNKS;
+            }
+            None => {
+                if chunks >= widest {
+                    break;
+                }
+                chunks = (chunks * 2).min(widest);
+            }
         }
     }
 
     Minimized { bytes_after: total_bytes(&current), values: current, attempts: search.attempts, bytes_before, reproduces: true }
 }
 
-/// Delta-debugging over one node: drop a chunk of its parts, and halve the chunk only when no chunk
-/// can go. The node is rebuilt from the snapshot taken on entry, so part indices stay valid across
-/// the rounds.
-fn ddmin<F>(search: &mut Search<F>, target: &FaultMatch, base: &[ValueTree], hole: &Hole) -> Option<Vec<ValueTree>>
-where
-    F: FnMut(&[Vec<ValueTree>]) -> Vec<Outcome>,
-{
-    let original = hole.path.get(&base[hole.index]).map(|node| node.node.clone())?;
-    let total = part_count(&original);
-    if total == 0 {
-        return None;
-    }
+/// The chunk count a round starts at, and what it returns to after a round is accepted. A round is
+/// already wide, because it spans every node of the input, and the runner answers a whole round in
+/// one batch - so widening this only spends more trials on the same wall time. It doubles each time
+/// a round fails, which is what drives the search to one-part granularity.
+const MIN_CHUNKS: usize = 2;
 
-    let mut kept: Vec<usize> = (0..total).collect();
-    let mut current = base.to_vec();
-    let mut progress = false;
-    let mut chunks = 2;
-    loop {
-        let mut plan_parts: Vec<Vec<usize>> = Vec::new();
-        let mut plans: Vec<Vec<ValueTree>> = Vec::new();
-        if kept.len() == total {
-            if let Some(empty) = with_kept(&original, &current, hole, &[]) {
-                plan_parts.push(Vec::new());
-                plans.push(empty);
-            }
-        }
-        for drop in split(&kept, chunks) {
-            let parts: Vec<usize> = kept.iter().copied().filter(|part| !drop.contains(part)).collect();
-            if parts.len() == kept.len() {
-                continue;
-            }
-            if let Some(trial) = with_kept(&original, &current, hole, &parts) {
-                plan_parts.push(parts);
-                plans.push(trial);
-            }
-        }
-        let Some(hit) = search.first_hit(target, &plans) else {
-            if chunks >= kept.len() {
-                break;
-            }
-            chunks = (chunks * 2).min(kept.len());
-            continue;
-        };
-        current = plans[hit].clone();
-        kept = plan_parts[hit].clone();
-        progress = true;
-        chunks = 2;
-        if kept.is_empty() || search.out_of_work() {
-            break;
-        }
-    }
-    progress.then_some(current)
+/// How many parts the node at `hole` offers in `base`.
+fn parts_at(base: &[ValueTree], hole: &Hole) -> usize {
+    hole.path.get(&base[hole.index]).map(|node| part_count(&node.node)).unwrap_or(0)
 }

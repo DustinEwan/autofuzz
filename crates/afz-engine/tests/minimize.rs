@@ -240,3 +240,35 @@ fn broken() -> Outcome {
 fn accepted() -> Outcome {
     Outcome::Ok(afz_protocol::OkOutcome { duration_ms: 1.0, memory_bytes: None, coverage: None, value: None })
 }
+
+#[test]
+fn one_round_offers_candidates_for_every_node_of_the_input() {
+    // Two independent containers, neither of which the fault depends on. A search that shrank one
+    // node at a time could only offer candidates for one of them per round, which leaves the other
+    // shrink connections with nothing to answer. One round now covers both, so the width the caller
+    // asked for is actually reachable.
+    let list = |prefix: &str| {
+        ValueTree::new(afz_protocol::ValueNode::Array {
+            items: (0..8).map(|at| ValueTree::string(format!("{prefix}{at}"))).collect(),
+        })
+    };
+    let values = vec![list("a"), list("b")];
+    let mut widest = 0usize;
+    let mut spans_both = false;
+    let result = minimize(&values, 500, Duration::MAX, 6, &mut |batch| {
+        widest = widest.max(batch.len());
+        for (at, left) in batch.iter().enumerate() {
+            for right in &batch[at + 1..] {
+                // Two candidates that differ in both argument slots changed different arguments.
+                let differing = (0..left.len()).filter(|slot| left[*slot].wire_bytes() != right[*slot].wire_bytes()).count();
+                if differing == 2 {
+                    spans_both = true;
+                }
+            }
+        }
+        batch.iter().map(|_| broken()).collect()
+    });
+    assert!(result.reproduces);
+    assert!(widest >= 6, "the widest round offered {widest} candidates to a width of 6");
+    assert!(spans_both, "no round offered candidates for both arguments at once");
+}

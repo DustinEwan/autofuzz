@@ -64,10 +64,6 @@ fn shrink_budget(elapsed: Duration, wall_clock: Duration) -> Duration {
     (wall_clock + SHRINK_GRACE).saturating_sub(elapsed).min(MINIMIZE_BUDGET)
 }
 
-/// Shrink trials run at once. The guided workers are idle while a finding is minimized, so
-/// minimization gets its own plugin connections instead of borrowing theirs; the cap exists because
-/// every connection is a plugin process with its own V8 heap.
-const MINIMIZE_PARALLEL: usize = 6;
 /// How long one minimization call may take over the wire. The plugin enforces the invocation
 /// deadline; this is the transport bound on top of it.
 const MINIMIZE_SLACK: Duration = Duration::from_secs(10);
@@ -295,6 +291,10 @@ struct Minimizer {
     /// Prepared target ids per connection, index-matched with `pool`.
     prepared: Vec<BTreeSet<String>>,
     deadline: Duration,
+    /// How many connections the pool may hold. The guided workers are parked while a finding is
+    /// shrunk, so minimization is given the scan's worker count rather than a smaller fixed number.
+    /// Every connection is a plugin process with its own V8 heap, which is the only reason for a cap.
+    cap: usize,
 }
 
 impl Minimizer {
@@ -323,11 +323,11 @@ impl Minimizer {
         outcomes
     }
 
-    /// Bring the pool up to `want` connections, capped at `MINIMIZE_PARALLEL`, and stop at the
+    /// Bring the pool up to `want` connections, capped at the scan's worker count, and stop at the
     /// first spawn failure: a machine that cannot start another plugin process shrinks on whatever
     /// connections it already has rather than failing the scan.
     fn grow(&mut self, want: usize) {
-        while self.pool.len() < want.min(MINIMIZE_PARALLEL) {
+        while self.pool.len() < want.min(self.cap) {
             match PluginClient::spawn(&self.launch) {
                 Ok(client) => {
                     self.pool.push(client);
@@ -407,7 +407,7 @@ impl Scanner {
             corpus: Corpus::new(options.max_corpus),
             seen,
             rng: Rng::seeded_u64(options.seed),
-            minimizer: Minimizer { launch, pool: vec![probe], prepared: vec![BTreeSet::new()], deadline },
+            minimizer: Minimizer { launch, pool: vec![probe], prepared: vec![BTreeSet::new()], deadline, cap: options.workers.max(1) },
             supervisor,
             attempted: BTreeSet::new(),
             planned: 0,
@@ -767,14 +767,14 @@ impl Scanner {
     }
 
     /// Shrink a finding's input against the same fault. Trials run on the minimizer's own plugin
-    /// connections, so shrinking never displaces the guided workers, and a round of candidates runs
-    /// on all of them at once because the workers that found the bug have nothing to do meanwhile.
+    /// connections, so shrinking never displaces the guided workers, and one round's candidates are
+    /// answered on all of them at once because the workers that found the bug have nothing to do
+    /// meanwhile.
     ///
-    /// Delta-debugging rounds are sequential - each is built from the tree the previous round kept -
-    /// so a round of a one-argument target offers only a few candidates and the other connections
-    /// wait. That is why the work is bounded by the scan's clock: without the bound, a run whose
-    /// invocations finished on time still spent half an hour shrinking, on one plugin connection,
-    /// with every guided worker idle.
+    /// The work is bounded by the scan's clock rather than by its own allowance alone. A round needs
+    /// the previous round's answer, so a finding whose rounds stay narrow - one long string, few
+    /// parts to drop at a time - cannot keep every connection busy, and an unbounded sum over
+    /// findings held one run in this phase for half an hour after its invocations had finished.
     fn shrink(&mut self, target_id: &str, values: &[ValueTree]) -> Minimized {
         let left = shrink_budget(self.started.elapsed(), self.options.wall_clock);
         if left.is_zero() {
@@ -786,7 +786,8 @@ impl Scanner {
             return Minimized { values: values.to_vec(), attempts: 0, bytes_before: bytes, bytes_after: bytes, reproduces: false };
         }
         let started_at = Instant::now();
-        let result = minimize::minimize(values, MINIMIZE_ATTEMPTS, left, MINIMIZE_PARALLEL, &mut |candidates| self.minimizer.run_batch(target_id, candidates));
+        let width = self.minimizer.cap;
+        let result = minimize::minimize(values, MINIMIZE_ATTEMPTS, left, width, &mut |candidates| self.minimizer.run_batch(target_id, candidates));
         self.log.push(format!(
             "shrunk {target_id}: {} attempts, {} -> {} bytes in {:.1} s",
             result.attempts,
