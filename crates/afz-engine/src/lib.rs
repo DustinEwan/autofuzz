@@ -9,6 +9,7 @@ pub mod config;
 pub mod corpus;
 pub mod finding;
 pub mod generate;
+pub mod git;
 pub mod minimize;
 pub mod mutate;
 pub mod oracles;

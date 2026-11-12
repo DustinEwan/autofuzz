@@ -98,13 +98,45 @@ identities already recorded.
 }
 ```
 
+## Scope a scan to a change
+
+`--git <selector>` limits a scan to a git change set: it scans the state that selector names and
+fuzzes only the targets whose source file that selector changed.
+
+|Selector|Scanned state|Change set computed against|
+|---|---|---|
+|`staged`|the index|`HEAD`|
+|`unstaged`|the working tree|the index, plus the untracked files the ignore rules allow|
+|`stash`, `stash@{2}`|that stash entry|the commit the stash was made on|
+|`HEAD`, `v1.2.0`, `main~3`, a sha|that commit|its parent, or the empty tree for a root commit|
+|`v1..HEAD`, `main~3..main`|the state at the end of the span|the start of the span|
+|`v1...feature`|the state at the end of the span|the merge base of the two sides|
+
+```sh
+afz scan . --git HEAD --budget invocations=50000   # what the last commit touched
+afz scan . --git staged                            # what is about to be committed
+afz scan . --git unstaged                          # work in progress, new files included
+afz scan . --git v1..HEAD                          # everything since the last release
+```
+
+A selector that names anything other than the working tree is checked out into a `git worktree` under
+the output directory, so the scan reads the code as that state has it, and the tree is removed when
+the scan ends. `scan.json` records the scope in its `git` object and `report.md` prints it in its
+first lines: 12 clean targets inside a change set is not a clean package, and `inventory` counts the
+scope.
+
+Two boundaries. A wasm scan scopes by the `.wasm` file, not by the Rust sources that produced it, so
+a commit that changed only `.rs` files reports that the scope touches no fuzzable target. A change
+that breaks an unchanged *importer* of a changed file is outside the scope; omit `--git` to ask the
+whole-tree question.
+
 ## Output
 
 A scan writes `<output.dir>/<scanId>/`:
 
 |Path|Contents|
 |---|---|
-|`scan.json`|The scan result: inventory, execution counts, coverage, findings, artifact paths. Validates against `docs/schema/scan-result.json`.|
+|`scan.json`|The scan result: inventory, execution counts, coverage, findings, artifact paths, and the `git` change set when the scan was scoped. Validates against `docs/schema/scan-result.json`.|
 |`report.md`|Markdown rendered from `scan.json` alone: one section per finding with severity, the minimized input, and the reproducer path.|
 |`inputs/`|The original and minimized input for each finding, as `ValueTree` JSON.|
 |`repros/`|A standalone `.ts` reproducer per finding.|

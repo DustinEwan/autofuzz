@@ -267,6 +267,8 @@ One JSON document per scan, written once, never edited in place. Renderers read 
     "harness": { "name": "autofuzz-harness-js", "version": "0.1.0",
                  "targetClass": "design-time", "capabilities": ["coverage", "stateful"] }
   },
+  "git": { "selector": "HEAD", "base": "1f4a9c0d2b7e4a6f", "tree": "8f2c1ab4d6e8f0a2",
+           "changedFiles": 1, "worktree": "/src/example/.autofuzz/git-scope/41-2" },
   "inventory": {
     "discovered": 412, "fuzzable": 287,
     "skipped": [{ "targetId": "afz:t:9c1f", "name": "UserRepo.findById",
@@ -297,6 +299,8 @@ One JSON document per scan, written once, never edited in place. Renderers read 
 ```
 
 `finding.identity` is a hash over target id, fault class, and the top fault frame, not over the input. That is what makes the same bug the same finding across scans, which a triage queue and a PR bot both need. Inputs and stacks live in content-addressed files beside the document; the document stays small enough to load whole.
+
+`git` is present only for a scan run with `--git <selector>`, which scans the state that selector names - or, for a span such as `v1..v2`, the state at its end - as a `git worktree`, or the working tree for `unstaged`, and `inventory` then counts that change set rather than the package.
 
 ## Determinism
 

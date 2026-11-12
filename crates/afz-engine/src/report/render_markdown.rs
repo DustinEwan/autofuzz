@@ -28,6 +28,14 @@ pub fn render(document: &ScanDocument) -> String {
         .map(|r| format!(" at {r}"))
         .unwrap_or_default();
     out.push_str(&format!("`{}`{revision}\n", document.target.root));
+    // A scoped scan has to say so in its first lines: 12 clean targets inside a change set is not
+    // the same claim as a clean package, and the report is what a triager reads first.
+    if let Some(git) = &document.git {
+        out.push_str(&format!(
+            "scoped to `{}` against {} ({} changed file(s))\n",
+            git.selector, git.base, git.changed_files
+        ));
+    }
     out.push_str(&format!(
         "harness {} {} ({}; {})\n\n",
         document.target.harness.name,

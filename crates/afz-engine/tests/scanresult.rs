@@ -71,6 +71,7 @@ fn document() -> ScanDocument {
                 capabilities: vec![Capability::Coverage, Capability::Stateful, Capability::Minimize],
             },
         },
+        git: None,
         inventory: Inventory {
             discovered: 412,
             fuzzable: 287,
@@ -243,6 +244,31 @@ fn written_document_validates_against_the_committed_schema() {
     std::fs::remove_dir_all(&_root).ok();
 }
 
+/// The `git` object a `--git HEAD` scan of one changed file writes.
+fn scoped() -> GitScope {
+    GitScope {
+        selector: "HEAD".to_string(),
+        base: "1f4a9c0d2b7e4a6f8c01d3e5a7b9c0d1e2f3a4b5".to_string(),
+        tree: "8f2c1ab4d6e8f0a2b3c5d7e9f1a2b3c4d5e6f7a8".to_string(),
+        changed_files: 1,
+        worktree: Some("/home/jdoe/billing-service/.autofuzz/git-scope/41-2".to_string()),
+    }
+}
+
+#[test]
+fn a_scoped_document_validates_and_keeps_its_git_object() {
+    let mut document = document();
+    document.git = Some(scoped());
+    let root = workdir("scoped");
+    std::fs::create_dir_all(&root).expect("create output dir");
+    let dir = scanresult::write(&root, &document, &files()).expect("write a scoped scan");
+    let errors = validate(&dir.join(SCAN_FILE));
+    assert!(errors.is_empty(), "a scoped scan.json does not validate: {errors:#?}");
+    let read_back = scanresult::read(&dir.join(SCAN_FILE)).expect("read back a scoped scan");
+    assert_eq!(read_back.git, document.git, "the change set a scan covered has to survive the write");
+    std::fs::remove_dir_all(&root).ok();
+}
+
 #[test]
 fn the_validator_rejects_a_wrong_schema_version() {
     // The check above only means something if a wrong document actually fails it.
@@ -339,6 +365,7 @@ fn markdown_prints_one_section_per_finding() {
     assert!(text.contains("Seen before"), "the failed finding was reported by an earlier scan:\n{text}");
     assert!(text.contains("`Db` in `src/db.ts`"), "the skipped target's blocker:\n{text}");
     assert!(text.contains("unlocks") && text.contains("14"), "one missing type is one task:\n{text}");
+    assert!(!text.contains("scoped to `"), "a whole-tree scan claims nothing about a scope:\n{text}");
 
     // The deadline finding has neither, and the report says so rather than printing a blank.
     let deadline_section = text.split("### afz:f:11b0aa99").nth(1).expect("second section");
@@ -346,6 +373,17 @@ fn markdown_prints_one_section_per_finding() {
     assert!(deadline_section.contains("Reproducer: none emitted"), "an absent reproducer is stated:\n{deadline_section}");
 
     std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn markdown_names_the_change_set_a_scan_was_scoped_to() {
+    let mut document = document();
+    document.git = Some(scoped());
+    let text = render_markdown::render(&document);
+    assert!(
+        text.contains("scoped to `HEAD` against 1f4a9c0d2b7e4a6f8c01d3e5a7b9c0d1e2f3a4b5 (1 changed file(s))"),
+        "the report has to name the change set it covers:\n{text}"
+    );
 }
 
 #[test]

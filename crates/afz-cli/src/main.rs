@@ -53,6 +53,9 @@ enum Command {
         /// `guided` steers with coverage; `random` generates without the corpus.
         #[arg(long)]
         strategy: Option<String>,
+        /// Scope the scan to a git change set: `staged`, `unstaged`, `stash`, `stash@{0}`, any revision, or a span such as `v1..HEAD`
+        #[arg(long, value_name = "SELECTOR")]
+        git: Option<String>,
         /// Plugin processes to run at once. Overrides `budget.workers`.
         #[arg(long)]
         workers: Option<u32>,
@@ -66,8 +69,8 @@ fn main() {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::ProbePlugin { command, path, json } => probe::run(command, path, json),
-        Command::Scan { path, config, budget, seed, resume, strategy, workers, quiet } => {
-            scan::run(path, config, &budget, seed, resume, strategy, workers, quiet)
+        Command::Scan { path, config, budget, seed, resume, strategy, git, workers, quiet } => {
+            scan::run(path, config, &budget, seed, resume, strategy, git, workers, quiet)
         }
     };
     match result {

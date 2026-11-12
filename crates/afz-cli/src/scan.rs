@@ -22,6 +22,7 @@ pub fn run(
     seed: Option<String>,
     resume: Option<PathBuf>,
     strategy: Option<String>,
+    git: Option<String>,
     workers: Option<u32>,
     quiet: bool,
 ) -> Result<(), String> {
@@ -53,6 +54,12 @@ pub fn run(
             return Err(format!("--resume {} is not a directory", dir.display()));
         }
         options.resume = Some(dir.clone());
+    }
+
+    // Parsed before the banner and before preflight, so a bad selector is reported as the first
+    // line and a scope outside a repository is refused by the same check the engine runs.
+    if let Some(text) = git.as_deref() {
+        options.scope = Some(afz_engine::git::parse(text).map_err(|e| e.0)?);
     }
 
     // Before the banner: a scan the engine will refuse should report the reason as its first line,

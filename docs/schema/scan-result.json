@@ -22,6 +22,17 @@
     "finishedAt": {
       "type": "string"
     },
+    "git": {
+      "description": "The git change set the scan was limited to. Absent for a whole-tree scan.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GitScope"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "inventory": {
       "$ref": "#/$defs/Inventory"
     },
@@ -310,6 +321,42 @@
         "input",
         "firstSeenInvocation",
         "reproduced"
+      ]
+    },
+    "GitScope": {
+      "description": "The change set a scoped scan was limited to, and the two states it was computed between.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "description": "The state the change set was computed against: a sha, or `index`.",
+          "type": "string"
+        },
+        "changedFiles": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "selector": {
+          "description": "What was named after `--git`, verbatim.",
+          "type": "string"
+        },
+        "tree": {
+          "description": "The state that was scanned: a sha, or `worktree`.",
+          "type": "string"
+        },
+        "worktree": {
+          "description": "The materialized tree the scan ran in. Absent for `unstaged`, which scans the working tree.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "selector",
+        "base",
+        "tree",
+        "changedFiles"
       ]
     },
     "HarnessInfo": {

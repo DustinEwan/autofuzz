@@ -43,6 +43,9 @@ pub struct ScanDocument {
     pub finished_at: String,
     pub engine: EngineInfo,
     pub target: TargetInfo,
+    /// The git change set the scan was limited to. Absent for a whole-tree scan.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<GitScope>,
     pub inventory: Inventory,
     pub execution: Execution,
     pub findings: Vec<FindingRecord>,
@@ -75,6 +78,22 @@ pub struct TargetInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub revision: Option<String>,
     pub harness: HarnessInfo,
+}
+
+/// The change set a scoped scan was limited to, and the two states it was computed between.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GitScope {
+    /// What was named after `--git`, verbatim.
+    pub selector: String,
+    /// The state the change set was computed against: a sha, or `index`.
+    pub base: String,
+    /// The state that was scanned: a sha, or `worktree`.
+    pub tree: String,
+    pub changed_files: u64,
+    /// The materialized tree the scan ran in. Absent for `unstaged`, which scans the working tree.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]

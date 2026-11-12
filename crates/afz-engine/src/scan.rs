@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -97,6 +97,8 @@ pub struct Options {
     pub max_corpus: u64,
     /// A previous scan directory: its corpus is loaded and its identities are suppressed.
     pub resume: Option<PathBuf>,
+    /// The git selector the scan is limited to. `None` scans the whole tree.
+    pub scope: Option<crate::git::Selector>,
     pub out_dir: PathBuf,
     pub renderers: Vec<String>,
     /// Set from a signal handler to end the run early. The scan result is still written.
@@ -117,6 +119,7 @@ impl Options {
             config,
             seed: 0,
             resume: None,
+            scope: None,
             out_dir: PathBuf::from(".autofuzz"),
             renderers: vec!["json".to_string(), "markdown".to_string()],
             stop: Arc::new(AtomicBool::new(false)),
@@ -159,6 +162,9 @@ pub enum ScanError {
     /// Discovery reported nothing the engine can call. A scan of zero targets is a configuration
     /// mistake more often than it is a fact about the code, so it is reported rather than run.
     NothingFuzzable { skipped: usize },
+    /// A `--git` scope left no target. Its own variant, because the advice that belongs with
+    /// `NothingFuzzable` - check your `include` - is the wrong advice here.
+    EmptyScope { selector: String, changed: usize, discovered: usize },
 }
 
 impl fmt::Display for ScanError {
@@ -171,6 +177,11 @@ impl fmt::Display for ScanError {
                 f,
                 "discovery reported no fuzzable target ({skipped} symbol(s) skipped); \
                  the scan project's `include` may not match the code"
+            ),
+            ScanError::EmptyScope { selector, changed, discovered } => write!(
+                f,
+                "git scope \"{selector}\" touches no fuzzable target: {changed} changed file(s), \
+                 {discovered} target(s) discovered"
             ),
         }
     }
@@ -205,6 +216,18 @@ pub fn preflight(options: &Options) -> Result<(), ScanError> {
     if options.config.project.codebase.is_none() && options.config.project.runtime.is_some() {
         return Err(ConfigError::msg("runtime targets are not implemented").into());
     }
+    // A scope is a statement about a repository, so a directory that is not one is refused here
+    // rather than after the plugin has been spawned and a tree has been checked out.
+    if let Some(selector) = &options.scope {
+        if !crate::git::is_repo(&options.root) {
+            return Err(ConfigError::msg(format!(
+                "--git {} needs a git repository: {} is not one",
+                crate::git::render(selector),
+                options.root.display()
+            ))
+            .into());
+        }
+    }
     Ok(())
 }
 
@@ -213,6 +236,19 @@ pub fn preflight(options: &Options) -> Result<(), ScanError> {
 /// the run is still going.
 pub fn run(options: &Options, on_progress: &mut impl FnMut(&Progress)) -> Result<ScanReport, ScanError> {
     preflight(options)?;
+    // The scope decides which tree the scan runs against, so it is resolved before anything is
+    // launched. `resolved` lives until the run ends: dropping it removes the materialized tree.
+    let resolved = match &options.scope {
+        Some(selector) => {
+            Some(crate::git::resolve(&options.root, &options.out_dir, selector).map_err(|e| ConfigError::msg(e.0))?)
+        }
+        None => None,
+    };
+    let scoped = match &resolved {
+        Some(resolved) if resolved.worktree.is_some() => Some(scoped_options(options, resolved)?),
+        _ => None,
+    };
+    let options = scoped.as_ref().unwrap_or(options);
     let launch = options.config.launch_for(Block::Codebase)?;
     let codebase = options
         .config
@@ -231,11 +267,107 @@ pub fn run(options: &Options, on_progress: &mut impl FnMut(&Progress)) -> Result
     let setup_at = Instant::now();
     let probe = PluginClient::spawn(&launch)?;
     let handshake = probe.handshake()?;
-    let discovery = probe.discover(&request, DISCOVERY_TIMEOUT)?;
+    let mut discovery = probe.discover(&request, DISCOVERY_TIMEOUT)?;
+    let mut notes = Vec::new();
+    if let Some(resolved) = &resolved {
+        let discovered = discovery.targets.len();
+        discovery.targets.retain(|target| in_scope(&target.origin, &resolved.changed, &options.root));
+        discovery.skipped.retain(|skipped| skipped_in_scope(skipped, &resolved.changed, &options.root));
+        let kept = discovery.targets.len();
+        notes.push(format!(
+            "git scope \"{}\": {} changed file(s), {kept} of {discovered} target(s) in scope",
+            resolved.selector,
+            resolved.changed.len()
+        ));
+        if kept == 0 {
+            return Err(ScanError::EmptyScope {
+                selector: resolved.selector.clone(),
+                changed: resolved.changed.len(),
+                discovered,
+            });
+        }
+        // Coverage ids are hashed from the file url, so a corpus carried into a materialized tree
+        // reports every edge as new. The run is valid; its ratio is not comparable to the earlier
+        // one, and a reader of the log needs to be told before they compare the two.
+        if options.resume.is_some() && resolved.worktree.is_some() {
+            notes.push("git scope + --resume: the resumed corpus's edge ids were measured in a different tree".to_string());
+        }
+    }
+    let git = resolved.as_ref().map(|resolved| GitScope {
+        selector: resolved.selector.clone(),
+        base: resolved.base.clone(),
+        tree: resolved.tree.clone(),
+        changed_files: resolved.changed.len() as u64,
+        worktree: resolved.worktree.as_ref().map(|worktree| worktree.path.display().to_string()),
+    });
     let mut scanner = Scanner::open(options, launch, handshake, discovery, request, probe)?;
+    scanner.git_scope = git;
+    scanner.log.append(&mut notes);
     scanner.setup_ms = setup_at.elapsed().as_millis();
     scanner.loop_until_budget(on_progress)?;
     scanner.finish(started_at)
+}
+
+/// The options for a scan whose tree was materialized.
+///
+/// The invoked scan project is copied into that tree and loaded from there, which is what makes
+/// `launch.cwd`, `AFZ_ROOT`, `AFZ_CONFIG`, `config_hash`, and the plugin's tsconfig-beside-config
+/// lookup all resolve inside the tree being scanned. Without the copy, a scan project that is
+/// uncommitted would not exist in the tree at all, and `AFZ_CONFIG` would point at the user's file
+/// while `AFZ_ROOT` pointed at the scoped one. The output directory stays the invoked project's,
+/// so results never land in the throwaway tree.
+fn scoped_options(options: &Options, resolved: &crate::git::Resolved) -> Result<Options, ScanError> {
+    let worktree = resolved.worktree.as_ref().expect("only a materialized tree reaches this");
+    let name = options.config.path.file_name().ok_or_else(|| ConfigError::msg("the scan project path names no file"))?;
+    let destination = match options.config.path.strip_prefix(&options.root) {
+        Ok(relative) => worktree.path.join(relative),
+        Err(_) => worktree.path.join(name),
+    };
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(&options.config.path, &destination)?;
+    let mut scoped = options.clone();
+    scoped.root = resolved.root.clone();
+    scoped.config = crate::config::load(&destination)?;
+    Ok(scoped)
+}
+
+/// True when the target's source file is one the scope changed. A target with no file origin
+/// cannot be placed in a change set, so it is out of scope.
+fn in_scope(origin: &afz_protocol::Origin, changed: &BTreeSet<String>, root: &Path) -> bool {
+    origin
+        .file
+        .as_deref()
+        .or(origin.module.as_deref())
+        .is_some_and(|file| touches(file, changed, root))
+}
+
+/// A skipped entry carries no origin, only the module its blocker sits in. An entry whose blocker
+/// names no module is a package-level fact that no change set can place, so it is kept: dropping it
+/// would understate `inventory.discovered`.
+fn skipped_in_scope(skipped: &afz_protocol::SkippedTarget, changed: &BTreeSet<String>, root: &Path) -> bool {
+    match skipped.blocked_by.as_ref().and_then(|blocker| blocker.module.as_deref()) {
+        Some(module) => touches(module, changed, root),
+        None => true,
+    }
+}
+
+/// Whether `path` names a file the scope changed.
+///
+/// Both sides are compared as absolute posix strings: the caller absolutizes `root`, the plugin
+/// builds its paths with `path.resolve(root, file)`, and the change set is root-relative, so the
+/// two share one prefix. Canonicalizing is deliberately not done: it resolves symlinks and fails on
+/// a path the change set deleted.
+fn touches(path: &str, changed: &BTreeSet<String>, root: &Path) -> bool {
+    let absolute = absolute_posix(root, path);
+    changed.iter().any(|file| absolute_posix(root, file) == absolute)
+}
+
+fn absolute_posix(root: &Path, path: &str) -> String {
+    let path = Path::new(path);
+    let joined = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    joined.display().to_string().replace('\\', "/")
 }
 
 /// The loop's state, so the helpers below take arguments instead of reaching into a caller.
@@ -243,6 +375,9 @@ struct Scanner {
     options: Options,
     handshake: Handshake,
     discovery: afz_protocol::Discovery,
+    /// The `git` object for the scan result: the change set this scan was limited to. `None` for
+    /// a whole-tree scan, which is the difference between 12 clean targets and a clean package.
+    git_scope: Option<GitScope>,
     targets: Vec<TargetDescriptor>,
     /// Declared argument shape per target id, so a donor can be chosen by signature rather than
     /// by target id. Computed once: every mutation draws a donor, and serializing a `TypeNode`
@@ -431,6 +566,7 @@ impl Scanner {
             options: options.clone(),
             handshake,
             discovery,
+            git_scope: None,
             signatures: signature_index(&targets),
             targets,
             oracles,
@@ -1006,6 +1142,7 @@ impl Scanner {
                     capabilities: self.handshake.capabilities.clone(),
                 },
             },
+            git: self.git_scope.clone(),
             inventory: Inventory {
                 discovered: (self.targets.len() + self.discovery.skipped.len()) as u64,
                 fuzzable: self.targets.len() as u64,
