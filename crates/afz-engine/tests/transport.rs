@@ -149,7 +149,7 @@ fn rpc_error_is_reported_as_a_failure_with_the_plugin_message() {
 }
 
 #[test]
-fn stderr_reaches_the_engine_log() {
+fn plugin_stderr_is_captured_from_the_child() {
     let client = fake(Some(r#"[{"at":1,"stderr":"target said hello"}]"#));
     client.invoke(&invoke_req(1, "afz:t:0001"), Duration::from_secs(5)).expect("invoke");
     let deadline = std::time::Instant::now() + Duration::from_secs(5);

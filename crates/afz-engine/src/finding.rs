@@ -84,6 +84,8 @@ impl Seen {
         Ok(Seen { path: path.to_path_buf(), identities: file.identities.into_iter().collect() })
     }
 
+    /// Whether the history holds this identity now: written by an earlier scan, or recorded by this one
+    /// a moment ago. `record` is what distinguishes the two.
     pub fn contains(&self, identity: &str) -> bool {
         self.identities.contains(identity)
     }

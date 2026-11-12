@@ -191,6 +191,32 @@ impl Supervisor {
         (!entries.is_empty()).then(|| CoverageMap { entries: entries.into_values().collect() })
     }
 
+    /// What the plugin processes wrote to stderr, deduplicated across the pool. Twelve workers repeat
+    /// the same `prepare` refusal twelve times, and a crash text is worth one line.
+    pub fn take_stderr(&mut self) -> Vec<String> {
+        const CAP: usize = 200;
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut out: Vec<String> = Vec::new();
+        let mut suppressed = 0_usize;
+        for worker in &mut self.workers {
+            for line in worker.take_stderr() {
+                if line.trim().is_empty() || seen.contains(&line) {
+                    continue;
+                }
+                if seen.len() >= CAP {
+                    suppressed += 1;
+                    continue;
+                }
+                seen.insert(line.clone());
+                out.push(line);
+            }
+        }
+        if suppressed > 0 {
+            out.push(format!("... {suppressed} more distinct plugin stderr lines suppressed"));
+        }
+        out
+    }
+
     pub fn watchdog(&self) -> &Watchdog {
         &self.watchdog
     }
@@ -323,6 +349,9 @@ pub struct Worker {
     prepared: BTreeSet<String>,
     unbuildable: BTreeSet<String>,
     restarts: u64,
+    /// Stderr buffers of the processes this worker has replaced. A plugin's last lines are lost with
+    /// its client unless the worker holds on to them.
+    stderr_history: Vec<Arc<Mutex<Vec<String>>>>,
 }
 
 impl Worker {
@@ -335,6 +364,7 @@ impl Worker {
             prepared: BTreeSet::new(),
             unbuildable: BTreeSet::new(),
             restarts: 0,
+            stderr_history: Vec::new(),
         }
     }
 
@@ -365,10 +395,25 @@ impl Worker {
         client.coverage_map(timeout).ok().filter(|map| !map.entries.is_empty())
     }
 
+    /// Lines this plugin process wrote to stderr, taken so the scan reports each one once. A plugin
+    /// that exits on its own leaves the reason here and nowhere else: the engine records the exit
+    /// code, which says nothing about why.
+    pub fn take_stderr(&mut self) -> Vec<String> {
+        let mut buffers: Vec<Arc<_>> = self.stderr_history.iter().map(Arc::clone).collect();
+        if let Some(client) = self.client.as_ref() {
+            buffers.push(Arc::clone(&client.stderr_lines));
+        }
+        self.stderr_history.clear();
+        buffers.into_iter().flat_map(|lines| std::mem::take(&mut *lines.lock().expect("stderr lock"))).collect()
+    }
+
     /// The process is gone or was never startable; bring up a fresh one and forget what it had
     /// prepared, because the new process has prepared nothing.
     fn restart(&mut self) {
         if let Some(client) = self.client.take() {
+            // The process is gone; its stderr buffer is kept. The drain thread is still reading the
+            // closed pipe, and what the plugin wrote before it died is the only reason the engine has.
+            self.stderr_history.push(Arc::clone(&client.stderr_lines));
             client.kill();
         }
         self.client = Worker::start(self.index, &self.launch, &self.discovery);

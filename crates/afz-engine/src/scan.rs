@@ -718,10 +718,11 @@ impl Scanner {
             // The same fault again in this run: one finding, one reproducer.
             return;
         }
-        // `seen_before` is a statement about earlier scans, not about this one: the identity was
-        // already in the history this scan opened. Such a finding is listed so the reader sees
-        // that the fault is still being hit, and is not shrunk again, because an earlier scan
-        // already did that work and wrote it up.
+        // `seen_before` is a statement about earlier scans, not about this one: `by_identity` above has
+        // already dropped a repeat inside this run, so reaching here means the identity is new to this
+        // scan and its absence from the history is the whole question. Such a finding is listed so the
+        // reader sees that the fault is still being hit, and is not shrunk again, because an earlier
+        // scan already did that work and wrote it up.
         let seen_before = !self.seen.record(&identity);
         let id = finding::finding_id(&identity);
         let minimized = (!seen_before).then(|| self.shrink(&finding.target_id, values));
@@ -764,8 +765,16 @@ impl Scanner {
                 m.attempts,
                 m.reproduces
             ),
-            None => format!(
+            None if seen_before => format!(
                 "finding {id} at invocation {}: {} {} (an earlier scan reported this identity, so it is not shrunk again)",
+                finding.invocation_id,
+                finding.oracle.as_str(),
+                fault.message
+            ),
+            // Shrinking gave no result: the wall clock line above says when the budget was spent, and
+            // a shrink that could not reproduce the fault at all reports `reproduced false` instead.
+            None => format!(
+                "finding {id} at invocation {}: {} {} (not shrunk)",
                 finding.invocation_id,
                 finding.oracle.as_str(),
                 fault.message
@@ -899,6 +908,25 @@ impl Scanner {
             self.coverage_ms,
         ));
         self.log.push(format!("{} invocations answered failed, each retiring the plugin's invoke worker", self.failed));
+        // A plugin that dies on its own leaves the reason in its stderr, which the engine captures at
+        // spawn. Without this the log said only `plugin exited with code 1`, and 119 plugin deaths in
+        // one scan carried no explanation at all. Shrink connections replaced mid-minimization are not
+        // covered here: their buffer went with the client that held it.
+        let shrink_stderr: Vec<String> = self
+            .minimizer
+            .pool
+            .iter()
+            .flat_map(|client| std::mem::take(&mut *client.stderr_lines.lock().expect("stderr lock")))
+            .collect();
+        let worker_stderr = self.supervisor.take_stderr();
+        let mut reported: BTreeSet<&str> = BTreeSet::new();
+        for line in worker_stderr.iter().chain(shrink_stderr.iter()) {
+            let text = line.trim();
+            if text.is_empty() || !reported.insert(text) {
+                continue;
+            }
+            self.log.push(format!("plugin said: {text}"));
+        }
         let finished_at = SystemTime::now();
         let document = self.document(started_at, finished_at);
         let coverage = self
