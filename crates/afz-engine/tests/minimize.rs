@@ -272,3 +272,23 @@ fn one_round_offers_candidates_for_every_node_of_the_input() {
     assert!(widest >= 6, "the widest round offered {widest} candidates to a width of 6");
     assert!(spans_both, "no round offered candidates for both arguments at once");
 }
+
+#[test]
+fn minimization_never_returns_a_larger_input_than_it_was_given() {
+    // `[null]` is 40 bytes on the wire and `[undefined]` is 45, so dropping the argument is a
+    // candidate that both reproduces and grows the input. A real scan accepted it, then reported no
+    // minimized input because the bytes had not shrunk, while writing the reproducer from the
+    // larger tree.
+    let values = vec![ValueTree::new(afz_protocol::ValueNode::Null)];
+    let run = |args: &[ValueTree]| -> Outcome {
+        match &args[0].node {
+            afz_protocol::ValueNode::Null | afz_protocol::ValueNode::Undefined => broken(),
+            _ => accepted(),
+        }
+    };
+
+    let result = minimize(&values, 50, Duration::MAX, 4, &mut |batch| batch.iter().map(|candidate| run(candidate)).collect());
+    assert!(result.reproduces, "the original input reproduces, so the finding is real");
+    assert_eq!(result.bytes_after, result.bytes_before, "the input grew from {} to {} bytes", result.bytes_before, result.bytes_after);
+    assert!(matches!(result.values[0].node, afz_protocol::ValueNode::Null), "the grown candidate was kept: {:?}", result.values[0]);
+}

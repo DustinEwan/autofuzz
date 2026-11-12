@@ -660,18 +660,21 @@ impl Scanner {
             }
             let input = values.get(&completed.invocation_id).cloned().unwrap_or_default();
             self.learn(completed, &input);
-            if completed.invocation_id >= self.next_sample {
-                while self.next_sample <= completed.invocation_id {
+            // Keyed on invocations that ran, not on the id the planner handed out. A scan stopped by
+            // the wall clock mid-batch has planned ids it never executed, and a sample carrying one
+            // of those numbers reads as more work done than `execution.invocations` reports.
+            if self.ran >= self.next_sample {
+                while self.next_sample <= self.ran {
                     self.next_sample += SAMPLE_EVERY;
                 }
                 // Reachable edges come from the processes that have run targets, and each worker
                 // loads only the modules of the targets it invoked, so the pool's union has to be
-                // re-read. It is asked for at a sample boundary and at `finish`, not after every
-                // batch: the walk waits for the slowest process to serialize its whole map, and
-                // every other worker is idle while it does, and `finish` restates each sample
-                // against the final count anyway. Between samples the number is a display value.
+                // re-read. It is asked for at a sample boundary and at `finish`, not after every batch:
+                // the walk waits for the slowest process to serialize its whole map, and every other
+                // worker is idle while it does, and `finish` restates each sample against the final
+                // count anyway. Between samples the number is a display value.
                 self.refresh_coverage();
-                let sample = self.progress(completed.invocation_id);
+                let sample = self.progress(self.ran);
                 self.samples.push(sample.clone());
                 on_progress(&sample);
             }

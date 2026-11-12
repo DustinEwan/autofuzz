@@ -356,6 +356,12 @@ where
                 }
             }
         }
+        // A candidate may only be smaller. `[null]` is 40 bytes on the wire and `[undefined]`, which
+        // is what dropping that argument produces, is 45: it reproduces the same fault at the same
+        // line and grows the input. Accepting it left a scan reporting no minimized input while
+        // handing the reproducer the larger tree.
+        let floor = total_bytes(&current);
+        plans.retain(|plan| total_bytes(plan) <= floor);
         match search.first_hit(&target, &plans) {
             Some(hit) => {
                 current = plans[hit].clone();
