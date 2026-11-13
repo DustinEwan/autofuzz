@@ -12,11 +12,21 @@ use afz_conformance::{self as conformance, Check};
 use afz_engine::rpc::client::Launch;
 
 fn fakeplugin_path() -> PathBuf {
+    // cargo places a test executable under `<target>/<profile>/deps/` or under
+    // `<target>/<profile>/build/<package>/<hash>/out/` depending on its version: walk every
+    // ancestor for the plugin instead of assuming the depth.
     let exe = std::env::current_exe().expect("test executable");
-    let profile_dir = exe.parent().and_then(|dir| dir.parent()).expect("target profile dir");
-    let candidate = profile_dir.join("afz-fakeplugin");
-    assert!(candidate.is_file(), "build the fake plugin: `cargo build --workspace` (looked in {})", candidate.display());
-    candidate
+    let mut dir = exe.parent().expect("test executable in a directory");
+    loop {
+        let candidate = dir.join("afz-fakeplugin");
+        if candidate.is_file() {
+            return candidate;
+        }
+        let Some(parent) = dir.parent() else {
+            panic!("build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})", exe.display());
+        };
+        dir = parent;
+    }
 }
 
 fn temp_dir(name: &str) -> PathBuf {

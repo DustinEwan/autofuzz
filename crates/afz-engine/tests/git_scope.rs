@@ -13,13 +13,23 @@ use afz_engine::git::{self, Selector};
 use afz_engine::scan::{self, Options};
 
 /// The fake plugin is a binary of the `xtask` package, so `CARGO_BIN_EXE_…` does not cover it from
-/// here. A test binary sits in `<target>/<profile>/deps/`, one level below the plugin.
+/// here.
 fn fakeplugin_path() -> PathBuf {
+    // cargo places a test executable under `<target>/<profile>/deps/` or under
+    // `<target>/<profile>/build/<package>/<hash>/out/` depending on its version: walk every
+    // ancestor for the plugin instead of assuming the depth.
     let exe = std::env::current_exe().expect("test executable");
-    let profile = exe.parent().and_then(|dir| dir.parent()).expect("target profile dir");
-    let candidate = profile.join("afz-fakeplugin");
-    assert!(candidate.is_file(), "build the fake plugin: `cargo build --workspace` (looked in {})", candidate.display());
-    candidate
+    let mut dir = exe.parent().expect("test executable in a directory");
+    loop {
+        let candidate = dir.join("afz-fakeplugin");
+        if candidate.is_file() {
+            return candidate;
+        }
+        let Some(parent) = dir.parent() else {
+            panic!("build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})", exe.display());
+        };
+        dir = parent;
+    }
 }
 
 /// A scratch directory, removed by the caller's last statement, as the other engine tests do.
