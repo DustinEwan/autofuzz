@@ -1,18 +1,54 @@
-# autofuzz — architecture design
+# autofuzz — architecture
 
-Status: v1 design, accepted 2026-11-11.
+This document describes the system that is built. It is for someone about to change the engine, or to
+decide whether an idea belongs in the engine at all. Each section states the rule, then the reason.
 
-## Context
+Two other documents carry what this one does not. [`docs/decisions/`](decisions/) holds the dated
+records: what was considered, what was rejected, and what was reverted.
+[`docs/harness-authoring.md`](harness-authoring.md) holds the contract that a plugin must satisfy, down to
+the wire. The last section here, [Reserved surface](#reserved-surface-what-is-not-built), lists what
+the project has designed but not built, so that nothing else in this document has to be read with an
+asterisk.
 
-autofuzz is a new product that fuzz-tests software automatically across languages. The engine is written by us, not assembled from existing fuzzers. Support starts with TypeScript/JavaScript and generalizes to other languages and runtimes. The engine discovers interfaces, generates inputs, executes targets, uses feedback to steer generation, and emits a machine-readable scan result that other tools turn into deliverables.
+## The problem
 
-## The problem in one paragraph
+Nothing about fuzzing is language-neutral except the loop. Discovery requires the language's type system.
+Execution requires the language's runtime. Coverage requires the language's compiler or virtual machine.
 
-Nothing about fuzzing is language-neutral except the loop. Discovery needs the language's type system. Execution needs the language's runtime. Coverage needs the language's compiler or VM. So the design question is where to cut, and the answer is: the engine owns the loop and the data; a harness plugin owns everything that touches a specific language or runtime.
+So the design question is where to cut. The answer is that the engine owns the loop and the data, and a
+harness plugin owns everything that touches one language or runtime.
+
+## The cut
+
+The engine discovers through a plugin, generates inputs, schedules workers, enforces deadlines, applies
+oracles, minimizes, and writes the scan result. The plugin enumerates callables, materializes arguments,
+runs one call, and reduces that call to one outcome.
+
+One consequence reaches everywhere: coverage feedback is a capability that a plugin declares, not a
+requirement that the engine imposes. A harness with no coverage still fuzzes, because the scheduler falls
+back to novelty over the outcome that the call returned.
+
+## What is built, and what is not
+
+| | Status |
+|---|---|
+| Design-time targets: functions, methods, exported symbols | Built, three harnesses |
+| Harness plugins `js-ts`, `python`, `wasm` | Built. `js-ts` and `python` are gated in CI; the `wasm` gate is ignored, see [`harnesses.md`](harnesses.md) |
+| Coverage-guided loop, corpus, scheduler | Built |
+| Oracles `failed`, `rejected`, `deadline`, `memoryGrowth`, `processExit` | Built |
+| Scan result document, `json` and `markdown` renderers | Built |
+| Git change-set scoping (`--git`) | Built |
+| MCP server on stdio | Built |
+| Runtime targets (HTTP routes, RPC methods, CLI commands) | Not built. The `runtime` block validates and a scan of it stops |
+| Fixture format for `fixture-required` parameters | Not built. Those targets are reported as skipped |
+| `differential` oracle, property-assertion oracles | Not built. Naming one is a configuration error |
+| SARIF renderer | Not built |
 
 ## Two target classes
 
-Design-time and runtime targets differ in discovery, invocation, feedback, and risk. They share the loop, the finding model, and the scan result.
+Design-time and runtime targets differ in discovery, invocation, feedback, and risk. They share the loop,
+the finding model, and the scan result. Only the first column exists today; the second is the design that
+the reserved `runtime` block will follow.
 
 | | Design-time target | Runtime target |
 |---|---|---|
@@ -22,86 +58,37 @@ Design-time and runtime targets differ in discovery, invocation, feedback, and r
 | Input shape | Typed argument list plus constructed receiver state | Method, path, headers, query, body, auth context |
 | Coverage feedback | Available whenever the runtime exposes it | Available only if the target process is instrumented; usually absent |
 | Failure signal | Thrown exception, rejection, hang, memory growth, process exit | Status code class, latency, crash of the serving process, contract violation |
-| Side effects | None by default; the process dies with the run | Real. Mutating operations can destroy user data |
-| Concurrency | We control worker count | We must respect rate limits and target capacity |
-
-Consequence for the engine: coverage feedback is a **capability a plugin declares**, not a requirement the engine imposes. A runtime target with no feedback still fuzzes; the scheduler falls back to schema-directed generation plus novelty by response shape.
-
-## Scan project
-
-A scan project is the unit of configuration and the unit of one scan. It lives in `autofuzz.json` at the target project root, and `autofuzz scan` finds it without arguments. `--config <path>` selects a different file.
-
-```jsonc
-{
-  "project": "billing-service",
-  "codebase": {
-    "harness": "js-ts",
-    "root": ".",
-    "include": ["src/**/*.ts"],
-    "exclude": ["**/*.test.ts"],
-    "fixtures": { "module": "./autofuzz.fixtures.ts" }
-  },
-  "runtime": { "baseUrl": "http://127.0.0.1:3000", "openapi": "./openapi.json" },
-  "oracles": { "deadline": { "ms": 2000 } },
-  "budget": { "invocations": 200000, "wallClockMs": 900000, "workers": 8 },
-  "output": { "dir": ".autofuzz", "renderers": ["json", "markdown"] }
-}
-```
-
-- `codebase` and `runtime` are both optional and at least one must be present. `codebase` names a design-time target, which means "look at this code and fuzz its public boundaries". `runtime` names a runtime target, which means an environment, a service to stand up, and an API definition to fuzz against.
-- A scan run names exactly one block: `autofuzz scan codebase` or `autofuzz scan runtime`. One scan uses one harness and writes one scan result document, which is why that document carries a single `harness` object.
-- `runtime` is reserved. The block parses and validates, and `autofuzz scan runtime` exits with `runtime targets are not implemented` until that design lands. The runtime column and rows elsewhere in this document describe that later increment.
-- `budget` bounds a scan. A scan stopped by budget still writes a complete scan result with `stoppedReason: "budget"`.
-
-## Shape
-
-```mermaid
-flowchart LR
-  subgraph Engine["Engine (language-neutral)"]
-    DIS[Discovery driver] --> IR[Interface IR]
-    IR --> GEN[Generator / mutator]
-    GEN --> SCH[Scheduler]
-    SCH --> EX[Execution supervisor]
-    EX --> FB[Feedback: coverage digest, novelty]
-    FB --> SCH
-    EX --> FIND[Finding collector]
-    FIND --> MIN[Minimizer]
-    MIN --> SR[Scan result JSON]
-  end
-  subgraph Plugins["Harness plugins (out of process)"]
-    JS["js-ts: in-process Node, V8 precise coverage"]
-    WASM["wasm: rewritten module, direct export call, host-read counter table"]
-    HTTP["http: route discovery, request build, response observe"]
-  end
-  EX -->|JSON-RPC over stdio| Plugins
-  DIS -->|JSON-RPC over stdio| Plugins
-  SR --> R1[renderers: SARIF, PR body, CI gate, triage queue]
-```
+| Side effects | None by default; the process dies with the run | Real. A mutating operation can destroy user data |
+| Concurrency | The engine sets the worker count | The scan must respect rate limits and target capacity |
 
 ## Plugin transport
 
-Plugins run out of process and speak JSON-RPC over stdio, one process per plugin instance, the same transport model as LSP and DAP. Three reasons: a plugin written in Rust, Python, or Node is equally valid; a target that hangs or corrupts memory kills the plugin process and not the engine; and the engine can run N plugin instances in parallel without a language-specific threading story.
+A plugin runs out of process and speaks JSON-RPC over stdio, one process per plugin instance. This is the
+same transport model as LSP and DAP. Three reasons:
 
-In-process plugins are not supported. A single C-level fault in a plugin would take down the scan, and the transport cost of stdio is irrelevant next to the cost of one target invocation.
+- A plugin written in Rust, Python, or Node is equally valid, because all the engine requires is a child
+  process with two pipes.
+- A target that hangs or corrupts memory kills its own plugin process, not the scan.
+- The engine runs N plugin instances in parallel without any language-specific threading story.
 
-## Plugin capabilities
+In-process plugins are not supported. A single fault in a plugin would take the scan down with it, and the
+stdio cost disappears next to the cost of one target invocation.
 
-A plugin declares what it can do at handshake. The engine adapts instead of assuming.
+The engine never guesses how to start a plugin. `codebase.command` gives the argv, for every harness, and
+`ScanProject::validate` rejects a scan project without it. The plugin runs with the scan root as its
+working directory, and the engine passes `AFZ_ROOT` and `AFZ_CONFIG` in its environment.
 
-| Capability | Meaning | Absent behavior |
-|---|---|---|
-| `coverage` | Per-invocation coverage digest is available | Scheduler uses schema-directed generation and response/outcome novelty only |
-| `stateful` | Plugin can build receiver state (instances, clients, fixtures) | Only entry points with fully constructible parameter graphs are fuzzed |
-| `minimize` | Plugin can shrink an input in target terms | Engine minimizes by removing arguments and reducing structure only |
-| `reproducer` | Plugin can render a standalone replay script for a confirmed finding in the target language | Engine ships the minimized input JSON as the only artifact |
-| `sideEffects` | Invocations may change external state | Engine applies the side-effect policy below |
-| `concurrent` | Plugin tolerates parallel instances | Engine runs one instance |
+## The seven methods
 
-## Harness plugin contract
+All seven are on the wire, and a plugin must answer every one of them. `crates/afz-protocol/src/rpc.rs`
+defines them, and `docs/schema/` is the authority for every field, because it is generated from the Rust
+types that the engine compiles against.
 
-Defined in TypeScript for readability; the wire form is the same shape as JSON, and `docs/schema/` is the authority for every field — it is generated from the Rust types that the engine compiles against. The handshake *answer* carries `protocolVersion`; requests carry none, because the engine assigns each request an increasing `id` per plugin process and echoes nothing else.
-
-Validation of this contract is template-driven: `crates/afz-conformance` embeds a conformance template (v1: ten semantic properties no schema can express), the harness package emits a manifest mapping its own fixtures onto those properties, and `afz validate-harness` drives every property over the protocol and judges the answers. The wire contract stays stable; new rules arrive only as a new template version.
+The contract in TypeScript, which is how the shape is easiest to read. Both plugin contract tests
+parse this block: `packages/harness-js/test/contract.test.mjs` and
+`packages/harness-py/test/contract_test.py` each extract the method names from it and compare them
+with the wire vocabulary. Keep the block, and keep the two-space indent on each method line, or those
+tests stop finding the interface.
 
 ```ts
 export interface HarnessPlugin {
@@ -143,106 +130,92 @@ export interface HarnessPlugin {
 }
 ```
 
-All seven methods are on the wire and every one of them must be answered. `minimize`, `reproducer` and `coverageMap` are optional only in this sense: a plugin that cannot do the work leaves the capability out of its handshake and answers the method with a `-32601` or `-32600` error frame, which is what both shipped harnesses do for `minimize`. The engine reads `coverage` from the handshake to decide whether to ask for digests, it sends `minimize` to no plugin today: minimization is engine-side delta debugging over repeated `invoke`, and it sends `reproducer` only to a plugin that declared the capability, after a finding's minimized input is confirmed to still reproduce. [`harness-authoring.md`](harness-authoring.md) states what each answer costs, the timeouts the engine applies to it, and what the engine does with a wrong one.
+| Method | What the plugin must return | Engine timeout |
+|---|---|---|
+| `handshake` | Protocol version `afz/1`, name, version, target class, capabilities, languages, `discoverRequiresExecution` | none, but a mismatch stops the run |
+| `discover` | Every fuzzable target, and every symbol it skipped with a reason | 120 s |
+| `prepare` | The materialized call, or a skip reason | 120 s |
+| `invoke` | One `Outcome`. It never throws over the wire | the `deadline` oracle's `ms`, and no deadline at all when that oracle is off |
+| `minimize` | A smaller input that still reproduces the fault class | not sent today, see below |
+| `reproducer` | A standalone script and its file extension | 10 s |
+| `coverageMap` | The edge ids and the source ranges they stand for | 10 s |
 
-`discover` must not execute target code. Discovery that imports the user's module runs arbitrary user code inside our process, so JS discovery reads declarations statically, and runtime discovery reads route metadata. A plugin that genuinely needs to import the target to enumerate it declares `discoverRequiresExecution: true`, and the engine then runs that discovery inside the same isolation and deadline it applies to invocations.
+`minimize`, `reproducer`, and `coverageMap` are optional in one precise sense. A plugin that cannot do the
+work leaves the capability out of its handshake, and answers the method with a `-32601` or `-32600` error
+frame. Both shipped plugins take that route for `minimize`.
+
+The engine sends `minimize` to no plugin today. Minimization is engine-side delta debugging over repeated
+`invoke`, bounded by 2000 attempts and a 300 second budget. A plugin that answered `minimize` would be
+answering a request that never arrives.
+
+`discover` must not execute the code that it enumerates. Importing a user module runs that user's code
+inside the plugin, so `js-ts` reads declarations statically and `python` parses with `ast`. A plugin that
+genuinely must import the target declares `discoverRequiresExecution: true`, and the engine then applies
+the same isolation and the same deadline that it applies to invocations.
+
+## Capabilities
+
+A plugin declares what it can do at handshake, and the engine adapts instead of assuming. Two of the six
+names change engine behavior today, and the table says which.
+
+| Capability | Meaning | Does the engine read it today? |
+|---|---|---|
+| `coverage` | Per-invocation coverage digest is available | Yes. Without it the scheduler scores novelty from the outcome instead of from edges, and `coverage.json` is not written |
+| `reproducer` | The plugin can render a standalone replay script in the target language | Yes. Without it a finding carries no script, and the minimized input in `inputs/` is the only replayable artifact |
+| `stateful` | The plugin can build receiver state | No. Absent behavior is a property of the plugin's own discovery, not an engine gate |
+| `minimize` | The plugin can shrink an input in target terms | No. The engine minimizes through `invoke` |
+| `sideEffects` | Invocations may change external state | No. The engine has no side-effect policy yet, because design-time targets have none |
+| `concurrent` | The plugin tolerates parallel instances | No. The engine starts one process per worker for every harness |
+
+A plugin author who reads this table and then reads `harness-authoring.md` gets the honest version: declare
+what you answer, and do not declare what you do not.
 
 ## Interface IR
 
-One normalized description of a callable, produced by every plugin.
+One normalized description of a callable, produced by every plugin. The fields below are the real ones,
+from `docs/schema/target-descriptor.json`.
 
-```ts
-export interface TargetDescriptor {
-  id: string;                    // stable content hash of module path + symbol + signature
-  targetClass: "design-time" | "runtime";
-  origin: { file?: string; line?: number; module?: string;
-            http?: { method: string; path: string } };
-  name: string;                  // "parseConfig", "POST /v1/tokens"
-  parameters: Parameter[];
-  returns?: TypeNode;
-  effects: { async: boolean; throws: boolean; streams: boolean;
-             callbacks: boolean; mutatesState: boolean };
-  materialization: "constructible" | "fixture-required" | "opaque";
-}
-
-export interface Parameter { name: string; type: TypeNode; required: boolean; }
-```
-
-`TypeNode` kinds, which are also the generator's vocabulary:
-
-| Kind | Notes |
+| Field | Notes |
 |---|---|
-| `null`, `undefined`, `boolean`, `number`, `bigint`, `string` | `number` carries `int`, `finiteOnly`, `min`, `max` when declared |
+| `id` | Stable content hash of module path, symbol, and signature |
+| `targetClass` | `design-time` or `runtime` |
+| `origin` | `file` and `line` for source, `module` for a compiled artifact, `http` reserved for a runtime target |
+| `name` | `parseConfig`, `UserRepo.findById`, `POST /v1/tokens` |
+| `parameters` | Each with `name`, `type`, `required` |
+| `returns` | A `TypeNode`, when the callable has a declared return type |
+| `effects` | `async`, `throws`, `streams`, `callbacks`, `mutatesState` |
+| `materialization` | `constructible`, `fixture-required`, or `opaque` |
+| `guardSites` | The lines inside the target where it raises or throws. This is what lets the plugin call a refusal a refusal |
+
+### TypeNode
+
+`TypeNode` is the generator's vocabulary, and it has 13 variants. The table below lists them; where a
+variant carries a sub-kind, that sub-kind is in parentheses.
+
+| Variant | Notes |
+|---|---|
+| `scalar` | `ScalarKind`: `null`, `undefined`, `boolean`, `number`, `bigint`, `string`. A number carries `int`, `finiteOnly`, `min`, `max` when declared |
 | `stringFormat` | `email`, `uuid`, `date-time`, `hostname`, `ipv4`, `uri`, plus plugin-defined formats |
-| `literal` | enum members and string unions become literal sets |
-| `array`, `set`, `map` | element and key types, declared length bounds |
-| `object` | named fields, each with `required`; recursive references allowed via `ref` |
-| `tuple` | positional, fixed |
-| `union`, `intersection` | discriminant-aware generation when a literal discriminant exists |
-| `buffer` | `Uint8Array`, `ArrayBuffer`, byte length bounds |
-| `promise` | marks async effect; the harness awaits with the invocation deadline |
-| `function` | generated as a callable stub whose behavior is configurable: return-first, throw, capture-arguments |
-| `stream`, `iterable` | generated as an in-memory source with a bounded item count |
-| `opaque` | class instance, DOM node, socket, or any type the plugin cannot build; drives `materialization` to `fixture-required` or `opaque` |
-| `ref` | named recursive reference; generation enforces a depth budget and terminates recursion |
+| `literal` | Enum members and string unions become literal sets |
+| `collection` | `CollectionKind`: `array`, `set`, `map`, with element and key types and declared length bounds |
+| `object` | Named fields, each with `required`. Recursive references are allowed through `ref` |
+| `tuple` | Positional and fixed |
+| `composite` | `CompositeKind`: `union`, `intersection`. Discriminant-aware generation when a literal discriminant exists |
+| `buffer` | `Uint8Array`, `ArrayBuffer`, with byte length bounds |
+| `promise` | Marks an async effect. The harness awaits it under the invocation deadline |
+| `function` | A callable stub whose behavior is configurable: return-first, throw, or capture arguments |
+| `stream` | An in-memory source with a bounded item count |
+| `opaque` | A class instance, socket, or any type the plugin cannot build |
+| `ref` | A named recursive reference. Generation enforces a depth budget and counts `ref` uses per path, which is what makes recursion terminate |
 
-`materialization` is the honest accounting of what the tool can actually reach. `constructible` means the whole parameter graph is buildable from generated values. `fixture-required` means a user-supplied fixture can fill the gap. `opaque` means the entry point is unreachable without a live system. The inventory reports all three counts, so a scan that only reached 5 percent of an API says so.
+`materialization` is the honest accounting of what the tool can reach. `constructible` means the whole
+parameter graph is buildable from generated values. `fixture-required` means a user-supplied fixture could
+fill the gap, and no fixture format exists yet. `opaque` means the entry point is unreachable without a live
+system. The inventory reports all three counts, so a scan that reached 5 percent of an API says so.
 
-## Feedback and scheduling
-
-Coverage is a capability. When `coverage` is present, every invocation returns a digest: a sorted list of stable edge identifiers touched. The engine keeps a corpus and retains an input when it produces an edge set the corpus has not produced. Scheduling weights corpus entries by new-edge yield and by time since last selection, so unexplored entries are revisited. This is the same novelty rule that makes AFL++ effective, applied to structured inputs instead of bytes.
-
-When `coverage` is absent, novelty is computed from the observable outcome tuple: status class or error class, response shape, latency bucket, and whether the target crossed a deadline. The loop is unchanged; only the novelty function differs.
-
-Mutation operates on `ValueTree`, not on bytes. Every node records its type and generation provenance, which is what makes type-aware mutation and later minimization possible across languages. One execution applies a short run of node-level operators, and the set includes a copy from one node of an input to another, because a gate that compares two independently generated fields is otherwise unreachable however long the scan runs: Decision 2.
-
-## Outcome classification
-
-The engine never reasons about exceptions, `Result`, signals, or status codes. Every harness plugin reduces one invocation to exactly one of three outcomes, and every oracle operates on that value alone.
-
-```ts
-export type Outcome =
-  | { kind: "ok";       durationMs: number; memoryBytes?: number; coverage?: EdgeId[]; value?: ValueTree }
-  | { kind: "rejected"; durationMs: number; coverage?: EdgeId[]; via: string; detail: string }
-  | { kind: "failed";   durationMs: number; coverage?: EdgeId[]; via: string; fault: FaultSignature };
-```
-
-`rejected` means the target examined the input, decided it was not acceptable, and said so through the channel its own signature declares. `failed` means the target tried to accept the input and broke. `via` records which rule produced the classification, so a triager can audit the decision and a user can override it.
-
-Which channel is declared is language knowledge, and it stays inside the plugin.
-
-| Language or boundary | `rejected` by default | `failed` by default |
-|---|---|---|
-| TypeScript / JavaScript | `throw` at a source location the target wrote, which discovery records as a guard site; error classes the user lists | engine-raised `TypeError`, `RangeError`, or `URIError` at any other location; worker exit; unhandled rejection |
-| Rust | `Err(e)` returned from `Result`, `None` returned from `Option` | `panic!`, `unwrap` or `expect` on an `Err`, index out of bounds, divide by zero, `unreachable!`, `assert!`, `SIGSEGV`, `SIGABRT` |
-| Go | returned non-nil `error` | `panic`, write to a nil map, index out of range, race detector report |
-| Java / Kotlin | an exception type listed in the method's `throws` clause | unchecked `RuntimeException` or `Error`, JVM assertion, out-of-memory |
-| C / C++ | nonzero or negative return code, `errno`, `std::error_code` | signal delivery, ASan or UBSan report, `assert`, `std::terminate` |
-| Python | exception types named by annotation or docstring | `TypeError`, `AttributeError`, `IndexError`, any raise outside a declared type |
-
-Rust shows why the rule cannot be "did it throw". `Err(PriceError::UnknownCurrency)` is an ordinary return value, so the rejection channel carries no exception at all, and the crash channel is a panic. The TypeScript case and the Rust case are one decision in two machineries: the guard on line 5 of the currency example is `rejected` in both, and an unguarded dereference is `failed` in both.
-
-Two consequences for the wasm harness. A Rust panic or a wasm trap ends the instance, so the harness re-instantiates after any `failed` outcome and reports that invocation's coverage before discarding the instance. Rust checks integer overflow only when `overflow-checks = true`, which is the default in debug profiles and off in release, so the fuzz build enables it or an entire bug class reports as `ok`.
-
-Oracle configuration sits one level above and never names language mechanics.
-
-```jsonc
-"oracles": {
-  "failed":       { "severity": "high" },
-  "rejected":     { "severity": "off" },
-  "deadline":     { "ms": 2000, "severity": "medium" },
-  "memoryGrowth": { "mb": 256, "severity": "medium" },
-  "processExit":  { "severity": "high" },
-  "differential": { "against": "v1.4.0", "severity": "high" },
-  "overrides":    [{ "target": "afz:t:44be", "via": "result-err", "treatAs": "failed" }]
-}
-```
-
-`overrides` is the escape hatch for a target whose declared channel is documented as internal-failure-only, where an `Err` really is a bug.
-
-## Unreachable entry points
-
-`fixture-required` and `opaque` are reported rather than dropped, and that report is the whole mechanism in the first increment. No fixture format, fixture loading, or fixture validation exists yet.
+Unreachable entry points are reported rather than dropped, and that report is the whole mechanism today.
+Each skipped record gives the blocking type, the module and the property path of the blocking field, and
+how many entry points share the block:
 
 ```json
 { "targetId": "afz:t:9c1f", "name": "UserRepo.findById",
@@ -251,122 +224,278 @@ Oracle configuration sits one level above and never names language mechanics.
   "unlocksTargets": 14 }
 ```
 
-`blockedBy` names the blocking type and where it sits, and `unlocksTargets` counts the entry points that share it, which turns one missing type into one ranked task. That record is deliberately complete enough for a coding agent to act on later: write a constructor for `Db`, and 14 entry points become fuzzable.
+That record is deliberately complete enough for a person, or a coding agent, to act on. Write a constructor
+for `Db`, and 14 entry points become fuzzable.
 
-## Side-effect policy for runtime targets
+## Generation and feedback
 
-A runtime target can destroy data, so the engine defaults to refusing harm rather than trusting the user to configure it away. This policy belongs to the reserved `runtime` block and is not implemented in the first increment.
+Coverage is a capability. When it is present, every invocation returns a digest: a sorted list of stable
+edge identifiers that the call touched. The engine keeps a corpus and retains an input when it produces an
+edge set new to the corpus. Scheduling weights corpus entries by new-edge yield and by time since
+last selection, so unexplored entries are revisited. This is the novelty rule that makes AFL++ effective,
+applied to structured inputs instead of bytes.
 
-- Only methods whose declared effect is non-mutating are invoked by default: `GET`, `HEAD`, `OPTIONS`, and RPC methods marked read-only.
-- A mutating method requires an explicit `allowMutating: true` entry naming that method, and a `destructive: true` marker on methods that delete or spend money.
-- Every runtime target run requires a `baseUrl` matching a host the user named in configuration. Requests to any other host are refused before send.
-- Concurrency and rate are capped per target in configuration, default 1 concurrent request and 20 requests per second.
+When `coverage` is absent, novelty comes from the observable outcome instead. The loop is unchanged; only
+the novelty function differs.
+
+Mutation operates on `ValueTree`, not on bytes. Every node records its type and its generation provenance,
+which is what makes type-aware mutation and later minimization possible across languages. One execution
+applies a short run of node-level operators. That set includes copying one node from an input into another,
+because a gate that compares two independently generated fields is otherwise unreachable however long the
+scan runs (Decision 2).
+
+## Outcome classification
+
+The engine never reasons about exceptions, `Result` values, signals, or status codes. Every plugin reduces
+one invocation to exactly one of three outcomes, and every oracle operates on that value alone.
+
+```ts
+export type Outcome =
+  | { kind: "ok";       durationMs: number; memoryBytes?: number; coverage?: EdgeId[]; value?: ValueTree }
+  | { kind: "rejected"; durationMs: number; coverage?: EdgeId[]; via: string; detail: string }
+  | { kind: "failed";   durationMs: number; coverage?: EdgeId[]; via: string; fault: FaultSignature };
+```
+
+`rejected` means the target examined the input, decided it was not acceptable, and said so through a channel
+that its own signature declares. `failed` means the target tried to accept the input and broke. `via` gives
+the rule that produced the classification, so a triager can audit the decision and a user can override it.
+
+Which channel is declared is language knowledge, and it stays inside the plugin. The table below states the
+rule per language. Two of these rows are implemented; the rest show how the same decision travels.
+
+| Language or boundary | `rejected` | `failed` | Implemented |
+|---|---|---|---|
+| TypeScript / JavaScript | `throw` at a source location the target wrote, which discovery records as a guard site, or an error class the scan project lists in `codebase.rejectClasses` | engine-raised `TypeError`, `RangeError`, or `URIError` at any other location; worker exit; unhandled rejection | yes |
+| Python | a raise at a guard site, or an exception class in `codebase.rejectClasses` | `TypeError`, `AttributeError`, `IndexError`, and any raise outside the declared set | yes |
+| Rust | `Err(e)` returned from `Result`, `None` returned from `Option` | `panic!`, `unwrap` on an `Err`, index out of bounds, divide by zero, `unreachable!`, `assert!`, `SIGSEGV`, `SIGABRT` | no plugin answers this yet |
+| Go | a returned non-nil `error` | `panic`, write to a nil map, index out of range, race detector report | no |
+| Java / Kotlin | an exception type in the method's `throws` clause | unchecked `RuntimeException` or `Error`, JVM assertion, out-of-memory | no |
+| C / C++ | a nonzero or negative return code, `errno`, `std::error_code` | signal delivery, ASan or UBSan report, `assert`, `std::terminate` | no |
+
+Rust shows why the rule cannot be "did it throw". `Err(PriceError::UnknownCurrency)` is an ordinary return
+value, so the rejection channel carries no exception at all, and the crash channel is a panic. The
+TypeScript case and the Rust case are one decision in two machineries.
+
+Two consequences for the wasm harness. A Rust panic or a wasm trap ends the instance, so the harness
+re-instantiates after any `failed` outcome and reports that invocation's coverage before it discards the
+instance. And Rust checks integer overflow only when `overflow-checks = true`. That is the default in debug
+profiles and off in release, so the fuzz build must enable it or an entire bug class reports as `ok`.
+
+## Oracles and defaults
+
+Oracle configuration sits one level above the classification and never reaches into language mechanics.
+These are the defaults that the engine applies when a scan project says nothing
+(`crates/afz-engine/src/config.rs`):
+
+| Key | Default |
+|---|---|
+| `oracles.failed` | `severity: "high"` |
+| `oracles.rejected` | `severity: "off"`, and you can turn it on per target |
+| `oracles.deadline` | `severity: "medium"`, `ms: 2000`. Turning it off removes the deadline from every call |
+| `oracles.memoryGrowth` | `severity: "medium"`, `mb: 256` |
+| `oracles.processExit` | `severity: "high"` |
+| `oracles.overrides` | empty. Each entry names a `target`, a `via`, and a `treatAs` of `ok`, `rejected`, or `failed` |
+| `budget.invocations` | 100000 |
+| `budget.wallClockMs` | 900000 |
+| `budget.workers` | 0, which means one plugin process per logical CPU |
+| `budget.maxCorpus` | 2048 |
+| `budget.strategy` | `guided`. `random` generates without the corpus |
+| `output.dir` | `.autofuzz` |
+| `output.renderers` | `["json", "markdown"]`. The list decides only whether `report.md` is rendered |
+
+Severity has five values: `off`, `low`, `medium`, `high`, `critical`.
+
+`memoryBytes` on an `Outcome` is reported by the plugin, not measured by the engine. Engine-side process
+sampling would add a platform-specific dependency for a number that the plugin already reports.
+
+The project has one rule about referring to something that is not built, and it applies to oracles and
+renderers alike: a name that the engine does not implement is a configuration error, never a silently
+disabled check.
+`oracles: { "differential": { "against": "v1.4.0" } }` therefore fails at load with
+`oracle "differential" is not implemented in this version`.
 
 ## Scan result
 
-One JSON document per scan, written once, never edited in place. Renderers read it.
+One JSON document per scan, written once and never edited in place. Renderers read that document and open
+nothing else. Here is a real one, from a scan of the `billing` fixture, with the findings and samples
+elided:
 
 ```json
 {
   "schemaVersion": "afz-scan/1",
-  "scanId": "01J8ZQ3M7K",
-  "startedAt": "2026-11-11T09:14:02.481Z",
-  "finishedAt": "2026-11-11T09:41:55.017Z",
-  "engine": { "version": "0.1.0", "seed": "0x5e3a91c4", "configHash": "sha256:..." },
+  "scanId": "M78QEADG9A",
+  "startedAt": "2026-11-12T12:00:00.000Z",
+  "finishedAt": "2026-11-12T12:00:07.000Z",
+  "engine": { "version": "0.1.0", "seed": "0x5e3a91c4", "configHash": "sha256:f366c373…" },
   "target": {
-    "root": "/src/example",
-    "revision": "git:8f2c1ab",
-    "harness": { "name": "autofuzz-harness-js", "version": "0.1.0",
-                 "targetClass": "design-time", "capabilities": ["coverage", "stateful"] }
+    "root": "/repo/packages/harness-js/test-targets/billing",
+    "revision": "git:8bbdf07",
+    "harness": { "name": "js-ts", "version": "0.1.0", "targetClass": "design-time",
+                 "capabilities": ["coverage", "stateful", "concurrent", "reproducer"] }
   },
-  "git": { "selector": "HEAD", "base": "1f4a9c0d2b7e4a6f", "tree": "8f2c1ab4d6e8f0a2",
-           "changedFiles": 1, "worktree": "/src/example/.autofuzz/git-scope/41-2" },
+  "git": { "selector": "HEAD", "base": "1f4a9c0d…", "tree": "8f2c1ab4…",
+           "changedFiles": 1, "worktree": "/repo/.autofuzz/git-scope/41-2" },
   "inventory": {
-    "discovered": 412, "fuzzable": 287,
-    "skipped": [{ "targetId": "afz:t:9c1f", "name": "UserRepo.findById",
-                  "reason": "unconstructible-parameter",
-                  "blockedBy": { "type": "Db", "module": "src/db.ts", "path": "receiver.db" },
-                  "unlocksTargets": 14 }],
-    "materializationCounts": { "constructible": 287, "fixture-required": 61, "opaque": 64 }
+    "discovered": 46, "fuzzable": 38, "skipped": [],
+    "materializationCounts": { "constructible": 38, "fixture-required": 8 }
   },
-  "execution": { "invocations": 184320, "corpusSize": 1204, "coverageEdges": 8312,
-                 "coverageRatio": 0.41, "deadlineExceeded": 3, "deadlineCuts": 41,
-                 "samples": [{ "invocations": 5000, "coverageEdges": 1140, "coverageRatio": 0.056 },
-                             { "invocations": 10000, "coverageEdges": 2011, "coverageRatio": 0.099 }] },
-  "findings": [{
-    "findingId": "afz:f:7a41c2e0",
-    "identity": "sha256:...",
-    "targetId": "afz:t:44be",
-    "oracle": "failed",
-    "via": "engine-error-outside-declared-channel",
-    "fault": { "class": "TypeError", "message": "Cannot read properties of undefined (reading 'map')",
-               "frames": [{ "file": "src/config.ts", "line": 88, "column": 19, "fn": "normalize" }] },
-    "input": { "encoding": "value-tree+json", "artifact": "inputs/afz-f-7a41c2e0.json" },
-    "minimizedInput": { "artifact": "inputs/afz-f-7a41c2e0.min.json", "bytesBefore": 1842, "bytesAfter": 96 },
-    "reproducer": { "artifact": "repros/afz-f-7a41c2e0.ts" },
-    "firstSeenInvocation": 91207, "reproduced": true
-  }],
+  "execution": { "invocations": 50000, "corpusSize": 85, "coverageEdges": 209,
+                 "coverageRatio": 0.6239, "deadlineExceeded": 0, "deadlineCuts": 0,
+                 "stoppedReason": "budget", "restarts": 0, "unattempted": 0,
+                 "disabledTargets": [], "samples": [] },
+  "findings": [],
   "artifacts": { "corpus": "corpus/", "coverage": "coverage.json", "log": "engine.log" }
 }
 ```
 
-`finding.identity` is a hash over target id, fault class, and the top fault frame, not over the input. That is what makes the same bug the same finding across scans, which a triage queue and a PR bot both need. Inputs and stacks live in content-addressed files beside the document; the document stays small enough to load whole.
+Three decisions in that shape are worth pointing out:
 
-`git` is present only for a scan run with `--git <selector>`, which scans the state that selector names - or, for a span such as `v1..v2`, the state at its end - as a `git worktree`, or the working tree for `unstaged`, and `inventory` then counts that change set rather than the package.
+- `finding.identity` is a hash over target id, fault class, and the top fault frame, not over the input.
+  That is what makes one bug one finding across scans, which a triage queue and a pull-request bot both
+  need. Inputs and stacks live in content-addressed files beside the document, so the document stays small
+  enough to load whole.
+- The identities that this project has already reported live in `<output.dir>/seen.json`, which every scan
+  of the project opens and updates. A repeat is still written, with `seenBefore: true`, because a report
+  that hid a bug still in the tree would be worse than one that repeats itself. The engine does not
+  minimize a repeat and does not ask the plugin for a reproducer for one, so a repeat carries its original
+  input and nothing else.
+- `git` is present only for a scan run with `--git <selector>`, and `inventory` then counts that change set
+  rather than the package. Twelve clean targets inside a change set is a narrower claim than a clean
+  package, and the scan result keeps the two claims apart.
+- The writer saves `scan.json` last, after every artifact that the document lists. A reader that finds the
+  document never sees a scan directory whose artifacts are still being written.
 
 ## Determinism
 
-One 32-bit seed per scan drives every random choice: corpus selection, mutation, and value generation. A scan result records the seed, the config hash, the target revision, and the plugin version. Replaying `autofuzz run --seed <seed> --corpus <corpus>` with the same inputs reproduces the same invocation sequence. Every plugin invocation carries an `invocationId` so out-of-order responses from parallel plugins are attributable.
+One 32-bit seed per scan drives every random choice: corpus selection, mutation, and value generation. The
+scan result records the seed, the config hash, the target revision, and the plugin version. The same
+`--seed` against the same tree and the same configuration replays the same sequence of calls.
 
-## Language and runtime mapping
+`--resume <scanDir>` loads the corpus that an earlier scan wrote, so a scan can continue from the inputs
+that scan had kept. Suppression of recorded identities is a separate mechanism: it comes from the
+project's `seen.json`, which the engine reads whether or not you resume. Every plugin request carries an
+`id` that the engine assigns per process, so a response from a parallel worker is still attributable.
 
-| Harness | Discovery | Invocation | Coverage |
-|---|---|---|---|
-| `js-ts` (design-time, first) | Static declaration analysis. `typescript@7` ships no JavaScript compiler API — its exports map is `./lib/version.cjs` plus `./unstable/*` — so the classic API comes from `@typescript/typescript6@6.0.2`, installed under the `typescript` alias | One warm Node worker thread per plugin process serves many invocations. Each invocation runs in a fresh `vm` realm built from text the plugin transpiled itself, so module-level state resets per call and one call remains a complete reproducer: Decision 6 | Yes, per invocation: one armed `Profiler.takePreciseCoverage` window per worker, with an invocation's digest scoped to the scripts it first reported. Ranges are mapped back to `.ts` source positions through the transpile source map |
-| `wasm` (design-time, generalization proof) | Exported functions of a core wasm module; the engine materializes arguments from the same IR and the plugin calls the export directly, so the module's own signature is the only type information involved | one wasmtime instance per worker, in a plugin process per worker as with every other harness | Yes: the harness rewrites the module it is handed - one counter byte per function entry and per structured block head, in a memory of its own that it exports as `__afz_counters`. The guard is `i32.const <edge>; i32.store`, and the table is read back after the call, including after a trap. Compile-time pcguard stays available to a target that wants finer edges: Decision 3 |
-| `http` (runtime) | Route table from framework metadata, or an OpenAPI document | fetch against a user-declared base URL, under the side-effect policy | Only if the serving process is instrumented |
-| Later: Python, JVM, Go | Same contract, different discovery and coverage probe | | |
+One exception is recorded rather than hidden. Coverage ids are hashed from the file url, so a corpus
+carried into a materialized git tree reports every edge as new. The run is valid, but its ratio is not
+comparable to the earlier one, and `engine.log` says so when both flags are present.
 
-`NODE_V8_COVERAGE` is not used: it is inconsistent with worker threads, and that issue is closed as not planned (nodejs/node#46378).
+## Harnesses today
+
+| Harness | Discovery | Invocation | Coverage | Capabilities declared |
+|---|---|---|---|---|
+| `js-ts` | Static declaration analysis. `typescript@7` ships no JavaScript compiler API, so the classic API comes from `@typescript/typescript6@6.0.2`, installed under the `typescript` alias | One warm Node worker thread per plugin process serves many invocations. Each invocation runs in a fresh `vm` realm built from text the plugin transpiled itself, so module-level state resets per call and one call remains a complete reproducer (Decision 6) | Per invocation, from one armed `Profiler.takePreciseCoverage` window per worker, with an invocation's digest scoped to the scripts it first reported. Ranges map back to `.ts` positions through the transpile source map | `coverage`, `stateful`, `concurrent`, `reproducer` |
+| `python` | `ast` parse of the modules in the scan project. Nothing is imported, and a def whose name starts with an underscore can be withheld from the inventory | One CPython process per worker. Each invocation calls the function or constructs the class with no arguments, and reads coverage from `sys.monitoring` line events | Per invocation, from `sys.monitoring` line events | `coverage`, `reproducer` |
+| `wasm` | The exported functions of a core wasm module. The engine materializes arguments from the same IR and the plugin calls the export directly, so the module's own signature is the only type information involved | One wasmtime instance per worker, in a plugin process per worker as with every other harness | The harness rewrites the module it is handed: one counter byte per function entry and per structured block head, in a memory of its own that it exports as `__afz_counters`. The guard is `i32.const <edge>; i32.store`, and the table is read back after the call, including after a trap. Compile-time pcguard stays available to a target that wants finer edges (Decision 3) | `coverage`, `concurrent` |
+
+`NODE_V8_COVERAGE` is not used: it is inconsistent with worker threads, and that issue is closed as not
+planned (nodejs/node#46378).
 
 ## Environment
 
-The `js-ts` plugin needs Node 24 or newer and runs with `--experimental-vm-modules`: each invocation is a `vm.SourceTextModule` realm, and coverage comes from `Profiler.takePreciseCoverage`, which is exposed in worker threads from Node 18.10.0. The engine needs a stable Rust toolchain. The wasm harness additionally needs the `wasm32-unknown-unknown` target to build probe modules, and needs no C or C++ toolchain, no Binaryen, no wasi-sdk, and no wasm-opt, because coverage instrumentation is a post-hoc rewrite of a core wasm module using `wasmparser` and `wasm-encoder`, both compiled into the engine. A target that wants compile-time pcguard brings its own toolchain; the engine never requires one.
+The `js-ts` plugin requires Node 24 or newer and runs with `--experimental-vm-modules`, because each
+invocation is a `vm.SourceTextModule` realm. The `python` plugin requires Python 3.12 or newer, because
+coverage comes from `sys.monitoring`. Both plugins are stdlib-or-manifest only: the Python plugin imports
+nothing outside the standard library, and the Node plugin has one dependency.
+
+The engine requires a stable Rust toolchain, 1.88 or newer. The wasm harness additionally needs the
+`wasm32-unknown-unknown` target to build probe modules. It needs no C or C++ toolchain, no Binaryen, no
+wasi-sdk, and no wasm-opt. Coverage instrumentation is a post-hoc rewrite of a core wasm module, done with
+`wasmparser` and `wasm-encoder`, and both are compiled into the engine. Compile-time pcguard stays
+available as an alternative, and a target that selects it brings its own toolchain; the engine never
+requires one.
 
 ## Implementation language
 
-The engine is Rust. The `js-ts` harness plugin is Node 24 with TypeScript. This split follows from the plugin boundary: because plugins run out of process over stdio, the engine language is free, so it should be chosen for supervision rather than for the target's ecosystem.
+The engine is Rust. The `js-ts` plugin is Node with TypeScript, and the `python` plugin is CPython. This
+split follows from the plugin boundary: because plugins run out of process over stdio, the engine language
+is free, so we choose it for supervision rather than for the target's ecosystem.
 
 Four reasons the engine is Rust rather than Node:
 
-- The engine is a long-lived supervisor over hundreds of thousands of invocations, with tight loops over coverage digests, deterministic replay, and process lifecycle control. Signals, `waitpid`, resource limits, and kill timers are direct in Rust and awkward through Node's child process API.
-- The WebAssembly harness wants Rust. Reading the guard table from linear memory, enforcing a deadline with epoch interruption, and recreating an instance after a trap are all first-class wasmtime operations. `wasmparser` 0.263.0 and `wasm-encoder` 0.263.0 cover the instrumentation pass.
-- Distribution is one static binary in CI with no runtime and no dependency tree to install.
-- The wire contract becomes typed structs. `schemars` 1.2.3 emits the committed JSON Schema from the same types the engine compiles against, so a protocol drift is a compile error rather than a runtime surprise.
+- The engine is a long-lived supervisor over hundreds of thousands of invocations, with tight loops over
+  coverage digests, deterministic replay, and process lifecycle control. Signals, `waitpid`, resource
+  limits, and kill timers are direct in Rust and awkward through Node's child process API.
+- The WebAssembly harness is Rust, because reading the guard table from linear memory, enforcing a deadline
+  with epoch interruption, and recreating an instance after a trap are all first-class wasmtime operations.
+- Distribution is one static binary in CI, with no runtime and no dependency tree to install.
+- The wire contract becomes typed structs. `schemars` emits the committed JSON Schema from the same
+  types that the engine compiles against, so a protocol drift is a compile error rather than a runtime
+  surprise.
 
-The cost is a slower edit-compile loop in the parts that iterate most: generation, mutation, and scheduling policy. Accepted, because those modules are small and pure, and their tests are golden-file comparisons that catch a regression on one `cargo test`.
+The cost is a slower edit-compile loop in the parts that iterate most: generation, mutation, and scheduling
+policy. That is accepted, because those modules are small and pure, and their tests are golden-file
+comparisons that a single `cargo test` catches.
 
-Pinned dependencies: `clap` 4.6.7 for the CLI, `serde_json` 1.0.154, `schemars` 1.2.3, `rand_chacha` 0.10.0, `wasmparser` and `wasm-encoder` 0.263.0, `wasmtime` 50.0.1. The plugin side pins `@typescript/typescript6@^6.0.2` under the npm alias `typescript` and needs no loader package, because the plugin transpiles the targets it is pointed at rather than asking Node's module system to read them.
+The exact versions that matter are recorded in `Cargo.toml` and in `packages/harness-js/package.json`. Two
+things are load-bearing enough to call out here. `wasmparser` and `wasm-encoder` carry the instrumentation
+pass. `@typescript/typescript6` is aliased to `typescript`, because the plugin transpiles the sources of the
+targets that it scans, rather than having Node's module system read them.
 
-Deliberately not used: the `binaryen` crate 0.13.0, because its build needs a C++ toolchain; `wasm-instrument` 0.4.0, whose last release predates the current wasm proposal set; LibAFL, because the engine is ours by requirement, and the two pcguard callbacks we need are about thirty lines rather than a framework dependency.
+Three things are deliberately not used. The `binaryen` crate is one, because its build requires a C++
+toolchain. `wasm-instrument` is another, because its last release predates the current wasm proposal set.
+The third is LibAFL: the engine is ours by requirement, and the two pcguard callbacks we need are about
+thirty lines rather than a framework dependency.
 
 ## Assumptions
 
-These are choices a design review can override.
+These are the choices that a design review can override, and each one gives the cost of overriding it.
 
-1. **Plugin transport is out-of-process JSON-RPC over stdio.** Chosen for language neutrality and fault isolation. Overridden only if plugin startup cost proves dominant, in which case an in-process variant is added behind the same contract.
-2. **Coverage is a declared capability, not an engine requirement.** Chosen because HTTP runtime targets usually cannot provide it. Overridden if runtime targets are dropped from the product.
-3. **`discover` never executes target code unless the plugin declares otherwise.** Chosen because importing a user module runs user code inside our process.
-4. **Unreachable entry points are reported, not silently dropped.** Chosen so coverage claims stay honest. Overridden if the product needs a single "API coverage" number without the breakdown.
-5. **Runtime targets refuse mutating methods and undeclared hosts by default.** Chosen because a fuzzer that deletes user data ends the product. Overridden per method by explicit configuration.
-6. **Scan result is one immutable JSON document plus content-addressed artifacts, with `finding.identity` stable across scans.** Chosen so triage and PR tooling can key on identity.
-7. **The three-outcome classification is owned by the plugin, and the engine sees only `ok`, `rejected`, and `failed`.** Chosen because Rust rejects through a return value and C rejects through a return code, so no engine-level rule can name a rejection. Overridden only by pushing per-language knowledge into the engine, which breaks the plugin boundary.
+1. **Plugin transport is out-of-process JSON-RPC over stdio.** Chosen for language neutrality and fault
+   isolation. Overridden only if plugin startup cost proves dominant, in which case an in-process variant is
+   added behind the same contract.
+2. **Coverage is a declared capability, not an engine requirement.** Chosen because HTTP runtime targets
+   usually cannot provide it. Overridden only if runtime targets are dropped from the product, which would
+   also drop the reason `coverage` is optional.
+3. **`discover` never executes target code unless the plugin declares otherwise.** Chosen because importing a
+   user module runs user code inside our process.
+4. **Unreachable entry points are reported, not silently dropped.** Chosen so coverage claims stay honest.
+   Overridden if the product requires a single "API coverage" number without the breakdown.
+5. **Runtime targets send only non-mutating methods to declared hosts by default.** Chosen because a fuzzer
+   that deletes user data ends the product. Not built yet, so nothing overrides it yet.
+6. **The scan result is one immutable JSON document plus content-addressed artifacts, with
+   `finding.identity` stable across scans.** Chosen so triage and pull-request tooling can match findings
+   across scans by identity.
+7. **The three-outcome classification belongs to the plugin, and the engine receives only `ok`, `rejected`,
+   and `failed`.** Chosen because Rust rejects through a return value and C rejects through a return code, so
+   no engine-level rule can identify a rejection. Overridden only by pushing per-language knowledge into the
+   engine, which breaks the cut this whole document is about.
 
-## Defaults and reserved surface
+## Reserved surface: what is not built
 
-- Enabled oracles by default: `failed` at `high`, `deadline` at `ms: 2000` and `medium`, `memoryGrowth` at `mb: 256` and `medium`, `processExit` at `high`. `rejected` is off by default and can be turned on per target for auditing.
-- `differential` and any property-assertion oracle are not implemented in v1. A scan project that names one fails configuration validation with `oracle "<name>" is not implemented in this version`, rather than being silently ignored.
-- `memoryBytes` on an `Outcome` is reported by the plugin, not measured by the engine. The `js-ts` plugin reports the `heapUsed` delta around the call; the wasm harness reports the guest memory high-water mark. Engine-side process sampling would add a platform-specific dependency for a number the plugin already knows.
-- The `runtime` target class is reserved. Its configuration block validates, and `afz scan runtime` exits with `runtime targets are not implemented`. The side-effect policy above is the shape of that later design.
-- `budget.workers: 0`, which is the default, means one plugin process per available core, with no cap. A smaller number is a deliberate cap set in a scan project for a target or a machine that cannot absorb the pool. Decision 6 measures that per-invocation cost rises with the size of the pool, which is why a user might cap it, and not a reason for the engine to cap it silently.
+This section exists so that the rest of the document can be read literally. Everything here is designed and
+has an entry in the configuration schema, and none of it is implemented.
 
+### Runtime targets
+
+The `runtime` block parses and validates. A scan project whose only block is `runtime` passes validation,
+and `afz scan` stops in preflight with `runtime targets are not implemented`
+(`crates/afz-engine/src/scan.rs:228`). The keys are already shaped for the design: `baseUrl`, `openapi`,
+`allowMutating`, `destructive`, `maxConcurrent`, `requestsPerSecond`, `harness`, and `command`.
+`validate` already requires `baseUrl`, because nothing may be sent to a host the user did not list there.
+
+The side-effect policy that this block will carry:
+
+- Invoke only non-mutating methods by default: `GET`, `HEAD`, `OPTIONS`, and RPC methods marked read-only.
+- Require the method to appear in `allowMutating` before anything mutating is sent, and mark methods that
+  delete or spend money in `destructive`.
+- Refuse any request whose host the user did not list in `baseUrl`, before send.
+- Cap concurrency and rate per target.
+
+### Fixtures
+
+`codebase.fixtures.module` parses and is reserved. No fixture format, loader, or validator exists, so
+`fixture-required` targets stay in the skipped list.
+
+### Oracles and renderers
+
+`differential` and any property-assertion oracle are unimplemented, and `validate` rejects a scan project
+that lists one. The only renderers are `json`, which is the scan result itself, and `markdown`. `validate`
+currently also accepts the name `sarif`, and nothing renders it; that is a bug against the rule above, not a
+promise.
+
+### Capabilities the engine does not read
+
+`stateful`, `minimize`, `sideEffects`, and `concurrent` are in the handshake vocabulary and in the plugin
+handshakes, and no engine code branches on them. A plugin author should read the capability table above
+before relying on one.

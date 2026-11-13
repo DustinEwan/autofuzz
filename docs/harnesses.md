@@ -1,32 +1,74 @@
 # Harnesses maintained by this repository
 
-Every harness here is validated by the same command a third-party author runs:
-`afz validate-harness` (in-repo: `cargo run -p afz-xtask -- check-harness`). Validation has two
-layers: the 23 wire rules, which every plugin must pass, and the [conformance
-template](harness-authoring.md#12-the-conformance-template-versions-and-the-runtime-lifecycle),
-whose ten semantic properties a plugin answers through a manifest its own package emits.
+Read this page to see how far you can trust each harness here, and what each one still cannot do. If
+you are writing your own plugin instead, start with
+[`harness-authoring.md`](harness-authoring.md); this page is about the three harnesses this repository
+ships.
 
-|Harness|Package|Emitter|Template v1|CI gate|
+The command that checks them is the same one a third-party author runs: `afz validate-harness`. Inside
+this repository it also runs as `cargo run -p afz-xtask -- check-harness`.
+
+The check has two layers. The first is the 23 wire rules, and every plugin must pass them. The second is
+the [conformance template](harness-authoring.md#12-the-conformance-template-versions-and-the-runtime-lifecycle),
+which holds ten semantic properties. Your own package emits a manifest that answers those properties, and
+the suite reads it.
+
+|Harness|Package|Emitter|Template v1|Gate|
 |---|---|---|---|---|
-|`js-ts`|`packages/harness-js/`|`conformance/emit.mjs`|9 pass, 1 not applicable (`private-symbol`)|`the_js_ts_harness_passes`, `the_js_ts_harness_passes_template_v1`|
-|`python`|`packages/harness-py/`|`conformance/emit.py`|10 pass, 0 not applicable|`the_python_harness_passes`, `the_python_harness_passes_template_v1`|
-|`wasm`|`crates/afz-wasm/`|none yet|not emitted|`the_wasm_harness_passes` (wire rules only; `#[ignore]`d, needs a release build and the wasm32 target)|
-|fake plugin|`crates/xtask/src/fake.rs`|none — it is the negative-control target|every rule is violated on demand by a directive|the `a_*` / `an_*` controls|
+|`js-ts`|`packages/harness-js/`|`conformance/emit.mjs`|9 pass, 1 not applicable (`private-symbol`)|`the_js_ts_harness_passes` and `the_js_ts_harness_passes_template_v1`, both in the `rust` CI job through `cargo test --workspace`|
+|`python`|`packages/harness-py/`|`conformance/emit.py`|10 pass, 0 not applicable|`the_python_harness_passes` and `the_python_harness_passes_template_v1`, in the `conformance-python` job and again in `rust`|
+|`wasm`|`crates/afz-wasm/`|none yet|not emitted|`the_wasm_harness_passes`, wire rules only. It carries `#[ignore]`, so `cargo test` skips it and the `wasm` CI job runs it with `--ignored` after building the plugin and the probe module|
+|fake plugin|`crates/xtask/src/fake.rs`|none, because it is the negative-control target|every rule is violated on demand by a directive|the `a_*` / `an_*` controls|
 
-The goldens live in the gate tests themselves: `the_python_harness_passes_template_v1` asserts
-`(10, 0, 0)`, and `the_js_ts_harness_passes_template_v1` asserts that the only not-applicable
-property is `private-symbol` and that the other nine pass. Both assertions are exact, so a new
-gap in either harness fails CI until someone writes the reason down in the test.
+The expected results live in the gate tests themselves, so the numbers above are not a claim you have to
+re-measure. `the_python_harness_passes_template_v1` asserts exactly `(10, 0, 0)`.
+`the_js_ts_harness_passes_template_v1` asserts that `private-symbol` is the only not-applicable property
+and that the other nine pass. Both assertions are exact, so a new gap in either harness fails CI. To
+unblock CI, someone has to write the reason for the gap into the test.
 
-The js-ts gap is a runtime fact, not a shortcut: `private-symbol` asks the plugin to keep a
-fuzzable symbol out of the inventory that a caller can still name, and the js-ts module loader
-exposes every export it discovers. The Python harness realizes the property because `ast`
-discovery can see an underscore-prefixed def and withhold it.
+CI runs Node 24 and Python 3.14. The `python` plugin's own floor is Python 3.12, so CI does not test the
+oldest version that the plugin supports.
+
+## The one gap in `js-ts`, and why it is not a shortcut
+
+The `private-symbol` property asks a plugin to withhold one callable: discovery must list it in `skipped`
+with reason `not-public`, and must never list it in `targets`. The callable has to be otherwise fuzzable, so
+that the only reason for the skip is visibility.
+
+`js-ts` cannot express that. Its discovery reads the TypeScript declarations and enumerates exported
+symbols only, so a module-local function is never enumerated in the first place. It cannot appear in
+`skipped`, because discovery never saw it. Visibility in TypeScript is an export decision, not a
+fuzzability skip, and the manifest says so in those words.
+
+The Python harness realizes the property, because `ast` finds every def in a module, including one whose
+name starts with an underscore. It can look at such a def and choose to report it as skipped.
+
+## What the ten properties ask a harness to prove
+
+Each property describes a behaviour that no JSON Schema can check. Your manifest points each one at a
+fixture symbol in your own rendered scan project, or declares it not applicable with a reason. Two of them
+check a capability first, so a harness that declares less is not failed for it. The wording below
+is the wording in `crates/afz-conformance/template/v1.json`.
+
+|Property|What the suite checks|
+|---|---|
+|`crash-unguarded`|One named call answers `failed`, and at least one fault frame names a file inside the rendered project rather than the runtime's own library|
+|`guard-refusal`|One named call with the manifest's out-of-range input answers `rejected`, with `via` of `guard-site` or `reject-class`|
+|`method-receiver`|`prepare` answers `ok: true` for a named method on a class the plugin can build|
+|`unconstructible-receiver`|A named method whose receiver cannot be built lands in `skipped` with reason `unconstructible-parameter`, and its `blockedBy.type` names the type the manifest declares|
+|`private-symbol`|A callable the language's visibility convention excludes is listed in `skipped` with reason `not-public`, and never in `targets`|
+|`unrepresentable-symbol`|A callable whose signature the type vocabulary cannot express is listed in `skipped` with reason `unsupported-signature`|
+|`coverage-digest-live`|Two different inputs to one named multi-line symbol produce two non-empty digests that differ. This is the property that catches a probe armed once and never reset. Requires `coverage`|
+|`reproducer-script`|`reproducer` for a named crashing symbol answers a non-empty script with a valid extension, and the script text names the fixture file the fault came from. Requires `reproducer`|
+|`deadline-sleep`|A named slow symbol at the suite's deadline answers `failed` with `via` of `deadline-cut`, or the engine kills the plugin and the `process-alive` rule still holds. Answering `ok` inside the deadline fails the property, because it means the fixture's sleep was shorter than the deadline|
+|`stdout-purity`|After the suite drives a named symbol that writes noise to stdout, the same connection still answers a `handshake` with a well-formed response|
 
 ## Running one by hand
 
-The emitter renders only the scan project — `autofuzz.json`, a small source tree, and
-`afz-conformance-manifest.json`. The plugin stays in the package and is named with `--command`:
+Run this when you are writing a plugin and want the report without the CI wrapper.
+
+The emitter renders only the scan project: an `autofuzz.json`, a small source tree, and an
+`afz-conformance-manifest.json`. The plugin itself stays where it lives, and `--command` names it:
 
 ```sh
 python3 packages/harness-py/conformance/emit.py --out /tmp/rendered-py
@@ -38,7 +80,10 @@ cargo run -p afz-cli -- validate-harness --path /tmp/rendered-js \
     --command node packages/harness-js/dist/server.js --deadline 1500
 ```
 
-The rendered project carries no `lifecycle` block: both harnesses speak stdio and own no service.
-A REST-backed harness adds one (guide section 12), and then the suite starts the package's own
-service on a port it allocated, waits for its health URL, and stops it again; every failure there
-names the package's argv, not the suite's.
+The rendered project carries no `lifecycle` block, because both harnesses speak stdio and start no service
+of their own.
+
+If your harness talks to a REST service, add that block. Guide section 12 describes it. The suite allocates
+a port and substitutes it for the `{{port}}` placeholder in each argv that your manifest gives. It starts
+the service, waits for its health URL, drives one probe target that must echo a nonce back, and stops it.
+When that fails, the report prints the argv of your package, so you know which command the suite started.

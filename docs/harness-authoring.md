@@ -2,28 +2,28 @@
 
 A harness plugin is the part of autofuzz that knows one language. The engine owns the fuzzing loop
 and the data; the plugin owns everything that touches a specific language or runtime
-([`docs/architecture.md`](architecture.md):11). A plugin runs out of process and speaks JSON-RPC
+([`docs/architecture.md`](architecture.md#the-cut)). A plugin runs out of process and speaks JSON-RPC
 over its own stdin and stdout. It may be written in any language that can read a line from stdin
-([`docs/architecture.md`](architecture.md):83-85). In-process plugins are not supported.
+([`docs/architecture.md`](architecture.md#plugin-transport)). In-process plugins are not supported.
 
 This guide states the contract, the measured cost of every per-invocation operation, and the traps
-the two shipped harnesses already paid for. Every number here has a citation. Where the citation is
+that the two shipped harnesses already hit. Every number here has a citation. Where the citation is
 a file under `docs/`, the number is a measurement of a real scan; where it is a file under
 `crates/`, the number is a constant the engine enforces.
 
 ## 1. What a harness owns
 
 The engine plans invocations, keeps the corpus, schedules workers, enforces deadlines, classifies
-nothing it can read from the plugin's answer, minimizes, and writes the scan result. The plugin:
+nothing that it can read from the plugin's answer, minimizes, and writes the scan result. The plugin:
 
-- enumerates callables (`discover`) and reports the ones it cannot reach with a reason;
+- enumerates callables (`discover`) and reports the ones that it cannot reach with a reason;
 - builds the receiver and arguments for one call (`prepare`);
 - runs one call and reduces it to one `Outcome` (`invoke`);
 - optionally maps coverage edge ids to source ranges (`coverageMap`), shrinks an input in target
   terms (`minimize`), and renders a standalone replay script for a confirmed finding
   (`reproducer`).
 
-The plugin decides what `rejected` and `failed` mean for its language. The engine never inspects a
+What `rejected` and `failed` mean for a given language is your plugin's call. The engine never inspects a
 JavaScript exception, a Rust `Result`, a Go `error`, or an HTTP status class.
 
 ## 2. Start here
@@ -45,7 +45,7 @@ of a correct plugin on different code. Add `--json` for the machine-readable rep
 
 The `--command` value is your plugin's argv. Tokens that match a `validate-harness` flag
 (`--path`, `--targets`, `--deadline`, `--json`) are read as flags wherever they sit, so a plugin
-argv that itself contains such a token must use a spelling the suite does not define.
+argv that itself contains such a token must use a spelling that the suite does not recognize.
 
 When the scan project holds an `afz-conformance-manifest.json`, the same command additionally
 validates your plugin against the conformance template and adds a `template` section to the
@@ -57,11 +57,12 @@ report (section 12). Inside this repository the identical suite runs as
 The wire contract itself never changed: the seven methods, the framing, and the error codes are
 section 3 and section 4, and a plugin that passed them yesterday passes them today. What
 `validate-harness` adds on top is the template: ten semantic properties that schema validation
-cannot express, judged against fixtures your own package renders (section 12).
+cannot express, judged against fixtures that your own package renders (section 12).
 
 ## 3. The seven methods
 
-The wire names are exactly these (`crates/afz-protocol/src/rpc.rs`, `Method::name`).
+Before your plugin can answer a method, it has to spell that method's name exactly, because the engine
+matches on the string. These seven are the whole contract (`crates/afz-protocol/src/rpc.rs`, `Method::name`).
 
 |Method|Request `params`|Required response|
 |---|---|---|
@@ -108,6 +109,9 @@ Literals you must match:
 
 ## 4. Transport rules, and what the engine does with a mistake
 
+Each rule below traces to a real failure in a shipped harness. The engine cannot ask a plugin to be
+careful, so every one of these is something that your plugin has to do by itself.
+
 - **One JSON message per line, `\n`-terminated.** There is no `Content-Length` framing
   (`write_line`, `read_line` in `crates/afz-protocol/src/rpc.rs`).
 - **A blank line is EOF to the engine.** `read_line` returns `Ok(None)` for a line that is empty
@@ -146,20 +150,20 @@ Consequences you must design for:
   that ran in that same process, and no protocol method carries an inventory from one process to
   another. Every connection the engine prepares on is brought up by
   `crates/afz-engine/src/rpc/client.rs` `spawn_discovered`, which spawns and then discovers.
-- Capability gating reads the **probe's** handshake only. A worker connection never handshakes, so
-  do not make any other method depend on having done so.
+- Capability gating reads the **probe's** handshake only. A worker connection never receives a
+  `handshake`, so do not make any other method depend on having received one.
 - `prepare` is asked **once per target per process**, lazily, on the first invocation of that target.
-  A `{"ok":false,…}` answer removes the target from the prepared set, so the next invocation for it
-  asks again (`Worker::invoke`).
+  A `{"ok":false,…}` answer removes the target from the prepared set, so the engine asks again on the
+  next invocation for that target (`Worker::invoke`).
 - `coverageMap` is asked of every worker at each `SAMPLE_EVERY` (5000) invocations and once at
   `finish` — not per batch (`Scanner::refresh_coverage`).
 - A lost process is restarted, re-discovered, and its prepared set is cleared (`Worker::restart`).
-  Assume your process is ephemeral and that a fresh one has remembered nothing.
+  Assume your process is ephemeral: a replacement process starts with nothing carried over.
 - `DISABLE_AFTER` is 50: 50 consecutive restarts attributed to one target disable that target for
   the rest of the scan.
 - One `invoke` is in flight per process at a time.
 
-Timeouts the engine applies, and what they bound:
+The timeouts that the engine applies, and what they bound:
 
 |Method|Timeout|Constant|
 |---|---|---|
@@ -178,26 +182,29 @@ every first call into a package with a deep graph, and the scan reported those k
 
 ## 6. Capabilities: what the engine reads today
 
+A capability is a promise that your handshake makes, and the engine acts on only two of the six. Knowing which
+two keeps you from building a method nobody calls, and from claiming one you do not answer.
+
 `coverage` changes how the engine schedules: it turns `collectCoverage` on for every job and turns the
 `coverageMap` walk on.
 
-`reproducer` gates one artifact. After a finding's minimized input is confirmed to still
+`reproducer` controls one artifact. After a finding's minimized input is confirmed to still
 reproduce, the engine calls `reproducer` once for that finding and stores the script under
 `repros/` with the plugin's extension (`scan::run_finding`, `scan::valid_extension`). A plugin
 that omits the capability, errors the call, or answers a script over 1 MiB gets findings that
 ship with only the minimized input JSON.
 
-A finding an earlier scan already reported ships without a script too: the engine does not
+A finding that an earlier scan already reported ships without a script too: the engine does not
 shrink or render what a previous run wrote up. A rerun over a warm `seen.json` therefore prints
 `reproducer not emitted` for every finding — that is suppression working, not a broken plugin.
 
 `stateful`, `sideEffects`, `concurrent`, and `minimize` are recorded in `scan.json` under
-`target.harness.capabilities` and gate nothing yet.
+`target.harness.capabilities` and change nothing in the engine today.
 
-`ok.memoryBytes` is plugin-reported and engine-trusted (`docs/architecture.md:362`). A harness
-that omits it — `python` does, because `tracemalloc` would tax every allocation for an oracle
-most scans never enable — leaves the `memoryGrowth` oracle inert for its targets, which is the
-honest outcome; a guessed number is not.
+`ok.memoryBytes` is reported by the plugin and taken at face value by the engine
+(`docs/architecture.md#oracles-and-defaults`). A harness that omits it — `python` does, because
+`tracemalloc` would tax every allocation for an oracle that most scans never turn on — leaves the
+`memoryGrowth` oracle inert for its targets, which is the honest outcome; a guessed number is not.
 
 The engine **never sends `minimize`**. `PluginClient::minimize` has no caller: minimization is
 engine-side delta debugging over repeated `invoke` calls (`scan::run_finding` →
@@ -212,7 +219,7 @@ out of the handshake and answer it with `-32601` or `-32600`.
 
 `reproducer` is the opposite case: the engine **does** send it, once per finding, to every plugin
 that declares the capability, after the minimized input reproduces. A declared `reproducer` that
-answers unreadably strands every finding of that plugin without the artifact a triager runs, and
+answers unreadably strands every finding of that plugin without the artifact that a triager runs, and
 `check-harness` fails that as `reproducer-schema`.
 
 A schema-valid script is not a proven script. The engine stores your bytes without reading
@@ -221,16 +228,19 @@ repository runs its own rendered reproducer in its own tests
 (`packages/harness-py/test/repro_test.py`; `crates/afz-engine/tests/minimize.rs` launches the
 js-ts `.mjs` under node and requires the same fault class on the same source line). Write the
 script for the triager who has never seen the scan: notes go on their own lines, never inside
-the call — a `#` comment there swallows the closing bracket — and a deadline finding reproduces
+the call — a `#` comment there hides the closing bracket — and a deadline finding reproduces
 by *not returning*, because `reproducer` carries no fault context and the wall clock is the
 fault; say in the header when to stop the script, or the triager waits forever on one that has
 already succeeded.
 
 ## 7. Classification
 
-`Outcome` has three kinds. `via` names the rule that decided it, and the engine puts it on the
-finding verbatim. `guardSites` on a `TargetDescriptor` carries the source lines the target itself
-throws from; the classification rule in the plugin reads it and the engine never sees it
+This is the one judgement that the engine never makes. It reads `ok`, `rejected`, and `failed` and
+nothing else, so what those three words mean for your language is yours to settle.
+
+`Outcome` has three kinds. `via` records the rule that produced it, and the engine puts it on the
+finding verbatim. `guardSites` on a `TargetDescriptor` carries the source lines that the target itself
+throws from; the classification rule in the plugin reads it and the engine never reads that field
 (`crates/afz-protocol/src/targets.rs`).
 
 **A plugin never answers `invoke` with an RPC error to report a fault.** An error frame is
@@ -241,9 +251,9 @@ engine's own `via` strings for a lost plugin are `deadline`, `processExit`, `plu
 ([`docs/examples/yaml.md`](examples/yaml.md):46-52): a plugin that dies produces findings that are
 not the target's.
 
-A fault is `Outcome::Failed` with a `fault` of `{class, message, frames}`. A refusal the target
+A fault is `Outcome::Failed` with a `fault` of `{class, message, frames}`. A refusal that the target
 declared — a thrown `TypeError` on a validated parameter, a returned error value — is
-`Outcome::Rejected`. The plugin decides which; the engine only reads `kind` and `via`.
+`Outcome::Rejected`. Your plugin makes that call; the engine only reads `kind` and `via`.
 
 ## 8. Performance contract
 
@@ -271,8 +281,8 @@ milliseconds that answers inside `deadlineMs` or kills its own call.
 
 ### Discovery is the cost you multiply by your core count
 
-The engine sends `discover` to every plugin process it starts, and no protocol method carries an
-inventory from one process to another, so a plugin cannot hand its workers the answer it already
+The engine sends `discover` to every plugin process that it starts, and no protocol method carries an
+inventory from one process to another, so a plugin cannot hand its workers the answer that it already
 computed. A default scan therefore runs discovery `workers + 1` times before its first invocation,
 and again on every worker restart (`Worker::restart`).
 
@@ -285,8 +295,8 @@ The consequence for you is a number you control: a `discover` that takes 20 s tu
 scan into minutes of nothing before the first invocation, and `setup … ms` in `engine.log` is where
 you will see it. Bound the work and report what you left out. ADR 0008 states the rule for type
 lowering: "The work was unbounded, not the budget"
-(`docs/decisions/0008-…:48`); the inventory reports a shape that was too large instead of claiming
-a shape it never built (`docs/decisions/0008-…:35-36`). Unbounded lowering OOM'd at 4 GB after 119 s
+(`docs/decisions/0008-…:48`); the inventory reports a shape that was too large instead of reporting
+a shape that it never built (`docs/decisions/0008-…:35-36`). Unbounded lowering OOM'd at 4 GB after 119 s
 and looked like the 120 s discovery timeout (`docs/decisions/0008-…:7-8`).
 
 ### The deadline is the search's breadth, not your time limit
@@ -307,14 +317,17 @@ because a scan result must read the same whichever harness produced it. Where th
 interruptible timer (no `SIGALRM`), skip the arm and let the engine kill; you lose that call's
 coverage and nothing else.
 
-The engine trusts your `durationMs` and your `memoryBytes`; it does not measure them
-(`docs/architecture.md:362`, `docs/decisions/0004-…:52-53`).
+The engine accepts your `durationMs` and your `memoryBytes` as you report them; it does not measure them
+(`docs/architecture.md#oracles-and-defaults`, `docs/decisions/0004-…:52-53`).
 
 The wasm probe at a 2000 ms deadline ran 1006 invocations in 30 s with 73 % of the worker-seconds
 spent at the deadline; the same scan at 50 ms ran 23 963
 (`docs/decisions/0004-…:45-47`). The deadline, not the machine, sets how wide the search gets.
 
 ## 9. Known traps
+
+Every trap below produced a scan that read clean, not a crash. That is what they have in common: the
+result is wrong and nothing reports it.
 
 1. **Resetting coverage per call.** The start/stop cycle costs 8–20 ms and must complete before the
    realm compiles the target, or every digest after the first is empty
@@ -336,14 +349,14 @@ spent at the deadline; the same scan at 50 ms ran 23 963
 8. **Reporting an unreachable entry point only at `prepare`.** A `Skip` makes the engine ask again on
    the next invocation (`Worker::invoke`), so the planner re-prepares it forever. `discover`'s
    `skipped[]` is the channel for a symbol you can never call
-   (`docs/architecture.md:236-247`).
+   (`docs/architecture.md#interface-ir`).
 9. **Target code writing to stdout.** It corrupts the protocol channel. See the `debug` export in
    `docs/examples/yaml.md:74-78`.
 10. **An unhandled rejection that kills the worker.** Attribute it to the in-flight call instead, or
     the invocation is filed as a plugin loss rather than as the target's fault
     (`docs/decisions/0006-…:36`, Decision 5).
-11. **Keying a fault's identity on runtime frames.** Every Rust wasm panic then folds into one
-    finding (`docs/decisions/0003-…:47-49`). Frames must name the target's code.
+11. **Basing a fault's identity on runtime frames.** Every Rust wasm panic then folds into one
+    finding (`docs/decisions/0003-…:47-49`). Frames must identify the target's code.
 12. **Rebuilding the target artifact to get finer coverage.** It changes the artifact under test
     (`docs/decisions/0003-…:17`).
 13. **Raising `INVOCATIONS_PER_WORKER`.** It exists to bound heap growth, not to save latency
@@ -352,14 +365,14 @@ spent at the deadline; the same scan at 50 ms ran 23 963
 14. **Returning `sys.monitoring.DISABLE` from the LINE callback.** Measured on Python 3.14.4: a
     callback that returned `DISABLE` reported the first call's 4 lines and then reported nothing
     for those same lines on every later call — trap 1's mistake in a second runtime. The 23 wire
-    rules will not catch it: they check that digests are named by the map, not that they grew, so a
+    rules will not catch it: they check that the map lists each digest, not that the digests grew, so a
     silently empty digest passes all of them. The template rule `coverage-digest-live` does catch
     it, because two inputs that both digest to nothing are the same digest. Arm once and return
     `None`.
 15. **Believing `set_events(TOOL_ID, 0)` stopped your coverage.** Measured on Python 3.14.4:
     after clearing the tool's events, a call still reported 5 lines, because `set_local_events`
     arms events per code object and the tool-level mask does not disarm them. There is no
-    mid-scan off switch; gate collection on the per-invocation digest, not on the mask.
+    mid-scan off switch; make collection depend on the per-invocation digest, not on the mask.
 16. **Reporting `start == end` in a `coverageMap` entry whose id xors the offsets.** The
     `js-ts` id is `fnv1a64(url) ^ (start << 1) ^ (end << 1)` folded to u32, which is safe only
     because V8 block ranges always have `start != end`. A line-unit harness reports
@@ -369,7 +382,7 @@ spent at the deadline; the same scan at 50 ms ran 23 963
 
 ## 10. Registering the harness
 
-No Rust registration is needed. `codebase.command` in `autofuzz.json` names the argv:
+No Rust registration is needed. `codebase.command` in `autofuzz.json` gives the argv:
 
 ```jsonc
 {
@@ -380,27 +393,27 @@ No Rust registration is needed. `codebase.command` in `autofuzz.json` names the 
 }
 ```
 
-`default_command` in `crates/afz-engine/src/config.rs` knows only `js-ts`, so any other harness name
-without a `command` fails at load with
-`harness "{name}" has no built-in command; set \`command\` to the plugin argv`. Add a name to
-`default_command` only for a harness this repository ships and can therefore point a relative path
-at.
+No harness name is special. `LoadedConfig::launch_for` reads `command` and nothing else, so a scan project
+that leaves it out fails at load with `` `command` is required for harness "{name}": the engine does not
+guess a runtime `` (`crates/afz-engine/src/config.rs:323-325`, checked again by `validate` at `:439-443`).
+The engine once had a built-in argv for `js-ts`, and older text in this repository still says so; that
+path is gone, and `js-ts` needs a `command` like every other harness.
 
 Two resolution details:
 
-- argv elements that name an existing file are canonicalized against the directory `afz` was run
-  from (`absolutized` in `config.rs`), because the built-in
+- argv elements that point at an existing file are canonicalized against the directory that `afz` was
+  run from (`absolutized` in `config.rs`), because the built-in
   `packages/harness-js/dist/server.js` would otherwise be looked up inside the scanned project.
 - The plugin's working directory is the directory holding `autofuzz.json`, and the engine injects
   `AFZ_ROOT` and `AFZ_CONFIG` pointing at that directory and at the file. The parent environment is
   inherited. The `discover` request's `root` is `codebase.root` resolved against that directory, so
-  it is not always the same directory the plugin starts in.
+  it is not always the same directory that the plugin starts in.
 
 ## 11. Testing a harness
 
-Run `afz validate-harness` first (section 2). Then copy the patterns the shipped harnesses use.
+Run `afz validate-harness` first (section 2). Then copy the patterns that the shipped harnesses use.
 
-**A wire-vocabulary pin.** The language-neutral requirement: every literal the plugin sends or
+**A wire-vocabulary pin.** The language-neutral requirement: every literal that the plugin sends or
 reads — method names, capability strings, skip reasons, materializations, error codes — is
 compared at test time against `docs/schema/*.json` and against the plugin interface in
 `docs/architecture.md`, in a test that needs no Rust binary and no network. The two shipped
@@ -416,16 +429,17 @@ content-derived id. `packages/harness-js/test-targets/billing/` is what
 
 **A reproducer run.** The language-neutral requirement: the plugin's own tests render a
 reproducer against the fixture directory and *execute* it, asserting the fault class and the
-file it names, because schema validation proves the shape of the answer and nothing about
+file that it points at, because schema validation proves the shape of the answer and nothing about
 whether it runs. `packages/harness-py/test/repro_test.py` and
 `crates/afz-engine/tests/minimize.rs` are the two shipped examples.
 
 **A conformance template emitter.** The language-neutral requirement: the package ships a small
-program that renders its fixture directory plus an `afz-conformance-manifest.json` naming the
-symbol that proves each template property (`conformance/emit.py` for the Python harness,
+program that renders its fixture directory plus an `afz-conformance-manifest.json` that identifies
+the symbol that proves each template property (`conformance/emit.py` for the Python harness,
 `conformance/emit.mjs` for the js-ts one). The suite — not the emitter — drives every property
-over the protocol and judges the answer, so a fixture that claims a property it does not realize
-fails. Properties a runtime genuinely cannot express are declared `notApplicable` with a reason,
+over the protocol and judges the answer, so a fixture that asserts a property that it does not
+actually trigger fails. Properties that a runtime genuinely cannot express are declared
+`notApplicable` with a reason,
 and the reason appears in the report, where CI keeps the not-applicable set as a golden list
 (section 12).
 
@@ -459,7 +473,7 @@ and `lifecycle-nonce` (section 12). The rules whose message is not self-explanat
 |`outcome-duration`|The deadline oracle reads that number. A negative or absent `durationMs` makes `deadlineCuts` meaningless.|
 |`unknown-method-id`, `framing-intact`|These are the two requests the engine's own client never makes, so nothing else catches them.|
 
-The four notes are cost observations: `discover-ms` (with the projection the engine will make of
+The four notes are cost observations: `discover-ms` (with the projection that the engine will make of
 it), `prepare-ms`, `self-cut`, and `repeat-drift`. `repeat-drift` means the same values answered a
 different `kind` on the second `invoke` for that target: usually leaked module state, occasionally a
 target that reads a clock.
@@ -467,11 +481,11 @@ target that reads a clock.
 ## 12. The conformance template, versions, and the runtime lifecycle
 
 The wire contract says what a response must contain. It cannot say what a harness must be able to
-do: crash on a poisoned string, refuse a closed channel, materialize a receiver it never saw.
+do: crash on a poisoned string, reject a closed channel, materialize a receiver that it never encounters.
 Template v1 states those ten semantic properties, and `afz-conformance` embeds the statement
 (`crates/afz-conformance/template/v1.json`) in the binary.
 
-**The emitter pattern.** The template names properties; only the harness knows which of its own
+**The emitter pattern.** The template lists properties; only the harness knows which of its own
 symbols can demonstrate them. So the harness package ships an emitter that renders a fixture tree
 plus a manifest, and the suite does the driving and the judging:
 
@@ -502,7 +516,7 @@ manifest. The plugin itself stays wherever the harness package keeps it.
       ]
     },
     "unconstructible-receiver": {"symbol": "post", "blockedByType": "Ledger"},
-    "private-symbol": {"notApplicable": "the module loader exposes every export it discovers"}
+    "private-symbol": {"symbol": "_cache_key"}
   },
   "lifecycle": {
     "launch": ["java", "-jar", "app.jar", "--port={{port}}"],
@@ -518,24 +532,29 @@ manifest. The plugin itself stays wherever the harness package keeps it.
 must trigger the property (`inputs`, a list of argument lists, for the rules that compare two
 calls).
 
+The manifest above is the shape that the `python` harness emits, and that harness realizes all ten properties.
+The `js-ts` manifest shows the other branch. It declares `private-symbol` not applicable, because
+TypeScript discovery enumerates exported symbols only, so a module-local function is never enumerated and
+no `skipped` entry can refer to it. See [`harnesses.md`](harnesses.md) for that gap in full.
+
 Every property of the template needs an entry: a symbol plus the input (or inputs) that must
 trigger it, a `blockedByType` for `unconstructible-receiver`, or a `notApplicable` reason. A
-property the manifest does not account for fails the run; the emitter is never allowed to be silent.
+property that the manifest does not account for fails the run; the emitter is never allowed to be silent.
 
 **Versions are immutable.** A published template version never changes: rules are only ever added
 to a new version, so a plugin that passed v1 keeps passing v1 no matter what the repository
-learns later. `afz` embeds the versions it knows and refuses a manifest that names another. The
+learns later. `afz` embeds the versions it supports and rejects a manifest that cites another. The
 report's `template.properties` lists every verdict — pass, fail, or not-applicable with its
-reason — and CI pins the not-applicable set, so a new gap must be deliberate.
+reason — and CI keeps the not-applicable set as a golden list, so a new gap has to be deliberate.
 
 **The runtime lifecycle.** A REST-backed harness owns a service, and a user cannot be expected to
 start it by hand before validating. The manifest's `lifecycle` block lets the suite do it:
-`launch` is the package's own command line, `{{port}}` is replaced by a port the suite allocated
+`launch` is the package's own command line, `{{port}}` is replaced by a port that the suite allocated
 (the suite never assumes a fixed port), and `health` must answer 2xx–4xx before anything else
-runs. `teardown` runs when the suite is done, and every failure names the package's own argv:
+runs. `teardown` runs when the suite is done, and every failure quotes the package's own argv:
 `lifecycle-service` when the service never came up or teardown failed, `lifecycle-nonce` when the
 `probe` target's answer does not echo the manifest's `nonce`. That last rule is what proves the
-plugin is talking to the service this suite started, and not to a table it read from disk.
+plugin is talking to the service that this suite started, and not to a table that it read from disk.
 
 ## 13. Where the numbers came from
 
@@ -550,7 +569,7 @@ plugin is talking to the service this suite started, and not to a table it read 
   — discovery cost and the bound-and-report rule.
 - [`docs/decisions/0011-plugin-pool-runs-at-the-machines-ceiling.md`](decisions/0011-plugin-pool-runs-at-the-machines-ceiling.md)
   — pool scaling, digest cost, and worker retirement.
-- [`docs/examples/yaml.md`](examples/yaml.md) — where the wall clock of a large scan goes.
+- [`docs/examples/yaml.md`](examples/yaml.md) — the wall-clock breakdown of a large scan.
 - [`docs/dogfood/ufo.md`](dogfood/ufo.md) — the same on a small package.
 - [`crates/xtask/src/fake.rs`](../crates/xtask/src/fake.rs) — the reference plugin side: all seven
   methods answered from a script, with `handshake`, `requireDiscover`, and `dropCoverage` knobs for

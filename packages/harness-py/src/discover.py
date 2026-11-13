@@ -1,6 +1,6 @@
 """`discover`: an `ast` inventory of the scan project, never an import of it.
 
-Discovery reads declarations only (`docs/architecture.md:136`): importing user code to
+Discovery reads declarations only (`docs/architecture.md#the-seven-methods`): importing user code to
 enumerate it runs that code inside the plugin. A symbol the engine cannot build inputs
 for is reported as `skipped` and never as a target, so `constructible + fixture-required
 + opaque == discovered` holds by construction (`packages/harness-js/src/discover.ts:407-411`).

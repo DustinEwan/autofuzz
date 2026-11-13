@@ -1,7 +1,7 @@
 """Lower one Python annotation to a `TypeNode` (`docs/schema/type-node.json`).
 
 The input is the annotation's AST node, never an evaluated object: discovery must not
-import the target (`docs/architecture.md:136`). `classes` maps a bare class name to the
+import the target (`docs/architecture.md#the-seven-methods`). `classes` maps a bare class name to the
 `ClassDef` facts gathered from the scan root, because a parameter annotated with a
 project-local class is the only annotation this module cannot decide alone: it becomes an
 `object` when the constructor is defaulted and an `opaque` otherwise.
