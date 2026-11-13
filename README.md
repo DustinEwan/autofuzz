@@ -20,27 +20,39 @@ write one, and the fuzzer itself does not change.
 
 ## Install and run a first scan
 
-You need Linux or macOS and Rust 1.88 or newer. Beyond that you need the host runtime of the harness you
-plan to scan, because no harness comes with the engine: each one lives in its own repository, and you
-install it with `afz install-harness`. Three exist today: `js-ts` for TypeScript and JavaScript needs
-Node 24 or newer, `python` for Python needs Python 3.12 or newer, and `wasm` scans a WebAssembly module.
-[`docs/harnesses.md`](docs/harnesses.md) gives what each one can do and what it still cannot.
+You need Linux or macOS. The installer below puts a Rust toolchain in place when you have none. Beyond
+that you need the host runtime of the harness you plan to scan, because no harness comes with the
+engine: each one lives in its own repository, and you install it with `afz install-harness`. Three exist
+today: `js-ts` for TypeScript and JavaScript needs Node 24 or newer, `python` for Python needs Python
+3.12 or newer, and `wasm` scans a WebAssembly module. [`docs/harnesses.md`](docs/harnesses.md) gives
+what each one can do and what it still cannot.
 
-Build the engine, which is the `afz` command, then install the plugin for the harness you plan to scan.
-The engine never imports your code: it starts a plugin process and calls your target through that
-plugin, so the plugin has to be installed before a scan runs.
+Install the engine, which is the `afz` command:
 
 ```sh
-cargo build --release
-./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git
+curl -fsSL https://raw.githubusercontent.com/DustinEwan/autofuzz/main/install.sh | sh
 ```
 
-The engine lands at `target/release/afz`. `install-harness` clones the harness repository, builds it,
-and drives the plugin through the conformance suite, the checks every plugin must pass, before it
-records anything. `afz harnesses` lists what the install recorded.
+The script installs Rust when you have none, builds a release binary, and puts `afz` and `afz-mcp` in
+`~/.local/bin`. It never uses `sudo`; pass `AFZ_INSTALL_DIR` to choose another directory, and it prints
+the `PATH` line to add when that directory is not already on your `PATH`. To build from a clone instead,
+run `cargo build --release` and use `target/release/afz`.
+
+Then install the plugin for the harness you plan to scan. The engine never imports your code: it starts
+a plugin process and calls your target through that plugin, so the plugin has to be installed before a
+scan runs.
+
+```sh
+afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git
+```
+
+`install-harness` clones the harness repository, builds it, and drives the plugin through the conformance
+suite, the checks every plugin must pass, before it records anything. `afz harnesses` lists what the
+install recorded.
 
 A scan project is a directory that holds an `autofuzz.json`, and that file names the harness the scan
-uses. `vendor/ufo` in this repository is one, which is why the commands below work against it. Your own
+uses. `vendor/ufo` in this repository is one, which is why the commands below work against it; when you
+installed with the one-liner and have no clone, point `--path` at your own project instead. Your own
 project needs the file first, because `probe-plugin` with no `autofuzz.json` above the directory and no
 `--command` answers from the fake plugin that the protocol tests drive, and prints that fixture's targets
 instead of yours. The minimum is the `codebase` block under `Harness plugins` below, and

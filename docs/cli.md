@@ -24,8 +24,9 @@ scope, and what a scan leaves on disk. For how a scan works inside, read
 |`--json`|Print raw JSON instead of the table.|
 
 With no `--command` and no scan project above the directory you point at, `probe-plugin` falls back to
-the fake plugin that the protocol tests drive, which `cargo build --release` puts beside `afz`. That is
-how you check the wire when you have no target yet.
+the fake plugin that the protocol tests drive. That plugin sits beside `afz` only in a workspace you
+built yourself with `cargo build --workspace`; a binary you installed with `install.sh` has none beside
+it, so pass `--command` or point `--path` at a scan project.
 
 ### `afz scan`
 

@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   pull_request:
 
 env:
@@ -45,3 +45,16 @@ jobs:
 
       - name: Tests
         run: cargo test --workspace
+
+  # `curl | sh` runs this file with sh, which is dash on Debian and Ubuntu, so a bashism breaks the
+  # installer silently. shellcheck plus a real dash parse is the gate.
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint the installer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck dash
+          shellcheck -s sh install.sh
+          dash -n install.sh

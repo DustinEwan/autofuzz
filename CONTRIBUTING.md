@@ -30,7 +30,7 @@ cargo test --workspace
 The harness suites run in their own repositories (`autofuzz-harness-js-ts`,
 `autofuzz-harness-python`, `autofuzz-harness-wasm`), and the engine's own tests need the `js-ts` and
 `python` harnesses installed first (`afz install-harness <git url>`); the template gates read those
-records. `.github/workflows/ci.yml` runs the same commands on every push to `master` and on every
+records. `.github/workflows/ci.yml` runs the same commands on every push to `main` and on every
 pull request, after installing all three harnesses - that install is itself the conformance gate for
 the shipped plugins. The clippy step passes `-D warnings`, so a new warning fails the build instead
 of scrolling past. That applies to every target, tests included.
