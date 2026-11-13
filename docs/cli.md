@@ -5,13 +5,15 @@ server. It gives every flag, every configuration key with its default, how a sca
 scope, and what a scan leaves on disk. For how a scan works inside, read
 [`architecture.md`](architecture.md) instead.
 
-## The three subcommands
+## The five subcommands
 
 |Command|What it does|
 |---|---|
 |`afz probe-plugin`|Starts a plugin, completes the handshake, and prints the inventory it discovers. Costs no invocations.|
 |`afz scan`|Runs a coverage-guided scan and writes the scan result.|
-|`afz validate-harness`|Drives a plugin through the conformance suite and reports rule by rule.|
+|`afz validate-harness`|Drives a harness plugin through the conformance suite and reports rule by rule.|
+|`afz install-harness`|Clones a harness repository, builds and validates its plugin, and records it for scans.|
+|`afz harnesses`|Lists the installed harness plugins and the command each one resolves to.|
 
 ### `afz probe-plugin`
 
@@ -47,15 +49,39 @@ scanned project, not under the directory you ran `afz` from.
 
 |Flag|Meaning|
 |---|---|
-|`--command <argv…>`|Plugin argv to drive.|
-|`--path <dir>`|Scan project to discover against. Defaults to the working directory.|
+|`<harness>`|An installed harness name, or a directory holding `afz-harness.json`. Defaults to the working directory, so running it inside a harness checkout validates that checkout.|
 |`--targets <n>`|How many discovered targets `prepare` and `invoke` run on. Default 8.|
-|`--deadline <ms>`|`deadlineMs` for every driven invocation. Default 1000.|
+|`--deadline <ms>`|`deadlineMs` for every driven invocation. Default: the harness manifest's `conformance.deadlineMs`, then 1000.|
 |`--json`|Print the machine-readable report instead of the table.|
 
-Inside this repository the same suite runs as `cargo run -p afz-xtask -- check-harness`. Both entries
-share [`crates/afz-conformance/`](../crates/afz-conformance/), so a plugin cannot pass one and fail the
-other.
+Validation names a harness and nothing else. The plugin's entrypoint is that harness's
+`afz-harness.json` `command`, and the scan project is whatever that harness's `conformance.emitter`
+renders into a temporary directory: there is no `--command` and no `--path`, because the harness
+already carries both. Pointing a plugin at an arbitrary project is a different job and belongs to
+`afz probe-plugin` and `afz scan`, which keep `--command`.
+
+### `afz install-harness`
+
+|Flag|Meaning|
+|---|---|
+|`<url>`|Git URL or local path of a harness repository carrying `afz-harness.json`.|
+|`--ref <reference>`|Branch, tag, or commit to install. Default: the repository's default branch.|
+|`--no-validate`|Record the plugin without driving the conformance suite. A manifest with no `conformance` block installs only this way.|
+|`--json`|Print the conformance report as JSON instead of the table.|
+
+Install clones to a staging directory, runs the manifest's `install` argv and then its `build` argv,
+and validates the plugin against the conformance suite before recording anything. A failed install
+leaves the previous install of that name in place and records nothing. The record lives at
+`$AFZ_HOME/autofuzz/harnesses/<name>/harness.json` and holds the absolute plugin argv, the checkout
+root, and the conformance block.
+
+### `afz harnesses`
+
+|Flag|Meaning|
+|---|---|
+|`--json`|Print the records as JSON instead of the table.|
+
+Lists one row per installed harness: name, version-free handshake name, and the resolved command.
 
 ## The scan project file
 
@@ -67,7 +93,7 @@ hard to try, and where to write the result.
   "project": "billing-service",
   "codebase": {
     "harness": "js-ts",
-    "command": ["node", "packages/harness-js/dist/server.js"],  // required, for every harness
+    // `command` omitted: the installed `js-ts` plugin resolves from the registry.
     "include": ["src/**/*.ts"],
     "exclude": ["**/*.test.ts"],
     "rejectClasses": ["ValidationError"]      // error classes you declare as this API's refusal channel
@@ -91,8 +117,11 @@ validation, and a scan of it stops with `runtime targets are not implemented`.
 
 Four keys are worth more than a comment:
 
-- `codebase.command` is required, and the engine runs it with the scan root as the working directory. A
-  relative path in it is resolved from where you run `afz`, so an absolute path is the safer habit.
+- `codebase.harness` always names the harness. `command` is optional when `afz install-harness`
+  recorded that name, and the engine never guesses a runtime otherwise: an uninstalled name is an
+  error, not a `PATH` search. `command` is how you name a plugin nobody installed; the engine runs it
+  with the scan root as the working directory, and a relative path in it is resolved from where you
+  run `afz`, so an absolute path is the safer habit.
 - `codebase.rejectClasses` changes how a call is classified for your code only. Both shipped plugins
   read it, and each has its own default idea of what a refusal looks like.
 - `output.renderers` accepts `json` and `markdown`, which are the two renderers that exist today. The
@@ -164,30 +193,38 @@ corpus of an earlier scan, so the new scan starts from the inputs that scan had 
 
 ## The plugin command for each harness
 
-Each shipped harness needs `codebase.command`, and what you write there differs only in how the plugin is
-started:
-
-```jsonc
-"command": ["node", "packages/harness-js/dist/server.js"]
-```
-
-```jsonc
-"command": ["python3", "packages/harness-py/src/server.py"]
-```
-
-The wasm harness has two halves to build, the host plugin and the module that it scans:
+Install each shipped harness once, from its own repository, and scan projects name the harness and
+nothing else:
 
 ```sh
-cargo build --release -p afz-wasm
-cargo build --release --target wasm32-unknown-unknown --manifest-path targets/wasm-probe/Cargo.toml
+afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git
+afz install-harness https://github.com/DustinEwan/autofuzz-harness-python.git
+afz install-harness https://github.com/DustinEwan/autofuzz-harness-wasm.git
 ```
-
-Its scan project gives both, the host binary first and the module second:
 
 ```jsonc
-"command": ["target/release/afz-wasm",
-            "targets/wasm-probe/target/wasm32-unknown-unknown/release/wasm_probe.wasm"]
+"codebase": { "harness": "js-ts" }
 ```
+
+The install builds the plugin and validates it against the conformance suite before it records the
+argv, so a scan starts the plugin that passed, from the path the record holds. `afz harnesses` shows
+what each name resolves to.
+
+`command` remains the way to point a scan at a plugin nobody installed — a build you are debugging,
+for instance — and it wins over the record:
+
+```jsonc
+"codebase": { "harness": "js-ts", "command": ["node", "/home/me/harness-js/dist/server.js"] }
+```
+
+For wasm, the scan project names neither a command nor a module: the plugin takes the module as the
+first `.wasm` under the scan root, so the module is scan data, not a plugin property.
+
+## Environment variables
+
+|Variable|Meaning|
+|---|---|
+|`AFZ_HOME`|Where `afz install-harness` records its registry: `$AFZ_HOME/autofuzz/harnesses`. Unset, the registry falls back to `$XDG_DATA_HOME/autofuzz/harnesses`, then to `~/.local/share/autofuzz/harnesses`. Point it at a scratch directory to try an install without touching the real one.|
 
 ## Run scans from a coding agent
 

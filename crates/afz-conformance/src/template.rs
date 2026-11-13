@@ -12,7 +12,9 @@
 //! and the report shows that line rather than a silent pass.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use afz_protocol::ValueTree;
 use serde::{Deserialize, Serialize};
@@ -59,6 +61,11 @@ pub struct Manifest {
     /// properties are not applicable.
     #[serde(default)]
     pub lifecycle: Option<Lifecycle>,
+    /// How to run the project's own fixture validator, from the project root. An
+    /// empty list means the project ships none, and the template verdicts then rest
+    /// on the plugin's own answers.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub validator: Vec<String>,
 }
 
 /// One manifest entry: a realization, or a justified absence.
@@ -104,7 +111,7 @@ pub struct Lifecycle {
 
 /// How one template property ended. `NotApplicable` carries the manifest's reason; it is never
 /// counted as a pass and never counted as a violation.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Verdict {
     Pass,
@@ -113,7 +120,7 @@ pub enum Verdict {
 }
 
 /// One property's line of the template report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PropertyResult {
     pub id: String,
@@ -122,7 +129,7 @@ pub struct PropertyResult {
 }
 
 /// The template section of a report: present only when the run was template-driven.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateReport {
     pub version: u32,
@@ -139,6 +146,26 @@ impl TemplateReport {
     pub fn not_applicable(&self) -> usize {
         self.properties.iter().filter(|p| p.verdict == Verdict::NotApplicable).count()
     }
+}
+
+/// The properties a fixture can speak for. The project's own fixture validator reports
+/// exactly these ids, and [`crate::compare_validator`] requires its verdicts to agree with
+/// the protocol judge's. The other three - `stdout-purity`, `reproducer-script`,
+/// `deadline-sleep` - describe the plugin process, and only the protocol judge may judge
+/// them. One list, read by the driver, the CLI, and both READMEs.
+pub const FIXTURE_SHAPED: &[&str] = &[
+    "crash-unguarded",
+    "guard-refusal",
+    "private-symbol",
+    "unrepresentable-symbol",
+    "unconstructible-receiver",
+    "method-receiver",
+    "coverage-digest-live",
+];
+
+/// Whether `id` is one of the seven properties the fixture validator owns.
+pub fn is_fixture_shaped(id: &str) -> bool {
+    FIXTURE_SHAPED.contains(&id)
 }
 
 /// Which manifest fields a realization must carry, per property id. A property not listed here
@@ -199,4 +226,63 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
         return Err(format!("{} names \"{extra}\", which is not a property of template v1; template versions are immutable", path.display()));
     }
     Ok(manifest)
+}
+
+/// Run the project's own fixture validator: one JSON `TemplateReport` on stdout, exit 0 even
+/// when a property fails, non-zero only when the validator itself could not run. `deadline_ms`
+/// is its wall-clock limit. The product driver (`afz validate-harness`, `afz install-harness`)
+/// and the engine's template gates share this one runner, so a gate that asserts the validator
+/// section sees exactly what an install sees.
+pub fn run_validator(argv: &[PathBuf], dir: &Path, deadline_ms: u64) -> Result<TemplateReport, String> {
+    let joined = argv.iter().map(|argument| argument.display().to_string()).collect::<Vec<_>>().join(" ");
+    let mut child = Command::new(&argv[0])
+        .args(&argv[1..])
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("fixture-validator: {joined} did not start: {e}"))?;
+    // Both pipes drain on their own threads: a chatty validator must not deadlock the driver
+    // while its exit status is being polled.
+    let mut stdout = child.stdout.take().expect("stdout is piped");
+    let mut stderr = child.stderr.take().expect("stderr is piped");
+    let out_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut stdout, &mut buf).map(|_| buf)
+    });
+    let err_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut stderr, &mut buf).map(|_| buf)
+    });
+    let limit = Duration::from_millis(deadline_ms);
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if started.elapsed() > limit {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!("fixture-validator: {joined} overran its {deadline_ms} ms limit"));
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(e) => return Err(format!("fixture-validator: waiting on {joined} failed: {e}")),
+        }
+    };
+    let stdout = out_reader.join().map_err(|_| "fixture-validator: stdout reader panicked")?.unwrap_or_default();
+    let stderr = err_reader.join().map_err(|_| "fixture-validator: stderr reader panicked")?.unwrap_or_default();
+    if !status.success() {
+        return Err(format!("fixture-validator: {joined} exited {status}; stderr: {}", tail(&stderr)));
+    }
+    serde_json::from_str(&String::from_utf8_lossy(&stdout))
+        .map_err(|e| format!("fixture-validator: {joined} did not print a TemplateReport: {e}; stderr: {}", tail(&stderr)))
+}
+
+/// The last 2048 bytes of the validator's stderr, which is where its own failure explanation
+/// lives; the head of a stack trace would only push the cause out of the message.
+fn tail(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let keep = text.len().min(2048);
+    text[text.len() - keep..].to_string()
 }

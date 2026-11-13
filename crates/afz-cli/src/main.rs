@@ -1,5 +1,6 @@
 //! The `afz` command.
 
+mod install;
 mod probe;
 mod scan;
 mod validate;
@@ -25,7 +26,7 @@ struct Cli {
 enum Command {
     /// Start a harness plugin, shake hands, and print the inventory it discovers.
     ProbePlugin {
-        /// Plugin argv, e.g. `--command node packages/harness-js/dist/server.js`.
+        /// Plugin argv, e.g. `--command node /home/me/harness-js/dist/server.js`.
         #[arg(long, num_args = 1..)]
         command: Vec<String>,
         /// Scan project to discover against. Defaults to the current directory.
@@ -64,21 +65,38 @@ enum Command {
         #[arg(long, short)]
         quiet: bool,
     },
-    /// Drive a harness plugin through the conformance suite and report rule by rule.
+    /// Validate a harness plugin against the contract and the conformance template.
     ValidateHarness {
-        /// Plugin argv, e.g. `--command node packages/harness-js/dist/server.js`.
-        #[arg(long, num_args = 1..)]
-        command: Vec<String>,
-        /// Scan project to discover against. Defaults to the working directory.
-        #[arg(long)]
-        path: Option<String>,
-        /// How many discovered targets `prepare` and `invoke` run on.
+        /// An installed harness name, or a harness directory. Defaults to the working directory,
+        /// so `afz validate-harness` inside a harness checkout validates that checkout.
+        harness: Option<String>,
+        /// How many discovered targets `prepare` and `invoke` run on. Defaults to 8.
         #[arg(long)]
         targets: Option<usize>,
-        /// `deadlineMs` for every driven invocation.
+        /// `deadlineMs` for every driven invocation. Defaults to the harness manifest's
+        /// `conformance.deadlineMs`, then to 1000.
         #[arg(long)]
         deadline: Option<u64>,
         /// Print the machine-readable report instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Install the harness plugin a git repository provides, and validate it.
+    InstallHarness {
+        /// Git URL or local path of a harness repository carrying `afz-harness.json`.
+        url: String,
+        /// Branch, tag, or commit to install. Defaults to the repository's default branch.
+        #[arg(long = "ref")]
+        reference: Option<String>,
+        /// Record the plugin without driving the conformance suite.
+        #[arg(long)]
+        no_validate: bool,
+        /// Print the conformance report as JSON instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the installed harness plugins and the command each one resolves to.
+    Harnesses {
         #[arg(long)]
         json: bool,
     },
@@ -91,9 +109,9 @@ fn main() {
         Command::Scan { path, config, budget, seed, resume, strategy, git, workers, quiet } => {
             scan::run(path, config, &budget, seed, resume, strategy, git, workers, quiet)
         }
-        Command::ValidateHarness { command, path, targets, deadline, json } => {
-            validate::run(command, path, targets.unwrap_or(8), deadline.unwrap_or(1000), json)
-        }
+        Command::ValidateHarness { harness, targets, deadline, json } => validate::run(harness.as_deref(), targets, deadline, json),
+        Command::InstallHarness { url, reference, no_validate, json } => install::run(&url, reference.as_deref(), no_validate, json),
+        Command::Harnesses { json } => install::list(json),
     };
     match result {
         Ok(()) => {}

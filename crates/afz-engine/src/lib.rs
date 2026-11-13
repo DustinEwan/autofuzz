@@ -10,6 +10,7 @@ pub mod corpus;
 pub mod finding;
 pub mod generate;
 pub mod git;
+pub mod harnesses;
 pub mod minimize;
 pub mod mutate;
 pub mod oracles;

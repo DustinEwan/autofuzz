@@ -19,7 +19,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
-use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -116,6 +115,8 @@ pub struct Report {
     pub not_applicable: usize,
     /// The template section, present only when the run was template-driven.
     pub template: Option<template::TemplateReport>,
+    /// The project's own fixture-side verdicts, absent when it ships no validator.
+    pub validator: Option<template::TemplateReport>,
 }
 
 impl Report {
@@ -159,6 +160,9 @@ pub struct Check {
     /// Template mode: a manifest naming the fixture symbols for the embedded template's ten
     /// properties. `None` runs schema-only: the protocol rules and nothing about semantics.
     pub template: Option<template::Manifest>,
+    /// The conformance project's own verdicts on its fixture, when it ships a
+    /// validator. `run` compares them with the protocol-side verdicts.
+    pub validator: Option<template::TemplateReport>,
 }
 
 impl Check {
@@ -174,6 +178,7 @@ impl Check {
             drive_targets: 8,
             deadline_ms: 1000,
             template: None,
+            validator: None,
         }
     }
 
@@ -194,12 +199,13 @@ struct Schema {
 }
 
 impl Schema {
-    fn load(file: &'static str) -> Schema {
-        let path = schema_dir().join(file);
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("{} is not readable: {e}; run `cargo run -p afz-xtask -- schema`", path.display()));
-        let document: serde_json::Value =
-            serde_json::from_str(&text).unwrap_or_else(|e| panic!("{} is not JSON: {e}", path.display()));
+    /// Build a validator from embedded text. The schemas are compiled in with `include_str!`
+    /// rather than read from disk, so validation works wherever `afz` was installed, including
+    /// a harness repository's CI that ran `cargo install --git`. `crates/xtask/tests/schema.rs`
+    /// fails on drift between these copies and the Rust types.
+    fn new(file: &'static str, text: &'static str) -> Schema {
+        let document: serde_json::Value = serde_json::from_str(text)
+            .unwrap_or_else(|e| panic!("docs/schema/{file} is not valid JSON: {e}"));
         Schema { file, validator: jsonschema::validator_for(&document).expect("the committed schema is a valid JSON Schema") }
     }
 
@@ -210,12 +216,6 @@ impl Schema {
             .next()
             .map(|error| format!("{subject} does not match docs/schema/{}: {error}", self.file))
     }
-}
-
-/// `docs/schema/`, resolved the way `crates/xtask/tests/schema.rs` resolves it: this crate sits
-/// one level below the repository root, and the schema is committed rather than generated here.
-fn schema_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join("docs/schema")
 }
 
 struct Schemas {
@@ -231,13 +231,13 @@ struct Schemas {
 impl Schemas {
     fn load() -> Schemas {
         Schemas {
-            handshake: Schema::load("handshake.json"),
-            discovery: Schema::load("discovery.json"),
-            prepare_resp: Schema::load("prepare-resp.json"),
-            outcome: Schema::load("outcome.json"),
-            coverage_map: Schema::load("coverage-map.json"),
-            minimize_resp: Schema::load("minimize-resp.json"),
-            reproducer_resp: Schema::load("reproducer-resp.json"),
+            handshake: Schema::new("handshake.json", include_str!("../../../docs/schema/handshake.json")),
+            discovery: Schema::new("discovery.json", include_str!("../../../docs/schema/discovery.json")),
+            prepare_resp: Schema::new("prepare-resp.json", include_str!("../../../docs/schema/prepare-resp.json")),
+            outcome: Schema::new("outcome.json", include_str!("../../../docs/schema/outcome.json")),
+            coverage_map: Schema::new("coverage-map.json", include_str!("../../../docs/schema/coverage-map.json")),
+            minimize_resp: Schema::new("minimize-resp.json", include_str!("../../../docs/schema/minimize-resp.json")),
+            reproducer_resp: Schema::new("reproducer-resp.json", include_str!("../../../docs/schema/reproducer-resp.json")),
         }
     }
 }
@@ -280,7 +280,71 @@ pub fn render(report: &Report) -> String {
             out.push_str(&format!("n/a   {}: {}\n", property.id, property.detail));
         }
     }
+    if report.template.is_some() {
+        match &report.validator {
+            Some(section) => out.push_str(&format!(
+                "validator: {} pass, {} fail, {} not-applicable\n",
+                section.passed(),
+                section.failed(),
+                section.not_applicable(),
+            )),
+            None => out.push_str("validator: the project ships none\n"),
+        }
+    }
     out
+}
+
+/// The word the report shows for a verdict, matching the kebab-case wire spelling.
+fn verdict_word(verdict: template::Verdict) -> &'static str {
+    match verdict {
+        template::Verdict::Pass => "pass",
+        template::Verdict::Fail => "fail",
+        template::Verdict::NotApplicable => "not-applicable",
+    }
+}
+
+/// Compare the fixture-side verdicts with the protocol-side ones. Empty when
+/// every fixture-shaped property agrees.
+pub fn compare_validator(fixture: &template::TemplateReport, protocol: &template::TemplateReport) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    let mut fail = |detail: String| violations.push(Violation { rule: "fixture-validator", detail });
+    if fixture.version != protocol.version {
+        fail(format!("the fixture validator targets template v{}, the suite targets v{}", fixture.version, protocol.version));
+    }
+    for property in &fixture.properties {
+        if !template::is_fixture_shaped(&property.id) {
+            fail(format!("the fixture validator reports {}, which is a process property and only the protocol judge may judge it", property.id));
+        }
+    }
+    for id in template::FIXTURE_SHAPED {
+        if !fixture.properties.iter().any(|p| p.id == *id) {
+            fail(format!("the fixture validator does not report {id}"));
+        }
+    }
+    let mut seen = BTreeSet::new();
+    for property in &fixture.properties {
+        if !seen.insert(property.id.clone()) {
+            fail(format!("the fixture validator reports {} twice", property.id));
+        }
+    }
+    for property in &fixture.properties {
+        if !template::is_fixture_shaped(&property.id) {
+            continue;
+        }
+        // `template_pass` reports all ten ids, so a missing protocol-side line only happens
+        // for a hand-built report; the disagreement is still real and is reported below.
+        let Some(plugin) = protocol.properties.iter().find(|p| p.id == property.id) else { continue };
+        if plugin.verdict != property.verdict {
+            fail(format!(
+                "the fixture validator says {} for {} and the plugin says {}: {}",
+                verdict_word(property.verdict),
+                property.id,
+                verdict_word(plugin.verdict),
+                property.detail
+            ));
+        }
+    }
+    violations
 }
 
 /// The state one run accumulates: the report's parts, plus the counters the notes report.
@@ -305,6 +369,8 @@ struct Runner<'a> {
     inside_deadline: usize,
     /// The template section, built by the second pass when the check carries a manifest.
     template: Option<template::TemplateReport>,
+    /// The fixture-side verdicts carried in from the check, reported verbatim.
+    validator: Option<template::TemplateReport>,
 }
 
 impl Runner<'_> {
@@ -325,6 +391,7 @@ impl Runner<'_> {
             last_prepare_ms: 0,
             inside_deadline: 0,
             template: None,
+            validator: None,
         }
     }
 
@@ -364,6 +431,7 @@ impl Runner<'_> {
             notes: std::mem::take(&mut self.notes),
             not_applicable: self.not_applicable,
             template: self.template.take(),
+            validator: self.validator.take(),
         }
     }
 
@@ -418,6 +486,19 @@ impl Runner<'_> {
         // every protocol rule must already have been answered on it.
         if let Some(manifest) = &self.check.template {
             self.template_pass(&a, &handshake, &discovery, manifest);
+            // The template verdicts are the plugin's own words about its fixture. A project
+            // that ships no second judge leaves those words unopposed, and says so.
+            if manifest.validator.is_empty() {
+                self.note("fixture-validator", "the conformance project ships no fixture validator, so these template verdicts rest on the plugin's own answers");
+            }
+        }
+        // The fixture-side verdicts were produced before the plugin started; the two lists
+        // must agree, and a disagreement is the run's own violation, not an authoring note.
+        if let Some(fixture) = &self.check.validator {
+            self.validator = Some(fixture.clone());
+            if let Some(protocol) = &self.template {
+                self.violations.extend(compare_validator(fixture, protocol));
+            }
         }
         // Teardown runs after every drive: the service must outlive the last invocation, and
         // a teardown that fails is the package's bug, reported as its own violation.

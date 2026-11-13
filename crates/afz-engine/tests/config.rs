@@ -86,7 +86,35 @@ fn an_unknown_harness_without_a_command_is_rejected() {
     let dir = tmp("unknown-harness");
     let path = write(&dir, r#"{ "project": "p", "codebase": { "harness": "ocaml" } }"#);
     let err = message(&config::load(&path).unwrap_err());
-    assert_eq!(err, "`command` is required for harness \"ocaml\": the engine does not guess a runtime");
+    assert_eq!(err, "`command` is required for harness \"ocaml\": the engine does not guess a runtime; install one with `afz install-harness <git-url>`");
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A name recorded by `afz install-harness` stands in for a `command`: the recorded argv is the
+/// program the user installed, and the scan root stays the plugin's working directory.
+#[test]
+fn an_installed_harness_needs_no_command() {
+    let home = tmp("installed-home");
+    std::env::set_var("AFZ_HOME", &home);
+    let checkout = home.join("harnesses").join("cfgtest").join("checkout");
+    std::fs::create_dir_all(&checkout).expect("checkout dir");
+    afz_engine::harnesses::record(&afz_engine::harnesses::InstalledHarness {
+        name: "cfgtest".to_string(),
+        url: "https://example.invalid/cfgtest.git".to_string(),
+        commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
+        root: checkout.clone(),
+        argv: vec!["node".to_string(), checkout.join("server.js").display().to_string()],
+        conformance: None,
+    })
+    .expect("record");
+    let dir = tmp("installed-project");
+    let path = write(&dir, r#"{ "project": "p", "codebase": { "harness": "cfgtest" } }"#);
+    let loaded = config::load(&path).expect("an installed name loads without a command");
+    let launch = loaded.launch_for(Block::Codebase).expect("launch");
+    assert_eq!(launch.argv, vec!["node".to_string(), checkout.join("server.js").display().to_string()]);
+    assert_eq!(launch.cwd.as_deref(), Some(dir.display().to_string().as_str()), "the scan root is the plugin's cwd");
+    std::env::remove_var("AFZ_HOME");
+    std::fs::remove_dir_all(home).ok();
     std::fs::remove_dir_all(dir).ok();
 }
 

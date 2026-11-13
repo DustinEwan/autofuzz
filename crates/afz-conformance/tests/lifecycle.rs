@@ -33,7 +33,7 @@ fn manifest_with(lifecycle: Lifecycle) -> Manifest {
     for spec in afz_conformance::template::template_v1().properties {
         properties.insert(spec.id, ManifestProperty { symbol: None, input: None, inputs: None, blocked_by_type: None, not_applicable: Some("the lifecycle tests drive the service, not the fixture".to_string()) });
     }
-    Manifest { template_version: 1, properties, lifecycle: Some(lifecycle) }
+    Manifest { template_version: 1, properties, lifecycle: Some(lifecycle), validator: Vec::new() }
 }
 
 fn stub_service(sentinel: &Path) -> Lifecycle {

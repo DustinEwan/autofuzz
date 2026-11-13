@@ -6,8 +6,9 @@
 //! engine's own `Discovery` type: a field that changed shape on either side fails to deserialize
 //! here rather than in the middle of a scan.
 //!
-//! This needs the built plugin, so run `npm --prefix packages/harness-js run build` first. Set
-//! `AFZ_NODE` when `node` on the PATH is not a Linux Node 24.
+//! This needs the `js-ts` plugin installed: run `afz install-harness
+//! https://github.com/DustinEwan/autofuzz-harness-js-ts.git` first. The recorded argv is the
+//! program the user installed, so no runtime override applies here.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -15,35 +16,20 @@ use std::time::Duration;
 use afz_engine::rpc::client::{Launch, PluginClient};
 use afz_protocol::{DiscoverReq, SkipReason};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("workspace root")
-        .to_path_buf()
-}
-
-fn harness_package() -> PathBuf {
-    repo_root().join("packages/harness-js")
+fn target_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/targets/blocked")
 }
 
 fn launch() -> Launch {
-    let server = harness_package().join("dist/server.js");
-    assert!(
-        server.is_file(),
-        "build the harness plugin first: npm --prefix packages/harness-js run build (looked for {})",
-        server.display()
-    );
-    let node = std::env::var("AFZ_NODE").unwrap_or_else(|_| "node".to_string());
-    let mut launch = Launch::new([node, server.display().to_string()]);
-    launch.cwd = Some(harness_package().display().to_string());
-    launch
+    afz_engine::harnesses::launch("js-ts")
+        .expect("install the js-ts harness first: afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git")
+        .with_cwd(target_root().display().to_string())
 }
 
 #[test]
 fn a_blocked_symbol_arrives_in_the_shape_the_engine_reads() {
     let request = DiscoverReq {
-        root: harness_package().join("test-targets/blocked").display().to_string(),
+        root: target_root().display().to_string(),
         include: Some(vec!["**/*.ts".to_string()]),
         exclude: None,
         config_path: None,
@@ -92,7 +78,7 @@ fn a_blocked_symbol_arrives_in_the_shape_the_engine_reads() {
     assert_eq!(blocker.type_, "Db");
     assert_eq!(blocker.path, "arguments[0]");
     let module = blocker.module.as_deref().expect("the blocker names the file that declares Db");
-    assert!(module.ends_with("test-targets/blocked/src/db.ts"), "module {module} should name the declaring file");
+    assert!(module.ends_with("targets/blocked/src/db.ts"), "module {module} should name the declaring file");
     assert_eq!(balance.unlocks_targets, Some(1), "postEntry shares the same missing class");
     assert_eq!(by_name("postEntry").unlocks_targets, Some(1));
 

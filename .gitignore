@@ -1,3 +1,4 @@
+.omp/
 /target
 
 # Built by `cargo build --target wasm32-unknown-unknown` inside targets/<probe>; the wasm scan
@@ -9,11 +10,5 @@
 .autofuzz/
 *.tsbuildinfo
 
-# Built by `npm --prefix packages/harness-js run build`; the plugin's default command runs it.
-/packages/harness-js/dist
-
 # Written by local code-graph tooling; nothing in the build, the tests, or CI reads it.
 .codegraph/
-
-# Byte-compiled Python from the `python` harness plugin and its tests.
-__pycache__/

@@ -6,8 +6,9 @@
 //! result is the plan's own list — 0 findings, then one each of `failed`, `deadline`, and
 //! `memoryGrowth`.
 //!
-//! This needs the built plugin, so run `npm --prefix packages/harness-js run build` first. Set
-//! `AFZ_NODE` when `node` on the PATH is not a Linux Node 24.
+//! This needs the `js-ts` plugin installed: run `afz install-harness
+//! https://github.com/DustinEwan/autofuzz-harness-js-ts.git` first. The recorded argv is the
+//! program the user installed, so no runtime override applies here.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -19,33 +20,14 @@ use afz_engine::rpc::client::{Launch, PluginClient};
 use afz_engine::supervise::{Job, Supervisor, DISABLE_AFTER};
 use afz_protocol::{DiscoverReq, Outcome, ValueNode, ValueTree};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("workspace root")
-        .to_path_buf()
-}
-
-fn harness_package() -> PathBuf {
-    repo_root().join("packages/harness-js")
-}
-
 fn target_root() -> PathBuf {
-    harness_package().join("test-targets/oracles")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/targets/oracles")
 }
 
 fn launch() -> Launch {
-    let server = harness_package().join("dist/server.js");
-    assert!(
-        server.is_file(),
-        "build the harness plugin first: npm --prefix packages/harness-js run build (looked for {})",
-        server.display()
-    );
-    let node = std::env::var("AFZ_NODE").unwrap_or_else(|_| "node".to_string());
-    let mut launch = Launch::new([node, server.display().to_string()]);
-    launch.cwd = Some(harness_package().display().to_string());
-    launch
+    afz_engine::harnesses::launch("js-ts")
+        .expect("install the js-ts harness first: afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git")
+        .with_cwd(target_root().display().to_string())
 }
 
 /// The scope every plugin process is started with, so `prepare` can resolve the ids below.

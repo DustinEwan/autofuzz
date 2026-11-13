@@ -2,8 +2,8 @@
 //!
 //! `prepare` resolves a `targetId` only against a `discover` that ran in the same plugin process,
 //! and no protocol method carries an inventory from one process to another. Both shipped harnesses
-//! resolve a target against their own inventory (`packages/harness-js/src/server.ts` `target()`,
-//! `crates/afz-wasm/src/main.rs` `target()`), so a connection the engine spawned without
+//! resolve a target against their own inventory (`src/server.ts` `target()` in
+//! `autofuzz-harness-js-ts`, `src/main.rs` `target()` in `autofuzz-harness-wasm`), so a connection the engine spawned without
 //! discovering answers every `prepare` with an RPC error, and the scan files that as a
 //! `plugin-lost` finding against the target rather than a harness defect.
 

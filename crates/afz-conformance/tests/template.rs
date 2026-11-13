@@ -142,3 +142,90 @@ fn verdicts_count_separately() {
     assert_eq!(report.failed(), 0);
     assert_eq!(report.not_applicable(), 1);
 }
+
+/// Build a `TemplateReport` from `(id, verdict)` pairs, the shape the driver parses out of
+/// the project's own fixture validator.
+fn report(pairs: &[(&str, &str)]) -> afz_conformance::template::TemplateReport {
+    afz_conformance::template::TemplateReport {
+        version: 1,
+        properties: pairs
+            .iter()
+            .map(|(id, verdict)| afz_conformance::template::PropertyResult {
+                id: (*id).to_string(),
+                verdict: serde_json::from_str(&format!("\"{verdict}\"")).expect("a template verdict spelling"),
+                detail: format!("{id}: {verdict}"),
+            })
+            .collect(),
+    }
+}
+
+fn fixture_all_pass() -> afz_conformance::template::TemplateReport {
+    report(&afz_conformance::template::FIXTURE_SHAPED.iter().map(|id| (*id, "pass")).collect::<Vec<_>>())
+}
+
+fn protocol_all_pass() -> afz_conformance::template::TemplateReport {
+    report(&V1_IDS.iter().map(|id| (*id, "pass")).collect::<Vec<_>>())
+}
+
+#[test]
+fn agreeing_verdicts_compare_clean() {
+    assert!(afz_conformance::compare_validator(&fixture_all_pass(), &protocol_all_pass()).is_empty());
+}
+
+#[test]
+fn a_version_mismatch_is_named_before_anything_else() {
+    let mut fixture = fixture_all_pass();
+    fixture.version = 2;
+    let violations = afz_conformance::compare_validator(&fixture, &protocol_all_pass());
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert_eq!(violations[0].detail, "the fixture validator targets template v2, the suite targets v1");
+}
+
+#[test]
+fn a_process_property_in_the_validator_is_refused() {
+    let mut pairs: Vec<(&str, &str)> = afz_conformance::template::FIXTURE_SHAPED.iter().map(|id| (*id, "pass")).collect();
+    pairs.push(("deadline-sleep", "pass"));
+    let violations = afz_conformance::compare_validator(&report(&pairs), &protocol_all_pass());
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert!(
+        violations[0].detail.contains("deadline-sleep") && violations[0].detail.contains("process property"),
+        "{}",
+        violations[0].detail
+    );
+}
+
+#[test]
+fn an_omitted_fixture_property_is_a_violation() {
+    let pairs: Vec<(&str, &str)> = afz_conformance::template::FIXTURE_SHAPED
+        .iter()
+        .filter(|id| **id != "coverage-digest-live")
+        .map(|id| (*id, "pass"))
+        .collect();
+    let violations = afz_conformance::compare_validator(&report(&pairs), &protocol_all_pass());
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert_eq!(violations[0].detail, "the fixture validator does not report coverage-digest-live");
+}
+
+#[test]
+fn a_doubly_reported_property_is_a_violation() {
+    let mut pairs: Vec<(&str, &str)> = afz_conformance::template::FIXTURE_SHAPED.iter().map(|id| (*id, "pass")).collect();
+    pairs.push(("crash-unguarded", "pass"));
+    let violations = afz_conformance::compare_validator(&report(&pairs), &protocol_all_pass());
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert_eq!(violations[0].detail, "the fixture validator reports crash-unguarded twice");
+}
+
+#[test]
+fn a_quiet_validator_does_not_upgrade_a_plugin_claim() {
+    // The failure Step 4b exists for: the plugin says the crash fixture crashed and the
+    // validator declines to check. `not-applicable` against `pass` is a disagreement.
+    let mut pairs: Vec<(&str, &str)> = afz_conformance::template::FIXTURE_SHAPED.iter().map(|id| (*id, "pass")).collect();
+    pairs[0] = ("crash-unguarded", "not-applicable");
+    let violations = afz_conformance::compare_validator(&report(&pairs), &protocol_all_pass());
+    assert_eq!(violations.len(), 1, "{violations:?}");
+    assert_eq!(violations[0].rule, "fixture-validator");
+    assert_eq!(
+        violations[0].detail,
+        "the fixture validator says not-applicable for crash-unguarded and the plugin says pass: crash-unguarded: not-applicable"
+    );
+}

@@ -1,6 +1,9 @@
 //! Step 8 acceptance: the committed 1842-byte input minimizes below 200 bytes against the real
 //! plugin, and the reproducer the plugin renders for the minimized input reproduces the fault
 //! when Node runs it on its own, with no engine and no plugin process in sight.
+//!
+//! This needs the `js-ts` plugin installed: run `afz install-harness
+//! https://github.com/DustinEwan/autofuzz-harness-js-ts.git` first.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -10,36 +13,20 @@ use afz_engine::minimize::{minimize, FaultMatch};
 use afz_engine::rpc::client::{Launch, PluginClient};
 use afz_protocol::{DiscoverReq, InvokeReq, Outcome, ReproducerReq, ValueTree};
 
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("workspace root")
-        .to_path_buf()
-}
-
 fn target_root() -> PathBuf {
-    repo_root().join("packages/harness-js/test-targets/minimize")
-}
-
-fn harness_package() -> PathBuf {
-    repo_root().join("packages/harness-js")
-}
-
-fn node() -> String {
-    std::env::var("AFZ_NODE").unwrap_or_else(|_| "node".to_string())
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/targets/minimize")
 }
 
 fn launch() -> Launch {
-    let server = harness_package().join("dist/server.js");
-    assert!(
-        server.is_file(),
-        "build the harness plugin first: npm --prefix packages/harness-js run build (looked for {})",
-        server.display()
-    );
-    let mut launch = Launch::new([node(), server.display().to_string()]);
-    launch.cwd = Some(harness_package().display().to_string());
-    launch
+    afz_engine::harnesses::launch("js-ts")
+        .expect("install the js-ts harness first: afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git")
+        .with_cwd(target_root().display().to_string())
+}
+
+/// The runtime the plugin ran on: the reproducer must run on the same Node build, not on
+/// whatever `node` happens to be on the PATH.
+fn plugin_program() -> String {
+    launch().argv.first().expect("the recorded launch has a program").clone()
 }
 
 #[test]
@@ -125,7 +112,7 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
     std::fs::create_dir_all(&run_dir).expect("temp dir for the reproducer");
     let script_path = run_dir.join(format!("repro.{}", resp.extension));
     std::fs::write(&script_path, &script).expect("write the reproducer");
-    let output = Command::new(node())
+    let output = Command::new(plugin_program())
         .arg(&script_path)
         .output()
         .expect("run the reproducer");

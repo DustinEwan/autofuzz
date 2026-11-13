@@ -345,7 +345,7 @@ fn materialize(invoked_root: &Path, out_dir: &Path, treeish: &str) -> Result<Wor
 }
 
 /// One `git -C <dir> …`, with git's stderr as the error text.
-fn git(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<String, GitError> {
+pub fn git(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> Result<String, GitError> {
     let mut command = Command::new("git");
     command.arg("-C").arg(dir);
     for (key, value) in env {

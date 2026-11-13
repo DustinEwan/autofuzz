@@ -29,30 +29,39 @@ JavaScript exception, a Rust `Result`, a Go `error`, or an HTTP status class.
 ## 2. Start here
 
 ```sh
-# 1. Build your plugin so it can be started from a command line.
-# 2. Validate it against the contract, with the `afz` you ship:
-afz validate-harness --path <scan project> --command <plugin argv…>
+# 1. Describe your plugin in `afz-harness.json`: name, build argv, command, conformance emitter.
+# 2. In your package directory, with the `afz` you ship:
+afz validate-harness
 # 3. Look at the inventory it discovers, the way the engine will.
 afz probe-plugin --path <scan project>
 ```
 
-`validate-harness` drives three plugin processes over the protocol, validates every response
-against the committed JSON Schema, and prints one line per rule. It exits **1** when a rule is
-violated and **0** when only notes are present. A `note` line is advice about your harness's cost
-profile, not a verdict: the suite cannot fail a correct plugin for a property that is also true
-of a correct plugin on different code. Add `--json` for the machine-readable report, and
-`--targets <n>` / `--deadline <ms>` to bound the run.
+`validate-harness` names a harness and nothing else. The plugin's entrypoint is your
+`afz-harness.json` `command`, and the scan project is whatever your `conformance.emitter` renders
+into a temporary directory: the command takes no `--command` and no `--path`, because your manifest
+already carries both. Run with no argument it validates the directory it is run in; run elsewhere,
+it takes an installed harness name or a path to a harness directory. It runs your `build` argv
+before it validates - never your `install` argv, which fetches dependencies and belongs to
+`afz install-harness` alone - so a package with a dependency step runs that step once by hand
+(`npm ci`, say) rather than on every validation.
 
-The `--command` value is your plugin's argv. Tokens that match a `validate-harness` flag
-(`--path`, `--targets`, `--deadline`, `--json`) are read as flags wherever they sit, so a plugin
-argv that itself contains such a token must use a spelling that the suite does not recognize.
+The suite drives three plugin processes over the protocol, validates every response against the
+committed JSON Schema, and prints one line per rule. It exits **1** when a rule is violated and
+**0** when only notes are present. A `note` line is advice about your harness's cost profile, not a
+verdict: the suite cannot fail a correct plugin for a property that is also true of a correct plugin
+on different code. Add `--json` for the machine-readable report, and `--targets <n>` /
+`--deadline <ms>` to bound the run.
 
-When the scan project holds an `afz-conformance-manifest.json`, the same command additionally
-validates your plugin against the conformance template and adds a `template` section to the
-report (section 12). Inside this repository the identical suite runs as
-`cargo run -p afz-xtask -- check-harness`, which defaults to building and checking
-`crates/xtask/src/fake.rs`, the repository's own reference plugin; there, everything after
-`--command` is passed through verbatim, so the suite's own flags must come *before* it.
+`afz probe-plugin` still takes `--command <argv…>`, and its flag parser reads any token matching a
+`probe-plugin` flag (`--path`, `--json`) as a flag wherever it sits, so a plugin argv that itself
+contains such a token must use a spelling the flag parser does not recognize.
+
+Because your emitter renders the project, your rendered project carries an
+`afz-conformance-manifest.json`, and the same command validates your plugin against the conformance
+template and adds a `template` section to the report (section 12). Inside the engine repository the
+identical suite also runs as `cargo run -p afz-xtask -- check-harness`, which defaults to building
+and checking `crates/xtask/src/fake.rs`, the repository's own reference plugin; there, everything
+after `--command` is passed through verbatim, so the suite's own flags must come *before* it.
 
 The wire contract itself never changed: the seven methods, the framing, and the error codes are
 section 3 and section 4, and a plugin that passed them yesterday passes them today. What
@@ -97,7 +106,7 @@ Literals you must match:
 - `id` is a `u64` assigned per plugin process, starting at 1 (`PluginClient::spawn` sets
   `next_id: AtomicU64::new(1)`). Echo it back on error frames too.
 - `params` is **omitted**, not `null`, for `handshake` and `coverageMap` (`Request::empty`). Do not
-  require it. `crates/afz-wasm/src/main.rs` reads a missing `params` as an empty object for the same
+  require it. `src/main.rs` in `autofuzz-harness-wasm` reads a missing `params` as an empty object for the same
   reason.
 - Error codes: `-32700` parse error, `-32600` invalid request, `-32601` method not found, `-32000`
   plugin error (`crates/afz-protocol/src/rpc.rs`).
@@ -130,7 +139,7 @@ careful, so every one of these is something that your plugin has to do by itself
   killed its own plugin with exit code 1 exactly this way
   ([`docs/examples/yaml.md`](examples/yaml.md):74-78).
 - **Survive a failed stdout write.** A write to a pipe whose reader is gone is an `'error'` event
-  that ends a Node process; `packages/harness-js/src/server.ts` installs a handler that reports to
+  that ends a Node process; `src/server.ts` in `autofuzz-harness-js-ts` installs a handler that reports to
   stderr and stays up. The engine notices the silence and restarts the process, instead of filing a
   `processExit` finding against whichever target the failed write interrupted.
 
@@ -208,10 +217,10 @@ shrink or render what a previous run wrote up. A rerun over a warm `seen.json` t
 
 The engine **never sends `minimize`**. `PluginClient::minimize` has no caller: minimization is
 engine-side delta debugging over repeated `invoke` calls (`scan::run_finding` →
-`minimize::minimize` → `Minimizer::run_batch`). That is why every harness in this repository
-answers the method with an error (`packages/harness-js/src/server.ts` `minimize()`,
-`crates/afz-wasm/src/main.rs` `Method::Minimize`, and `packages/harness-py/src/server.py`, whose
-dispatch table has no `minimize` handler at all).
+`minimize::minimize` → `Minimizer::run_batch`). That is why every shipped harness
+answers the method with an error (`src/server.ts` `minimize()` in `autofuzz-harness-js-ts`,
+`src/main.rs` `Method::Minimize` in `autofuzz-harness-wasm`, and `src/server.py` in
+`autofuzz-harness-python`, whose dispatch table has no `minimize` handler at all).
 
 So: implementing `minimize` buys nothing until the engine calls it. Declaring a capability you do
 not honor is what `coverage-declared` fails. If you do not implement a method, leave its capability
@@ -223,9 +232,9 @@ answers unreadably strands every finding of that plugin without the artifact tha
 `check-harness` fails that as `reproducer-schema`.
 
 A schema-valid script is not a proven script. The engine stores your bytes without reading
-them, so the only check that a renderer works is executing its output: every harness in this
-repository runs its own rendered reproducer in its own tests
-(`packages/harness-py/test/repro_test.py`; `crates/afz-engine/tests/minimize.rs` launches the
+them, so the only check that a renderer works is executing its output: every shipped harness runs
+its own rendered reproducer in its own tests
+(`test/repro_test.py` in `autofuzz-harness-python`; `crates/afz-engine/tests/minimize.rs` launches the
 js-ts `.mjs` under node and requires the same fault class on the same source line). Write the
 script for the triager who has never seen the scan: notes go on their own lines, never inside
 the call — a `#` comment there hides the closing bracket — and a deadline finding reproduces
@@ -273,10 +282,10 @@ milliseconds that answers inside `deadlineMs` or kills its own call.
 |`prepare` of a real target, fresh process against primed|517 ms against 92 ms|`docs/examples/yaml.md:58-59`|
 |scan setup (`setup_ms` in `engine.log`)|74 568 ms, 43 % of a 173 s run; 9.5 s of a 51 s run on a small package|`docs/examples/yaml.md:97-98`, `docs/dogfood/ufo.md:68`|
 |`discover` itself, per process|401 ms to build the TypeScript program plus 1.78 s to lower every type, on this repository's own 118 files|`docs/decisions/0008-type-lowering-memoized-and-width-bounded.md:10`, `:62`|
-|the wasm harness's per-process work|the module is read and re-instrumented in `serve()` before the first request, so every worker process pays the rewrite|`crates/afz-wasm/src/main.rs` `serve()`|
+|the wasm harness's per-process work|the module is read and re-instrumented in `serve()` before the first request, so every worker process pays the rewrite|`src/main.rs` `serve()` in `autofuzz-harness-wasm`|
 |one `js-ts` plugin process|1.33 cores; 12 processes deliver 4.9× one process at 8.1 cores|`docs/decisions/0011-…:24`, `:29`, `:31`|
 |worker retirement at `INVOCATIONS_PER_WORKER = 128`|about 68 ms per retirement; the heap retains roughly 0.2 MB per realm|`docs/decisions/0006-…:38`|
-|a wasm instance|microseconds next to the invocation it follows|`crates/afz-wasm/src/runner.rs`|
+|a wasm instance|microseconds next to the invocation it follows|`src/runner.rs` in `autofuzz-harness-wasm`|
 |wasm throughput|12 000 invocations/s on inputs that return promptly, 880/s on a scan's mix|`docs/decisions/0003-wasm-coverage-by-post-hoc-rewriting.md:65`|
 
 ### Discovery is the cost you multiply by your core count
@@ -393,17 +402,21 @@ No Rust registration is needed. `codebase.command` in `autofuzz.json` gives the 
 }
 ```
 
-No harness name is special. `LoadedConfig::launch_for` reads `command` and nothing else, so a scan project
-that leaves it out fails at load with `` `command` is required for harness "{name}": the engine does not
-guess a runtime `` (`crates/afz-engine/src/config.rs:323-325`, checked again by `validate` at `:439-443`).
-The engine once had a built-in argv for `js-ts`, and older text in this repository still says so; that
-path is gone, and `js-ts` needs a `command` like every other harness.
+No harness name is special. A name installed with `afz install-harness` needs no `command`:
+`LoadedConfig::launch_for` (`crates/afz-engine/src/config.rs:295`) consults `harnesses::lookup` -
+the registry that `install-harness` writes - only when `command` is absent, and a name with neither
+fails at load with `` `command` is required for harness "{name}": the engine does not guess a
+runtime; install one with `afz install-harness <git-url>` `` (checked again by `validate` at
+`config.rs:421`). `probe-plugin --command` still wins over both. The engine once had a built-in argv
+for `js-ts`, and older text in this repository still says so; that path is gone, and an uninstalled
+`js-ts` needs a `command` like every other harness.
 
 Two resolution details:
 
-- argv elements that point at an existing file are canonicalized against the directory that `afz` was
-  run from (`absolutized` in `config.rs`), because the built-in
-  `packages/harness-js/dist/server.js` would otherwise be looked up inside the scanned project.
+- `command` elements that point at an existing file are canonicalized against the directory that
+  `afz` was run from (`absolutized` in `config.rs`), because a plugin path typed the way a person
+  types it would otherwise be looked up inside the scanned project. A record's argv is already
+  absolute; `install-harness` resolved it against the harness root when it recorded it.
 - The plugin's working directory is the directory holding `autofuzz.json`, and the engine injects
   `AFZ_ROOT` and `AFZ_CONFIG` pointing at that directory and at the file. The parent environment is
   inherited. The `discover` request's `root` is `codebase.root` resolved against that directory, so
@@ -417,41 +430,42 @@ Run `afz validate-harness` first (section 2). Then copy the patterns that the sh
 reads — method names, capability strings, skip reasons, materializations, error codes — is
 compared at test time against `docs/schema/*.json` and against the plugin interface in
 `docs/architecture.md`, in a test that needs no Rust binary and no network. The two shipped
-examples are `packages/harness-js/test/contract.test.mjs` (node) and
-`packages/harness-py/test/contract_test.py` (stdlib `unittest`, no third-party dependency).
+examples are `test/contract.test.mjs` in `autofuzz-harness-js-ts` (node) and
+`test/contract_test.py` in `autofuzz-harness-python` (stdlib `unittest`, no third-party
+dependency). Both read the engine checkout named by `AFZ_DOCS`, defaulting to a sibling checkout.
 
 **A fixture directory.** The language-neutral requirement: a directory inside the harness package
 holding its own `autofuzz.json` and a small source tree, with no registry or package-manager
 entry, referenced by path from the tests and looked up by target *name*, never by the
-content-derived id. `packages/harness-js/test-targets/billing/` is what
-`the_js_ts_harness_passes` drives and `packages/harness-py/test-targets/pricing/` is what
-`the_python_harness_passes` drives.
+content-derived id. `test-targets/billing/` in `autofuzz-harness-js-ts` and
+`test-targets/pricing/` in `autofuzz-harness-python` are the shipped examples; each repository's
+own tests and README scan example drive them through the installed plugin.
 
 **A reproducer run.** The language-neutral requirement: the plugin's own tests render a
 reproducer against the fixture directory and *execute* it, asserting the fault class and the
 file that it points at, because schema validation proves the shape of the answer and nothing about
-whether it runs. `packages/harness-py/test/repro_test.py` and
+whether it runs. `test/repro_test.py` in `autofuzz-harness-python` and
 `crates/afz-engine/tests/minimize.rs` are the two shipped examples.
 
-**A conformance template emitter.** The language-neutral requirement: the package ships a small
-program that renders its fixture directory plus an `afz-conformance-manifest.json` that identifies
-the symbol that proves each template property (`conformance/emit.py` for the Python harness,
-`conformance/emit.mjs` for the js-ts one). The suite — not the emitter — drives every property
-over the protocol and judges the answer, so a fixture that asserts a property that it does not
-actually trigger fails. Properties that a runtime genuinely cannot express are declared
-`notApplicable` with a reason,
-and the reason appears in the report, where CI keeps the not-applicable set as a golden list
-(section 12).
+**A conformance template emitter and validator.** The language-neutral requirement: the package
+ships two small programs. The emitter renders a scan project — fixture tree, `autofuzz.json`, and
+an `afz-conformance-manifest.json` that identifies the symbol that proves each template property —
+into a directory it is given (`conformance/emit.mjs`, `conformance/emit.py`, `src/bin/emit.rs` in
+the three shipped repositories). It needs its host runtime and nothing else: no dependency
+install, no compiled plugin, no other repository. The fixture validator — `conformance/validate.mjs`,
+`conformance/validate.py`, `src/bin/check.rs` — reports on the rendered fixture with the plugin out
+of the path, and the suite requires the two judgments to agree (section 12). The suite — not the
+emitter — drives every property over the protocol and judges the answer, so a fixture that asserts
+a property that it does not actually trigger fails. Properties that a runtime genuinely cannot
+express are declared `notApplicable` with a reason, and the reason appears in the report, where CI
+keeps the not-applicable set as a golden list (section 12).
 
-**Protocol coverage for `crates/afz-wasm`** is `the_wasm_harness_passes` in
-`crates/xtask/tests/conformance.rs`. It is `#[ignore]`d because it needs a release build, and the
-`wasm` CI job runs it with:
+**Protocol coverage for the wasm harness** is `the_wasm_harness_passes_template_v1` in
+`crates/xtask/tests/conformance.rs`, over the plugin that `afz install-harness` recorded:
 
 ```sh
-rustup target add wasm32-unknown-unknown
-cargo build --release -p afz-wasm
-cargo build --release --target wasm32-unknown-unknown --manifest-path targets/wasm-probe/Cargo.toml
-cargo test -p afz-xtask --test conformance -- --ignored
+afz install-harness https://github.com/DustinEwan/autofuzz-harness-wasm.git
+afz validate-harness wasm
 ```
 
 `vendor/` and `examples/` are dogfood trees that CI never runs. Do not write a harness test against
@@ -487,15 +501,38 @@ Template v1 states those ten semantic properties, and `afz-conformance` embeds t
 
 **The emitter pattern.** The template lists properties; only the harness knows which of its own
 symbols can demonstrate them. So the harness package ships an emitter that renders a fixture tree
-plus a manifest, and the suite does the driving and the judging:
+plus a manifest, and the suite does the driving and the judging. One command runs both halves, in
+the package directory:
 
 ```sh
-python3 packages/harness-py/conformance/emit.py --out /tmp/rendered
-afz validate-harness --path /tmp/rendered --command python3 packages/harness-py/src/server.py
+afz validate-harness
 ```
 
 The emitter renders the scan project only — `autofuzz.json`, a small source tree, and the
-manifest. The plugin itself stays wherever the harness package keeps it.
+manifest — into the temporary directory the suite gives it, and that rendered project is the only
+project validation ever drives. The rendered `autofuzz.json` carries no `command`, because the
+plugin the suite launches is the one your `afz-harness.json` names.
+
+**The fixture validator.** Seven of the ten properties — every one except `stdout-purity`,
+`reproducer-script`, and `deadline-sleep` — are decided from data the plugin itself produced: its
+skip list, its fault frames, its own digests. So the manifest's `validator` names a second program
+that judges the same fixture with the plugin out of the path. Its contract:
+
+- It reports exactly the seven fixture-shaped ids — `crash-unguarded`, `guard-refusal`,
+  `private-symbol`, `unrepresentable-symbol`, `unconstructible-receiver`, `method-receiver`,
+  `coverage-digest-live` — and never a process property, which only the protocol judge can see.
+- Its stdout is exactly one JSON `TemplateReport` - `{"version": 1, "properties": [{"id",
+  "verdict", "detail"}, …]}` with `verdict` one of `pass`, `fail`, `not-applicable` - and nothing
+  else. It exits 0 even when a property fails; a non-zero exit means the validator itself could not
+  run, which fails the validation.
+- It imports only the fixture and the host's standard library - never the plugin, never the
+  emitter - because its whole value is reporting on the fixture with the thing under test out of
+  the path.
+
+The suite compares the two verdict lists property by property, and any disagreement - a
+`not-applicable` where the plugin answered `pass`, a missing id, a duplicate, a process id - is a
+run violation under the rule `fixture-validator`. A project with no validator still validates, with
+a note saying the template verdicts rest on the plugin's own answers.
 
 **The manifest.** `afz-conformance-manifest.json` sits in the rendered project next to
 `autofuzz.json`:
@@ -518,6 +555,7 @@ manifest. The plugin itself stays wherever the harness package keeps it.
     "unconstructible-receiver": {"symbol": "post", "blockedByType": "Ledger"},
     "private-symbol": {"symbol": "_cache_key"}
   },
+  "validator": ["python3", "conformance/validate.py"],
   "lifecycle": {
     "launch": ["java", "-jar", "app.jar", "--port={{port}}"],
     "health": "http://127.0.0.1:{{port}}/health",
@@ -575,8 +613,8 @@ plugin is talking to the service that this suite started, and not to a table tha
   methods answered from a script, with `handshake`, `requireDiscover`, and `dropCoverage` knobs for
   modelling a plugin that does not conform.
 
-The two reference plugins to copy are `packages/harness-js/src/` (a TypeScript/Node plugin:
+The two reference plugins to copy are `src/` in `autofuzz-harness-js-ts` (a TypeScript/Node plugin:
 `child_process` for discovery, a `node:vm` realm per call, V8 block-coverage translation) and
-`packages/harness-py/src/` (a stdlib-only Python plugin: `ast` discovery, a module cache,
+`src/` in `autofuzz-harness-python` (a stdlib-only Python plugin: `ast` discovery, a module cache,
 `sys.monitoring` line coverage, `signal.setitimer` self-cut). Read the one nearest your runtime;
 the wire contract they both honor is section 3.

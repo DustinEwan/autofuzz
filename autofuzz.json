@@ -2,7 +2,6 @@
   "project": "autofuzz",
   "codebase": {
     "harness": "js-ts",
-    "command": ["node", "packages/harness-js/dist/server.js"],
     "include": ["**/*.ts"],
     "exclude": ["**/node_modules/**", "**/dist/**", "**/*.d.ts"]
   },

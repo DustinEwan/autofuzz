@@ -1,11 +1,16 @@
-//! The conformance suite, run against the repository's reference plugin and against every
-//! harness the repository ships.
+//! The conformance suite, run against the repository's reference fake plugin and against
+//! every harness shipped for autofuzz.
 //!
-//! Two jobs. The first is the false-positive gate: `a_conforming_plugin_passes` and the harness
-//! tests fail if a rule fires on a plugin that honors the contract, which would make the
-//! tool useless to a third-party author. The second is the negative controls: each one scripts
-//! exactly one defect into `afz-fakeplugin` and asserts that the named rule is what comes back,
-//! because a rule that cannot fail proves nothing.
+//! Two jobs. The first is the false-positive gate: `a_conforming_plugin_passes` and the
+//! template gates fail if a rule fires on a plugin that honors the contract, which would make
+//! the tool useless to a third-party author. The second is the negative controls: each one
+//! scripts exactly one defect into `afz-fakeplugin` and asserts that the named rule is what
+//! comes back, because a rule that cannot fail proves nothing.
+//!
+//! The three template gates read their plugin, emitter, and project root from the install
+//! registry, so make them pass by installing: `afz install-harness
+//! https://github.com/DustinEwan/autofuzz-harness-js-ts.git`, and the same for
+//! `autofuzz-harness-python` and `autofuzz-harness-wasm`.
 
 use std::path::{Path, PathBuf};
 
@@ -245,86 +250,55 @@ fn a_connection_that_only_discovered_can_answer() {
     assert!(report.violations.is_empty(), "and nothing else may break: {:?}", report.violations);
 }
 
-// ------------------------------------------------------------------ shipped harnesses
-
-fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).parent().and_then(Path::parent).expect("workspace root").to_path_buf()
-}
-
-fn js_ts_launch() -> Launch {
-    let package = repo_root().join("packages/harness-js");
-    let server = package.join("dist/server.js");
-    assert!(
-        server.is_file(),
-        "build the harness plugin first: npm --prefix packages/harness-js run build (looked for {})",
-        server.display(),
-    );
-    let node = std::env::var("AFZ_NODE").unwrap_or_else(|_| "node".to_string());
-    Launch::new([node, server.display().to_string()]).with_cwd(package.display().to_string())
-}
-
-#[test]
-fn the_js_ts_harness_passes() {
-    let fixture = repo_root().join("packages/harness-js/test-targets/billing");
-    let loaded = afz_engine::config::load(&fixture.join(afz_engine::config::CONFIG_FILE_NAME)).expect("billing is a scan project");
-    let scope = loaded.discovery_scope().expect("billing declares a codebase block");
-    let mut check = Check::new(js_ts_launch(), scope.root.display().to_string());
-    check.include = scope.include.unwrap_or_default();
-    check.exclude = scope.exclude.unwrap_or_default();
-    check.config_path = Some(loaded.path.display().to_string());
-
-    let report = conformance::run(&check);
-    assert_eq!(report.plugin, "js-ts 0.1.0", "the handshake must still name the harness");
-    assert!(report.targets > 0, "billing must still yield targets");
-    assert!(report.driven > 0, "billing must yield at least one target to drive");
-    assert!(report.violations.is_empty(), "the shipped js-ts harness must conform: {:?}", report.violations);
-}
-
-fn python_launch() -> Launch {
-    let package = repo_root().join("packages/harness-py");
-    let server = package.join("src/server.py");
-    assert!(server.is_file(), "the python harness ships in-tree (looked for {})", server.display());
-    let python = std::env::var("AFZ_PYTHON").unwrap_or_else(|_| "python3".to_string());
-    Launch::new([python, server.display().to_string()]).with_cwd(package.display().to_string())
-}
-
-#[test]
-fn the_python_harness_passes() {
-    let fixture = repo_root().join("packages/harness-py/test-targets/pricing");
-    let loaded = afz_engine::config::load(&fixture.join(afz_engine::config::CONFIG_FILE_NAME)).expect("pricing is a scan project");
-    let scope = loaded.discovery_scope().expect("pricing declares a codebase block");
-    let mut check = Check::new(python_launch(), scope.root.display().to_string());
-    check.include = scope.include.unwrap_or_default();
-    check.exclude = scope.exclude.unwrap_or_default();
-    check.config_path = Some(loaded.path.display().to_string());
-
-    let report = conformance::run(&check);
-    assert_eq!(report.plugin, "python 0.1.0", "the handshake must still name the harness");
-    assert_eq!(report.targets, 5, "the pricing fixture must still yield its five fuzzable symbols");
-    assert_eq!(report.driven, 5, "only the two constructors and the property are skipped");
-    assert!(report.violations.is_empty(), "the shipped python harness must conform: {:?}", report.violations);
-}
-
 // ------------------------------------------------------------------ template gates
 //
 // Each shipped harness renders a conformance project with its own emitter and is validated
-// against the embedded template. The applicability set is the golden the CI asserts: python
-// realizes all ten properties; js-ts justifies exactly one absence (private-symbol). Every
-// not-applicable line shows in the report, so drift is visible, never a silent pass.
+// against the embedded template. The gates read the plugin, the emitter, and the root from the
+// install record — the engine's dependency on another repository is a dependency on the
+// install contract only. The applicability set is the golden the CI asserts: python realizes
+// all ten properties; js-ts justifies exactly one absence (private-symbol); wasm realizes
+// four and accounts for six. Every not-applicable line shows in the report, so drift is
+// visible, never a silent pass.
 
-fn render_conformance_project(program: &str, emitter: &Path, out: &Path) {
-    let status = std::process::Command::new(program).arg(emitter).arg("--out").arg(out).status().expect("the emitter runs");
+fn installed(name: &str) -> afz_engine::harnesses::InstalledHarness {
+    afz_engine::harnesses::lookup(name).unwrap_or_else(|| panic!("install the {name} harness first: afz install-harness <git url>"))
+}
+
+/// The record's argv with its program replaced by the runtime under test: for these two gates
+/// the runtime build is the point, so `AFZ_NODE` and `AFZ_PYTHON` override what the install
+/// recorded.
+fn relaunch(record: &afz_engine::harnesses::InstalledHarness, runtime: &str) -> Launch {
+    let mut argv = record.argv.clone();
+    argv[0] = runtime.to_string();
+    Launch::new(argv).with_cwd(record.root.display().to_string())
+}
+
+fn render_conformance_project(emitter: &[PathBuf], out: &Path) {
+    let (program, args) = emitter.split_first().expect("the manifest names an emitter");
+    let status = std::process::Command::new(program).args(args).arg("--out").arg(out).status().expect("the emitter runs");
     assert!(status.success(), "the emitter must render the project into {}", out.display());
 }
 
-fn run_template_gate(label: &str, launch: Launch, out: &Path) -> conformance::Report {
+fn run_template_gate(label: &str, launch: Launch, out: &Path, deadline_ms: u64) -> conformance::Report {
     let loaded = afz_engine::config::load(&out.join(afz_engine::config::CONFIG_FILE_NAME)).expect("the rendered project is a scan project");
     let scope = loaded.discovery_scope().expect("the rendered project declares a codebase block");
+    // The same environment `launch_for` gives a real scan: the wasm harness reads its module
+    // from `AFZ_ROOT` before the first request, so a gate that omits these kills the plugin.
+    let launch = launch
+        .with_env("AFZ_ROOT", out.display().to_string())
+        .with_env("AFZ_CONFIG", loaded.path.display().to_string());
     let mut check = Check::new(launch, scope.root.display().to_string());
     check.include = scope.include.unwrap_or_default();
     check.exclude = scope.exclude.unwrap_or_default();
     check.config_path = Some(loaded.path.display().to_string());
-    check.template = Some(afz_conformance::template::load_manifest(&out.join("afz-conformance-manifest.json")).expect("the rendered manifest loads"));
+    let manifest = afz_conformance::template::load_manifest(&out.join("afz-conformance-manifest.json")).expect("the rendered manifest loads");
+    // The project's own fixture validator, with the same runner `afz validate-harness` uses:
+    // a template section whose ground truth could not be produced is not a pass.
+    if !manifest.validator.is_empty() {
+        let argv = afz_engine::harnesses::resolve_argv(out, &manifest.validator).into_iter().map(PathBuf::from).collect::<Vec<_>>();
+        check.validator = Some(afz_conformance::template::run_validator(&argv, out, deadline_ms).expect("the fixture validator runs"));
+    }
+    check.template = Some(manifest);
     let report = conformance::run(&check);
     assert!(report.violations.is_empty(), "the {label} harness must conform in template mode: {:?}", report.violations);
     report
@@ -336,12 +310,19 @@ fn conformance_out(name: &str) -> PathBuf {
     dir
 }
 
+/// The ids the report marks not-applicable, in report order.
+fn not_applicable_ids(report: &afz_conformance::template::TemplateReport) -> Vec<&str> {
+    report.properties.iter().filter(|p| p.verdict == afz_conformance::template::Verdict::NotApplicable).map(|p| p.id.as_str()).collect()
+}
+
 #[test]
 fn the_python_harness_passes_template_v1() {
-    let python = std::env::var("AFZ_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let record = installed("python");
+    let conformance_record = record.conformance.as_ref().expect("afz-harness.json declares conformance");
     let out = conformance_out("py-gate");
-    render_conformance_project(&python, &repo_root().join("packages/harness-py/conformance/emit.py"), &out);
-    let report = run_template_gate("python", python_launch(), &out);
+    render_conformance_project(&conformance_record.emitter, &out);
+    let python = std::env::var("AFZ_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let report = run_template_gate("python", relaunch(&record, &python), &out, conformance_record.deadline_ms.unwrap_or(1000));
     let template = report.template.expect("a template-driven run carries the template section");
     assert_eq!(template.version, 1);
     assert_eq!(
@@ -350,45 +331,71 @@ fn the_python_harness_passes_template_v1() {
         "python realizes every property of v1; the applicability golden is all ten: {:?}",
         template.properties
     );
+    let validator = report.validator.as_ref().expect("the conformance project shipped no fixture validator");
+    assert_eq!(
+        (validator.passed(), validator.failed(), validator.not_applicable()),
+        (7, 0, 0),
+        "the python fixture validator judges all seven fixture-shaped properties and passes each: {:?}",
+        validator.properties
+    );
 }
 
 #[test]
 fn the_js_ts_harness_passes_template_v1() {
-    let node = std::env::var("AFZ_NODE").unwrap_or_else(|_| "node".to_string());
+    let record = installed("js-ts");
+    let conformance_record = record.conformance.as_ref().expect("afz-harness.json declares conformance");
     let out = conformance_out("js-gate");
-    render_conformance_project(&node, &repo_root().join("packages/harness-js/conformance/emit.mjs"), &out);
-    let report = run_template_gate("js-ts", js_ts_launch(), &out);
+    render_conformance_project(&conformance_record.emitter, &out);
+    let node = std::env::var("AFZ_NODE").unwrap_or_else(|_| "node".to_string());
+    let report = run_template_gate("js-ts", relaunch(&record, &node), &out, conformance_record.deadline_ms.unwrap_or(1000));
     let template = report.template.expect("a template-driven run carries the template section");
-    let not_applicable: Vec<&str> = template.properties.iter().filter(|p| p.verdict == afz_conformance::template::Verdict::NotApplicable).map(|p| p.id.as_str()).collect();
-    assert_eq!(not_applicable, ["private-symbol"], "the js-ts golden is exactly one justified absence: {:?}", template.properties);
+    assert_eq!(template.version, 1);
+    assert_eq!(not_applicable_ids(&template), ["private-symbol"], "the js-ts golden is exactly one justified absence: {:?}", template.properties);
     assert_eq!((template.passed(), template.failed()), (9, 0), "the other nine properties must pass for js-ts: {:?}", template.properties);
+    let validator = report.validator.as_ref().expect("the conformance project shipped no fixture validator");
+    assert_eq!(
+        (validator.passed(), validator.failed(), validator.not_applicable()),
+        (6, 0, 1),
+        "the js-ts fixture validator passes six and justifies one absence: {:?}",
+        validator.properties
+    );
+    assert_eq!(not_applicable_ids(validator), ["private-symbol"], "the fixture-side absence is the same symbol the protocol side names: {:?}", validator.properties);
 }
 
 #[test]
-#[ignore = "needs cargo build --release -p afz-wasm and a wasm32-unknown-unknown probe module"]
-fn the_wasm_harness_passes() {
-    let root = repo_root();
-    let project = root.join("targets/wasm-probe/autofuzz.json");
-    let text = std::fs::read_to_string(&project).expect("targets/wasm-probe/autofuzz.json");
-    let document: serde_json::Value = serde_json::from_str(&text).expect("the probe project is JSON");
-    // The launch is resolved here rather than through `launch_for`, because that helper resolves a
-    // relative argv against the *process* cwd, which is `crates/xtask/` under `cargo test`.
-    let argv: Vec<String> = document["codebase"]["command"]
-        .as_array()
-        .expect("the probe project names a command")
-        .iter()
-        .map(|argument| argument.as_str().expect("argv is strings").to_string())
-        .map(|argument| {
-            let candidate = root.join(&argument);
-            if candidate.exists() { candidate.display().to_string() } else { argument }
-        })
-        .collect();
-    let launch = Launch::new(argv).with_cwd(root.display().to_string());
-    let mut check = Check::new(launch, root.join("targets/wasm-probe").display().to_string());
-    check.include = vec!["**/*.wasm".to_string()];
-
-    let report = conformance::run(&check);
-    assert_eq!(report.plugin, "wasm 0.1.0", "the handshake must still name the harness");
-    assert!(report.targets > 0, "the probe module must yield targets");
-    assert!(report.violations.is_empty(), "the shipped wasm harness must conform: {:?}", report.violations);
+fn the_wasm_harness_passes_template_v1() {
+    let record = installed("wasm");
+    let conformance_record = record.conformance.as_ref().expect("afz-harness.json declares conformance");
+    let out = conformance_out("wasm-gate");
+    render_conformance_project(&conformance_record.emitter, &out);
+    // No runtime override: the plugin is the Rust binary the install step built.
+    let launch = Launch::new(record.argv.clone()).with_cwd(record.root.display().to_string());
+    let report = run_template_gate("wasm", launch, &out, conformance_record.deadline_ms.unwrap_or(1000));
+    let template = report.template.expect("a template-driven run carries the template section");
+    assert_eq!(template.version, 1);
+    assert_eq!(
+        (template.passed(), template.failed(), template.not_applicable()),
+        (4, 0, 6),
+        "a bare module realizes four properties of v1: {:?}",
+        template.properties
+    );
+    assert_eq!(
+        not_applicable_ids(&template),
+        ["guard-refusal", "private-symbol", "method-receiver", "stdout-purity", "reproducer-script", "deadline-sleep"],
+        "the wasm golden is the six absences the emitter's manifest justifies, in template order: {:?}",
+        template.properties
+    );
+    let validator = report.validator.as_ref().expect("the conformance project shipped no fixture validator");
+    assert_eq!(
+        (validator.passed(), validator.failed(), validator.not_applicable()),
+        (4, 0, 3),
+        "the wasm fixture validator judges the module for four ids and finds no source-level shape for three: {:?}",
+        validator.properties
+    );
+    assert_eq!(
+        not_applicable_ids(validator),
+        ["guard-refusal", "private-symbol", "method-receiver"],
+        "a module carries no guard, private name, or method receiver to inspect: {:?}",
+        validator.properties
+    );
 }

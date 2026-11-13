@@ -320,16 +320,27 @@ impl LoadedConfig {
                 )
             }
         };
-        let argv = command.filter(|argv| !argv.is_empty()).ok_or_else(|| {
-            ConfigError::msg(format!("`command` is required for harness \"{harness}\": the engine does not guess a runtime"))
-        })?;
+        // A missing `command` is only legal when the name is installed: the registry holds
+        // argv the user installed on purpose, so the engine still never guesses a runtime.
+        let argv = match command.filter(|argv| !argv.is_empty()) {
+            Some(argv) => argv,
+            None => match crate::harnesses::launch(harness) {
+                Some(recorded) => recorded.argv,
+                None => {
+                    return Err(ConfigError::msg(format!(
+                        "`command` is required for harness \"{harness}\": the engine does not guess a runtime; install one with `afz install-harness <git-url>`"
+                    )));
+                }
+            },
+        };
         // The plugin runs with the scan root as its working directory, so a path written the way
         // a person types it - relative to where `afz` was run - has to become absolute here,
         // or it would be looked up inside the scanned project.
+        let cwd = std::env::current_dir().unwrap_or_default();
         let argv: Vec<String> = argv
             .into_iter()
             .enumerate()
-            .map(|(index, argument)| absolutized(index, argument, |path| path.exists()))
+            .map(|(index, argument)| absolutized(index, argument, &cwd, |path| path.exists()))
             .collect();
         let mut launch = Launch::new(argv);
         if let Some(env) = env {
@@ -362,26 +373,8 @@ impl LoadedConfig {
     }
 
     /// Discovery scope for a codebase block: root plus include and exclude globs.
-    ///
-    /// The scan's own output directory is always excluded. A scan writes reproducers and
-    /// inputs into the tree it scans, so a second scan of the same project would otherwise
-    /// discover its previous run's output as targets.
     pub fn discovery_scope(&self) -> Result<DiscoveryScope, ConfigError> {
-        let codebase = self
-            .project
-            .codebase
-            .as_ref()
-            .ok_or_else(|| ConfigError::msg("this scan project has no `codebase` block"))?;
-        let root = match &codebase.root {
-            Some(root) => self.root.join(root),
-            None => self.root.clone(),
-        };
-        let mut exclude = codebase.exclude.clone().unwrap_or_default();
-        let output = scan_output_glob(&self.project.output.dir);
-        if !output.is_empty() {
-            exclude.push(output);
-        }
-        Ok(DiscoveryScope { root, include: codebase.include.clone(), exclude: Some(exclude) })
+        self.project.discovery_scope(&self.root)
     }
 }
 
@@ -408,9 +401,11 @@ pub struct DiscoveryScope {
 }
 
 /// A plugin argument that names a file, made absolute when it names one that exists relative to
-/// the directory `afz` was run from. Flags are returned untouched, so `--root out` stays a flag
-/// rather than becoming a filesystem path, and a program name with no separator is left for `PATH`.
-fn absolutized(index: usize, argument: String, exists: impl Fn(&Path) -> bool) -> String {
+/// `base`. Flags are returned untouched, so `--root out` stays a flag rather than becoming a
+/// filesystem path, and a program name with no separator is left for `PATH`. `base` is the
+/// directory `afz` was run from for a scan project's `command`, and the harness repository root
+/// for an `afz-harness.json` argv.
+pub fn absolutized(index: usize, argument: String, base: &Path, exists: impl Fn(&Path) -> bool) -> String {
     if argument.starts_with('-') || (index == 0 && !argument.contains('/')) {
         return argument;
     }
@@ -418,7 +413,7 @@ fn absolutized(index: usize, argument: String, exists: impl Fn(&Path) -> bool) -
     if path.is_absolute() || !exists(path) {
         return argument;
     }
-    path.canonicalize().map(|p| p.display().to_string()).unwrap_or(argument)
+    base.join(path).canonicalize().map(|p| p.display().to_string()).unwrap_or(argument)
 }
 
 impl ScanProject {
@@ -435,10 +430,11 @@ impl ScanProject {
             }
             // Fail at load time rather than at the first spawn: a harness with no declared
             // argv cannot run, whatever the scan does later. The engine names no runtime, so
-            // `command` is never optional.
-            if codebase.command.as_deref().unwrap_or(&[]).is_empty() {
+            // `command` is optional only when `afz install-harness` recorded an argv for
+            // this name.
+            if codebase.command.as_deref().unwrap_or(&[]).is_empty() && crate::harnesses::lookup(&codebase.harness).is_none() {
                 return Err(ConfigError::msg(format!(
-                    "`command` is required for harness \"{}\": the engine does not guess a runtime",
+                    "`command` is required for harness \"{}\": the engine does not guess a runtime; install one with `afz install-harness <git-url>`",
                     codebase.harness
                 )));
             }
@@ -488,6 +484,26 @@ impl ScanProject {
             return Err(ConfigError::msg("`output.dir` must not be empty"));
         }
         Ok(())
+    }
+
+    /// The directory and globs a `discover` request walks, for a project loaded at `root`.
+    ///
+    /// The scan's own output directory is always excluded. A scan writes reproducers and
+    /// inputs into the tree it scans, so a second scan of the same project would otherwise
+    /// discover its previous run's output as targets.
+    pub fn discovery_scope(&self, root: &Path) -> Result<DiscoveryScope, ConfigError> {
+        let codebase =
+            self.codebase.as_ref().ok_or_else(|| ConfigError::msg("this scan project has no `codebase` block"))?;
+        let scope_root = match &codebase.root {
+            Some(relative) => root.join(relative),
+            None => root.to_path_buf(),
+        };
+        let mut exclude = codebase.exclude.clone().unwrap_or_default();
+        let output = scan_output_glob(&self.output.dir);
+        if !output.is_empty() {
+            exclude.push(output);
+        }
+        Ok(DiscoveryScope { root: scope_root, include: codebase.include.clone(), exclude: Some(exclude) })
     }
 }
 
@@ -539,15 +555,16 @@ mod tests {
     /// flag must not be turned into a path on the way.
     #[test]
     fn a_relative_plugin_path_becomes_absolute_and_a_flag_does_not() {
+        let base = Path::new(".");
         let exists = |_: &Path| true;
         let missing = |_: &Path| false;
-        assert_eq!(absolutized(0, "node".into(), exists), "node", "a bare program name is found on PATH");
-        let program = absolutized(0, "src/config.rs".into(), exists);
+        assert_eq!(absolutized(0, "node".into(), base, exists), "node", "a bare program name is found on PATH");
+        let program = absolutized(0, "src/config.rs".into(), base, exists);
         assert!(Path::new(&program).is_absolute() && program.ends_with("src/config.rs"), "a program named by path stays put: {program}");
-        assert_eq!(absolutized(2, "--root out".into(), exists), "--root out");
-        assert_eq!(absolutized(1, "no-such/plugin.js".into(), missing), "no-such/plugin.js");
-        assert_eq!(absolutized(1, "/opt/plugin/server.js".into(), missing), "/opt/plugin/server.js");
-        let resolved = absolutized(1, "Cargo.toml".into(), exists);
+        assert_eq!(absolutized(2, "--root out".into(), base, exists), "--root out");
+        assert_eq!(absolutized(1, "no-such/plugin.js".into(), base, missing), "no-such/plugin.js");
+        assert_eq!(absolutized(1, "/opt/plugin/server.js".into(), base, missing), "/opt/plugin/server.js");
+        let resolved = absolutized(1, "Cargo.toml".into(), base, exists);
         assert!(Path::new(&resolved).is_absolute(), "{resolved} stayed relative");
         assert!(resolved.ends_with("Cargo.toml"), "{resolved} renamed the argument");
     }

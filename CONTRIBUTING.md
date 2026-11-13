@@ -10,30 +10,30 @@ belongs on.
 |`crates/afz-engine/`|Generator, corpus, scheduler, supervisor, oracles, minimizer, and the scan-result writer.|
 |`crates/afz-cli/`|The `afz` binary.|
 |`crates/afz-mcp/`|The `afz-mcp` binary: an MCP server on stdio that drives the engine in process.|
-|`crates/afz-wasm/`|The WebAssembly harness plugin.|
-|`crates/afz-conformance/`|The conformance suite for plugins: 23 wire rules, template v1, and the runtime lifecycle. `afz validate-harness` and `xtask check-harness` share it.|
+|`crates/afz-engine/src/harnesses.rs`|The install registry: the `afz-harness.json` manifest, the installed record, and the lookup every `command`-less scan project resolves through.|
+|`crates/afz-conformance/`|The conformance suite for plugins: 23 wire rules, template v1, the fixture-validator comparison, and the runtime lifecycle. `afz validate-harness`, `afz install-harness`, and `xtask check-harness` share it.|
 |`crates/xtask/`|A fake plugin for protocol tests and negative controls, the JSON Schema generator, and the in-repo `check-harness` entry point.|
-|`packages/harness-js/`|The `js-ts` plugin and its test targets.|
-|`packages/harness-py/`|The `python` plugin and its test targets.|
-|`targets/wasm-probe/`|A wasm module with one deliberate panic and one deliberate spin.|
+|`crates/afz-engine/tests/targets/`|Target trees the engine's own tests drive a plugin through: `blocked`, `minimize`, `oracles`.|
 |`docs/schema/`|Generated JSON Schema for every protocol type and for the scan result.|
 |`docs/decisions/`|Architecture decision records.|
 |`vendor/`, `examples/`|Real packages that were scanned to produce the records under `docs/`.|
 
 ## Before you push
 
-Run these four commands:
+Run these two commands:
 
 ```sh
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-npm --prefix packages/harness-js test
-python3 -m unittest discover -s packages/harness-py/test -t packages/harness-py
 ```
 
-`.github/workflows/ci.yml` runs the same commands on every push to `master` and on every pull request. The
-clippy step passes `-D warnings`, so a new warning fails the build instead of scrolling past. That applies
-to every target, tests included.
+The harness suites run in their own repositories (`autofuzz-harness-js-ts`,
+`autofuzz-harness-python`, `autofuzz-harness-wasm`), and the engine's own tests need the `js-ts` and
+`python` harnesses installed first (`afz install-harness <git url>`); the template gates read those
+records. `.github/workflows/ci.yml` runs the same commands on every push to `master` and on every
+pull request, after installing all three harnesses - that install is itself the conformance gate for
+the shipped plugins. The clippy step passes `-D warnings`, so a new warning fails the build instead
+of scrolling past. That applies to every target, tests included.
 
 ## Generated schemas
 

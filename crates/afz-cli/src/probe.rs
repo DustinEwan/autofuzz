@@ -125,7 +125,7 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
 }
 
 /// Reject a plugin that speaks a different protocol revision, rather than misreading it.
-fn check_protocol(handshake: &Handshake) -> Result<(), String> {
+pub(crate) fn check_protocol(handshake: &Handshake) -> Result<(), String> {
     if handshake.protocol_version != PROTOCOL_VERSION {
         return Err(format!(
             "plugin speaks protocol {}, this engine speaks {PROTOCOL_VERSION}",

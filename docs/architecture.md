@@ -85,8 +85,8 @@ defines them, and `docs/schema/` is the authority for every field, because it is
 types that the engine compiles against.
 
 The contract in TypeScript, which is how the shape is easiest to read. Both plugin contract tests
-parse this block: `packages/harness-js/test/contract.test.mjs` and
-`packages/harness-py/test/contract_test.py` each extract the method names from it and compare them
+parse this block: `test/contract.test.mjs` in `autofuzz-harness-js-ts` and
+`test/contract_test.py` in `autofuzz-harness-python` each extract the method names from it and compare them
 with the wire vocabulary. Keep the block, and keep the two-space indent on each method line, or those
 tests stop finding the interface.
 
@@ -328,7 +328,7 @@ elided:
   "finishedAt": "2026-11-12T12:00:07.000Z",
   "engine": { "version": "0.1.0", "seed": "0x5e3a91c4", "configHash": "sha256:f366c373…" },
   "target": {
-    "root": "/repo/packages/harness-js/test-targets/billing",
+    "root": "/home/me/projects/billing-service",
     "revision": "git:8bbdf07",
     "harness": { "name": "js-ts", "version": "0.1.0", "targetClass": "design-time",
                  "capabilities": ["coverage", "stateful", "concurrent", "reproducer"] }
@@ -427,10 +427,12 @@ The cost is a slower edit-compile loop in the parts that iterate most: generatio
 policy. That is accepted, because those modules are small and pure, and their tests are golden-file
 comparisons that a single `cargo test` catches.
 
-The exact versions that matter are recorded in `Cargo.toml` and in `packages/harness-js/package.json`. Two
-things are load-bearing enough to call out here. `wasmparser` and `wasm-encoder` carry the instrumentation
-pass. `@typescript/typescript6` is aliased to `typescript`, because the plugin transpiles the sources of the
-targets that it scans, rather than having Node's module system read them.
+The exact versions that matter are recorded in `Cargo.toml` and in each harness repository:
+`package.json` in `autofuzz-harness-js-ts`, `Cargo.toml` in `autofuzz-harness-wasm`. Two things are
+load-bearing enough to call out here. `wasmparser` and `wasm-encoder` carry the wasm instrumentation
+pass. `@typescript/typescript6` is aliased to `typescript` in the js-ts harness, because the plugin
+transpiles the sources of the targets that it scans, rather than having Node's module system read
+them.
 
 Three things are deliberately not used. The `binaryen` crate is one, because its build requires a C++
 toolchain. `wasm-instrument` is another, because its last release predates the current wasm proposal set.
