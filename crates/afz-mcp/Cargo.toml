@@ -3,6 +3,7 @@ name = "afz-mcp"
 description = "MCP server: probe, scan, and read findings from a coding harness."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [[bin]]

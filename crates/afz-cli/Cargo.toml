@@ -3,6 +3,7 @@ name = "afz-cli"
 description = "the afz command"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [[bin]]

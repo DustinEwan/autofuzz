@@ -3,6 +3,7 @@ name = "afz-xtask"
 description = "repository helpers: fake harness plugin, schema generation."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 default-run = "afz-xtask"
 

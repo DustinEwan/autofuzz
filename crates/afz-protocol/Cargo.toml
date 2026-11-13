@@ -3,6 +3,7 @@ name = "afz-protocol"
 description = "autofuzz wire types and JSON-RPC framing. No policy lives here."
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
