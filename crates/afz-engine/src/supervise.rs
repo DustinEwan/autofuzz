@@ -138,10 +138,7 @@ impl Watchdog {
         self.restarts += 1;
         let count = self.consecutive.entry(target_id.to_string()).or_insert(0);
         *count += 1;
-        if *count >= self.disable_after && self.disabled.insert(target_id.to_string()) {
-            return true;
-        }
-        false
+        *count >= self.disable_after && self.disabled.insert(target_id.to_string())
     }
 
     /// An answered invocation breaks the losing streak for that target.

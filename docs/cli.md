@@ -172,7 +172,7 @@ Two limits are worth knowing before you rely on a scoped run:
 - A change can break a file that imports the changed file, and that importer is unchanged, so it sits
   outside the scope. Omit `--git` when you want to ask the whole-tree question.
 
-## What a scan writes
+## Scan output files
 
 A scan writes everything that it produces under `<output.dir>/<scanId>/`.
 
@@ -226,7 +226,7 @@ first `.wasm` under the scan root, so the module is scan data, not a plugin prop
 |---|---|
 |`AFZ_HOME`|Where `afz install-harness` records its registry: `$AFZ_HOME/autofuzz/harnesses`. Unset, the registry falls back to `$XDG_DATA_HOME/autofuzz/harnesses`, then to `~/.local/share/autofuzz/harnesses`. Point it at a scratch directory to try an install without touching the real one.|
 
-## Run scans from a coding agent
+## MCP server
 
 `afz-mcp` speaks the Model Context Protocol on stdio. An agent in Claude Code, Cursor, VS Code Copilot,
 Zed, or Codex CLI can then ask "does this change set fuzz clean?" without a shell.
