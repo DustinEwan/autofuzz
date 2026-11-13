@@ -11,7 +11,9 @@ set -eu
 
 SRC_URL=${AFZ_SRC_URL:-https://github.com/DustinEwan/autofuzz.git}
 REF=${AFZ_REF:-}
-INSTALL_DIR=${AFZ_INSTALL_DIR:-${HOME:-}/.local/bin}
+# ${HOME:+} leaves INSTALL_DIR empty when HOME is unset, so the check below stops the run. A plain
+# ${HOME:-} would default to /.local/bin, sail past that check, and fail later inside mkdir -p.
+INSTALL_DIR=${AFZ_INSTALL_DIR:-${HOME:+$HOME/.local/bin}}
 
 # Every message goes to stderr, so a reader who redirects the script's stdout keeps it clean.
 say() { printf 'afz-install: %s\n' "$1" >&2; }
@@ -30,7 +32,7 @@ fi
 if ! have cargo; then
   say "cargo not found: installing rustup with the minimal stable toolchain"
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
-  PATH="$HOME/.cargo/bin:$PATH"
+  PATH="${HOME:-}/.cargo/bin:$PATH"
   export PATH
   have cargo || die "rustup installed but cargo is still not on PATH; open a new shell and run this script again"
 fi
