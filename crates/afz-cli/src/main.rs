@@ -15,10 +15,10 @@ use clap::{Parser, Subcommand};
 #[command(
     name = "afz",
     version,
-    about = "Coverage-guided fuzzing for structured interfaces",
-    long_about = "autofuzz discovers callables through a harness plugin, generates typed inputs, runs a \
-                  coverage-guided loop, and writes one scan result. The engine contains no language-specific \
-                  code; each harness plugin connects it to one language or runtime."
+    about = "A universal fuzzer for code, services, and APIs",
+    long_about = "autofuzz discovers the functions, methods, and routes that your code or service exposes, \
+                  calls them with generated inputs to find bugs, and writes a report. The engine contains no \
+                  language-specific code; each harness plugin connects it to one language, runtime, or API."
 )]
 struct Cli {
     #[command(subcommand)]
