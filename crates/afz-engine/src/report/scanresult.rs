@@ -387,7 +387,7 @@ pub fn read(path: &Path) -> Result<ScanDocument, io::Error> {
     serde_json::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", path.display())))
 }
 
-/// The JSON Schema for this document, the same bytes `docs/schema/scan-result.json` holds.
+/// The JSON Schema for this document, the same bytes `docs/schema/afz-1/scan-result.json` holds.
 pub fn schema_json() -> String {
     let schema = schemars::schema_for!(ScanDocument);
     serde_json::to_string_pretty(&schema).expect("a schema is always serializable")

@@ -812,7 +812,7 @@ impl Runner {
                     Ok(PrepareResp::Skip { .. }) => {}
                     Err(error) => self.fail(
                         "prepare-schema",
-                        format!("prepare response is not the shape docs/schema/prepare-resp.json describes: {error}"),
+                        format!("prepare response is not the shape {} describes: {error}", self.schemas.prepare_resp.path),
                     ),
                 }
             }
