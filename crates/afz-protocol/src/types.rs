@@ -11,7 +11,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Scalar sub-kinds carried by [`Kind::Scalar`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum ScalarKind {
     Null,
@@ -23,7 +25,9 @@ pub enum ScalarKind {
 }
 
 /// Collection sub-kinds carried by [`Kind::Collection`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum CollectionKind {
     Array,
@@ -32,7 +36,9 @@ pub enum CollectionKind {
 }
 
 /// Composite sub-kinds carried by [`Kind::Composite`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum CompositeKind {
     Union,
@@ -40,7 +46,9 @@ pub enum CompositeKind {
 }
 
 /// The thirteen wire kinds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum Kind {
     Scalar,
@@ -120,9 +128,13 @@ pub enum TypeNode {
         length: Option<LengthBounds>,
     },
     /// `email`, `uuid`, `date-time`, `hostname`, `ipv4`, `uri`, plus plugin-defined formats.
-    StringFormat { format: String },
+    StringFormat {
+        format: String,
+    },
     /// Enum members and string unions collapse to a literal set.
-    Literal { values: Vec<serde_json::Value> },
+    Literal {
+        values: Vec<serde_json::Value>,
+    },
     /// `array`, `set`, `map`. A map carries `key` and `element`; the others carry `element`.
     Collection {
         collection: CollectionKind,
@@ -214,11 +226,19 @@ impl TypeNode {
     }
 
     pub fn null() -> Self {
-        TypeNode::Scalar { scalar: ScalarKind::Null, bounds: None, length: None }
+        TypeNode::Scalar {
+            scalar: ScalarKind::Null,
+            bounds: None,
+            length: None,
+        }
     }
 
     pub fn boolean() -> Self {
-        TypeNode::Scalar { scalar: ScalarKind::Boolean, bounds: None, length: None }
+        TypeNode::Scalar {
+            scalar: ScalarKind::Boolean,
+            bounds: None,
+            length: None,
+        }
     }
 
     pub fn number() -> Self {
@@ -247,6 +267,8 @@ impl TypeNode {
     }
 
     pub fn promise(inner: TypeNode) -> Self {
-        TypeNode::Promise { inner: Box::new(inner) }
+        TypeNode::Promise {
+            inner: Box::new(inner),
+        }
     }
 }

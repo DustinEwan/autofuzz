@@ -13,8 +13,8 @@
 
 use std::path::PathBuf;
 
-use afz_engine::rpc::client::Launch;
 use afz_conformance::{self as conformance, Check};
+use afz_engine::rpc::client::Launch;
 
 /// The fake plugin is a binary of this crate's sibling package, so `CARGO_BIN_EXE_…` cannot reach
 /// it.
@@ -30,7 +30,10 @@ fn fakeplugin_path() -> PathBuf {
             return candidate;
         }
         let Some(parent) = dir.parent() else {
-            panic!("build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})", exe.display());
+            panic!(
+                "build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})",
+                exe.display()
+            );
         };
         dir = parent;
     }
@@ -38,7 +41,8 @@ fn fakeplugin_path() -> PathBuf {
 
 fn check(script: Option<&str>) -> Check {
     let launch = match script {
-        Some(script) => Launch::new([fakeplugin_path().display().to_string()]).with_env("AFZ_FAKE_SCRIPT", script),
+        Some(script) => Launch::new([fakeplugin_path().display().to_string()])
+            .with_env("AFZ_FAKE_SCRIPT", script),
         None => Launch::new([fakeplugin_path().display().to_string()]),
     };
     Check::new(launch, ".")
@@ -68,7 +72,11 @@ fn a_conforming_plugin_passes() {
     // The reference plugin's environment is its own process, so it honestly leaves
     // `readiness` undeclared and that rule is not applicable to it; both declared
     // branches are driven in `crates/afz-conformance/tests/readiness.rs`.
-    assert_eq!(report.passed(), conformance::RULES.len() - 1, "readiness is the only rule the reference plugin does not claim");
+    assert_eq!(
+        report.passed(),
+        conformance::RULES.len() - 1,
+        "readiness is the only rule the reference plugin does not claim"
+    );
 }
 
 #[test]
@@ -82,7 +90,8 @@ fn a_wrong_protocol_version_is_reported() {
         report.violations
     );
     assert!(
-        report.violations[0].detail.contains("\"afz/0\"") && report.violations[0].detail.contains("afz/1"),
+        report.violations[0].detail.contains("\"afz/0\"")
+            && report.violations[0].detail.contains("afz/1"),
         "the message must name both revisions: {}",
         report.violations[0].detail
     );
@@ -117,7 +126,9 @@ fn a_negative_duration_is_reported() {
     // A missing `durationMs` cannot be scripted here: `OkOutcome` carries `#[serde(default)]` and
     // serializes the field as `0.0` even when the script omits it, so the rule is pinned on the
     // value the deadline oracle cannot use.
-    let report = conformance::run(&check(Some(r#"{"directives":[{"outcome":{"kind":"ok","durationMs":-1.0}}]}"#)));
+    let report = conformance::run(&check(Some(
+        r#"{"directives":[{"outcome":{"kind":"ok","durationMs":-1.0}}]}"#,
+    )));
     assert!(
         report.failed("outcome-duration"),
         "a negative duration must be caught: {:?}",
@@ -144,13 +155,18 @@ fn template_control(defect: &str, realization: &str, script: Option<&str>) -> Ch
         properties.insert(spec.id, entry);
     }
     let document = serde_json::json!({"templateVersion": 1, "properties": properties});
-    let dir = std::env::temp_dir().join(format!("afz-template-control-{}-{}", std::process::id(), defect));
+    let dir = std::env::temp_dir().join(format!(
+        "afz-template-control-{}-{}",
+        std::process::id(),
+        defect
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp dir for the control manifest");
     let file = dir.join("afz-conformance-manifest.json");
     std::fs::write(&file, document.to_string()).expect("write the control manifest");
     let mut check = check(script);
-    check.template = Some(afz_conformance::template::load_manifest(&file).expect("the control manifest loads"));
+    check.template =
+        Some(afz_conformance::template::load_manifest(&file).expect("the control manifest loads"));
     check
 }
 
@@ -160,27 +176,59 @@ fn num(n: i64) -> serde_json::Value {
 
 #[test]
 fn a_symbol_that_never_crashes_fails_the_crash_property() {
-    let report = conformance::run(&template_control("crash-unguarded", &format!(r#"{{"symbol":"plain","input":[{}]}}"#, num(1)), None));
-    assert!(report.failed("crash-unguarded"), "a fixture whose crash symbol answers ok must be caught: {:?}", report.violations);
+    let report = conformance::run(&template_control(
+        "crash-unguarded",
+        &format!(r#"{{"symbol":"plain","input":[{}]}}"#, num(1)),
+        None,
+    ));
+    assert!(
+        report.failed("crash-unguarded"),
+        "a fixture whose crash symbol answers ok must be caught: {:?}",
+        report.violations
+    );
 }
 
 #[test]
 fn an_undocumented_refusal_channel_fails_the_guard_property() {
     let script = r#"{"directives":[{"at":1,"to":10000,"for":"afz:t:0001","outcome":{"kind":"rejected","durationMs":1.0,"via":"custom-channel","detail":"refused through a channel the contract does not define"}}]}"#;
-    let report = conformance::run(&template_control("guard-refusal", &format!(r#"{{"symbol":"plain","input":[{}]}}"#, num(-5)), Some(script)));
-    assert!(report.failed("guard-refusal"), "a refusal outside guard-site/reject-class must be caught: {:?}", report.violations);
+    let report = conformance::run(&template_control(
+        "guard-refusal",
+        &format!(r#"{{"symbol":"plain","input":[{}]}}"#, num(-5)),
+        Some(script),
+    ));
+    assert!(
+        report.failed("guard-refusal"),
+        "a refusal outside guard-site/reject-class must be caught: {:?}",
+        report.violations
+    );
 }
 
 #[test]
 fn a_fuzzable_symbol_fails_the_private_property() {
-    let report = conformance::run(&template_control("private-symbol", r#"{"symbol":"plain"}"#, None));
-    assert!(report.failed("private-symbol"), "a manifest naming a discovered target as private must be caught: {:?}", report.violations);
+    let report = conformance::run(&template_control(
+        "private-symbol",
+        r#"{"symbol":"plain"}"#,
+        None,
+    ));
+    assert!(
+        report.failed("private-symbol"),
+        "a manifest naming a discovered target as private must be caught: {:?}",
+        report.violations
+    );
 }
 
 #[test]
 fn a_fuzzable_symbol_fails_the_unrepresentable_property() {
-    let report = conformance::run(&template_control("unrepresentable-symbol", r#"{"symbol":"plain"}"#, None));
-    assert!(report.failed("unrepresentable-symbol"), "a manifest naming a discovered target as unrepresentable must be caught: {:?}", report.violations);
+    let report = conformance::run(&template_control(
+        "unrepresentable-symbol",
+        r#"{"symbol":"plain"}"#,
+        None,
+    ));
+    assert!(
+        report.failed("unrepresentable-symbol"),
+        "a manifest naming a discovered target as unrepresentable must be caught: {:?}",
+        report.violations
+    );
 }
 
 #[test]
@@ -188,14 +236,30 @@ fn the_wrong_blocking_type_fails_the_receiver_property() {
     // Discovery says the blocker is `Ledger`; the manifest claims `Clock`. The task board a
     // human reads would send them to build the wrong type.
     let script = r#"{"discovery":{"targets":[],"skipped":[{"targetId":"afz:t:9001","name":"post","reason":"unconstructible-parameter","blockedBy":{"type":"Ledger","path":"arguments[0]"}}]}}"#;
-    let report = conformance::run(&template_control("unconstructible-receiver", r#"{"symbol":"post","blockedByType":"Clock"}"#, Some(script)));
-    assert!(report.failed("unconstructible-receiver"), "a manifest naming the wrong blocking type must be caught: {:?}", report.violations);
+    let report = conformance::run(&template_control(
+        "unconstructible-receiver",
+        r#"{"symbol":"post","blockedByType":"Clock"}"#,
+        Some(script),
+    ));
+    assert!(
+        report.failed("unconstructible-receiver"),
+        "a manifest naming the wrong blocking type must be caught: {:?}",
+        report.violations
+    );
 }
 
 #[test]
 fn a_skipped_method_fails_the_receiver_construction_property() {
-    let report = conformance::run(&template_control("method-receiver", &format!(r#"{{"symbol":"needsDb","input":[{}]}}"#, num(1)), None));
-    assert!(report.failed("method-receiver"), "a manifest declaring an unbuildable receiver constructible must be caught: {:?}", report.violations);
+    let report = conformance::run(&template_control(
+        "method-receiver",
+        &format!(r#"{{"symbol":"needsDb","input":[{}]}}"#, num(1)),
+        None,
+    ));
+    assert!(
+        report.failed("method-receiver"),
+        "a manifest declaring an unbuildable receiver constructible must be caught: {:?}",
+        report.violations
+    );
 }
 
 #[test]
@@ -206,10 +270,18 @@ fn identical_digests_fail_the_coverage_property() {
     let script = r#"{"directives":[{"at":1,"to":10000,"coverage":[7]}]}"#;
     let report = conformance::run(&template_control(
         "coverage-digest-live",
-        &format!(r#"{{"symbol":"plain","inputs":[[{}],[{}]]}}"#, num(1), num(2)),
+        &format!(
+            r#"{{"symbol":"plain","inputs":[[{}],[{}]]}}"#,
+            num(1),
+            num(2)
+        ),
         Some(script),
     ));
-    assert!(report.failed("coverage-digest-live"), "identical digests for two inputs must be caught: {:?}", report.violations);
+    assert!(
+        report.failed("coverage-digest-live"),
+        "identical digests for two inputs must be caught: {:?}",
+        report.violations
+    );
 }
 
 #[test]
@@ -218,8 +290,16 @@ fn a_process_that_dies_on_the_noise_symbol_fails_the_stdout_property() {
     // (five prepared targets, twice each), and the template's stdout drive is its 11th. The
     // worker connection is a second process with its own counter, so it never hits this index.
     let script = r#"{"directives":[{"at":11,"to":11,"for":"afz:t:0001","exit":1}]}"#;
-    let report = conformance::run(&template_control("stdout-purity", r#"{"symbol":"plain","input":[]}"#, Some(script)));
-    assert!(report.failed("stdout-purity"), "a plugin that dies while its target writes to stdout must be caught: {:?}", report.violations);
+    let report = conformance::run(&template_control(
+        "stdout-purity",
+        r#"{"symbol":"plain","input":[]}"#,
+        Some(script),
+    ));
+    assert!(
+        report.failed("stdout-purity"),
+        "a plugin that dies while its target writes to stdout must be caught: {:?}",
+        report.violations
+    );
 }
 
 #[test]
@@ -227,22 +307,45 @@ fn a_reproducer_that_ignores_the_fixture_fails_the_reproducer_property() {
     // The fake's script is a generic pointer at the engine's finding files; it never names
     // the fixture the fault came from, which is exactly the unreproducible artifact a triager
     // cannot use.
-    let report = conformance::run(&template_control("reproducer-script", &format!(r#"{{"symbol":"plain","input":[{}]}}"#, num(1)), None));
-    assert!(report.failed("reproducer-script"), "a reproducer script that does not name the fixture must be caught: {:?}", report.violations);
+    let report = conformance::run(&template_control(
+        "reproducer-script",
+        &format!(r#"{{"symbol":"plain","input":[{}]}}"#, num(1)),
+        None,
+    ));
+    assert!(
+        report.failed("reproducer-script"),
+        "a reproducer script that does not name the fixture must be caught: {:?}",
+        report.violations
+    );
 }
 
 #[test]
 fn an_instant_answer_fails_the_deadline_property() {
-    let report = conformance::run(&template_control("deadline-sleep", &format!(r#"{{"symbol":"plain","input":[{}]}}"#, num(1)), None));
-    assert!(report.failed("deadline-sleep"), "a sleep fixture that answers ok inside the deadline must be caught: {:?}", report.violations);
+    let report = conformance::run(&template_control(
+        "deadline-sleep",
+        &format!(r#"{{"symbol":"plain","input":[{}]}}"#, num(1)),
+        None,
+    ));
+    assert!(
+        report.failed("deadline-sleep"),
+        "a sleep fixture that answers ok inside the deadline must be caught: {:?}",
+        report.violations
+    );
 }
 
 #[test]
 fn a_swallowed_parse_error_is_reported() {
     let report = conformance::run(&check(Some(r#"{"swallowParseError":true}"#)));
-    assert!(report.failed("framing-intact"), "silence after an unparseable request must be caught: {:?}", report.violations);
     assert!(
-        report.violations.iter().any(|v| v.rule == "framing-intact" && v.detail.contains("unparseable")),
+        report.failed("framing-intact"),
+        "silence after an unparseable request must be caught: {:?}",
+        report.violations
+    );
+    assert!(
+        report
+            .violations
+            .iter()
+            .any(|v| v.rule == "framing-intact" && v.detail.contains("unparseable")),
         "the message must name the unparseable request: {:?}",
         report.violations
     );
@@ -259,5 +362,9 @@ fn a_connection_that_only_discovered_can_answer() {
         "a connection that only received discover must be able to prepare and invoke: {:?}",
         report.violations
     );
-    assert!(report.violations.is_empty(), "and nothing else may break: {:?}", report.violations);
+    assert!(
+        report.violations.is_empty(),
+        "and nothing else may break: {:?}",
+        report.violations
+    );
 }

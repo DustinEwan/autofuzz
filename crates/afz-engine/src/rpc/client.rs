@@ -47,7 +47,10 @@ pub enum LostReason {
     /// The plugin closed stdout without an explanation.
     Eof,
     /// The plugin process exited on its own.
-    Exited { code: Option<i32>, signal: Option<i32> },
+    Exited {
+        code: Option<i32>,
+        signal: Option<i32>,
+    },
     /// The engine killed it, because the call crossed its deadline or the scan ended.
     Killed,
     /// The engine could not start the process, or the plugin replied unparseably.
@@ -59,9 +62,18 @@ impl LostReason {
         match self {
             LostReason::NoAnswer => "plugin did not answer before the deadline".to_string(),
             LostReason::Eof => "plugin closed the pipe".to_string(),
-            LostReason::Exited { code: Some(c), signal: None } => format!("plugin exited with code {c}"),
-            LostReason::Exited { code: None, signal: Some(s) } => format!("plugin killed by signal {s}"),
-            LostReason::Exited { code: Some(c), signal: Some(s) } => {
+            LostReason::Exited {
+                code: Some(c),
+                signal: None,
+            } => format!("plugin exited with code {c}"),
+            LostReason::Exited {
+                code: None,
+                signal: Some(s),
+            } => format!("plugin killed by signal {s}"),
+            LostReason::Exited {
+                code: Some(c),
+                signal: Some(s),
+            } => {
                 format!("plugin exited with code {c} after signal {s}")
             }
             LostReason::Exited { .. } => "plugin exited".to_string(),
@@ -101,7 +113,11 @@ pub struct Launch {
 
 impl Launch {
     pub fn new(argv: impl IntoIterator<Item = impl Into<String>>) -> Launch {
-        Launch { argv: argv.into_iter().map(Into::into).collect(), env: BTreeMap::new(), cwd: None }
+        Launch {
+            argv: argv.into_iter().map(Into::into).collect(),
+            env: BTreeMap::new(),
+            cwd: None,
+        }
     }
 
     pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Launch {
@@ -183,7 +199,10 @@ impl PluginClient {
         let stderr = child.stderr.take().expect("stderr is piped");
         let pid = child.id();
 
-        let state = Arc::new(Mutex::new(State { lost: None, slots: BTreeMap::new() }));
+        let state = Arc::new(Mutex::new(State {
+            lost: None,
+            slots: BTreeMap::new(),
+        }));
         let stderr_lines = Arc::new(Mutex::new(Vec::new()));
         let (kill_tx, kill_rx) = mpsc::sync_channel::<mpsc::Sender<()>>(1);
         let (reaper_done_tx, reaper_done_rx) = mpsc::channel();
@@ -224,7 +243,10 @@ impl PluginClient {
     pub fn kill(&self) {
         // Record the request first, so a call in flight is attributed to the engine's kill
         // rather than to the exit status the kill produces.
-        self.state.lock().expect("state lock").lose(LostReason::Killed);
+        self.state
+            .lock()
+            .expect("state lock")
+            .lose(LostReason::Killed);
         let (ack_tx, ack_rx) = mpsc::channel();
         // A full or closed channel means the reaper already finished: the process is gone.
         if self.kill.send(ack_tx).is_ok() {
@@ -233,7 +255,12 @@ impl PluginClient {
     }
 
     /// Send one request and wait for the matching response.
-    pub fn request<T>(&self, method: Method, params: Option<serde_json::Value>, timeout: Duration) -> Call<T>
+    pub fn request<T>(
+        &self,
+        method: Method,
+        params: Option<serde_json::Value>,
+        timeout: Duration,
+    ) -> Call<T>
     where
         T: serde::de::DeserializeOwned,
     {
@@ -263,7 +290,9 @@ impl PluginClient {
             // reader's earlier `closed the pipe`.
             let reason = self
                 .await_exit_reason(Duration::from_millis(250))
-                .unwrap_or_else(|| LostReason::Spawn(format!("pipe to {} closed: {e}", self.launch.display())));
+                .unwrap_or_else(|| {
+                    LostReason::Spawn(format!("pipe to {} closed: {e}", self.launch.display()))
+                });
             return Err(reason);
         }
 
@@ -328,17 +357,29 @@ impl PluginClient {
     }
 
     pub fn discover(&self, req: &DiscoverReq, timeout: Duration) -> Call<Discovery> {
-        self.request(Method::Discover, Some(serde_json::to_value(req).expect("DiscoverReq")), timeout)
+        self.request(
+            Method::Discover,
+            Some(serde_json::to_value(req).expect("DiscoverReq")),
+            timeout,
+        )
     }
 
     pub fn prepare(&self, req: &PrepareReq, timeout: Duration) -> Call<PrepareResp> {
-        self.request(Method::Prepare, Some(serde_json::to_value(req).expect("PrepareReq")), timeout)
+        self.request(
+            Method::Prepare,
+            Some(serde_json::to_value(req).expect("PrepareReq")),
+            timeout,
+        )
     }
 
     /// One invocation. The reason is returned rather than folded away, because the supervisor
     /// distinguishes a deadline from a process exit.
     pub fn invoke(&self, req: &InvokeReq, timeout: Duration) -> Call<Outcome> {
-        self.request(Method::Invoke, Some(serde_json::to_value(req).expect("InvokeReq")), timeout)
+        self.request(
+            Method::Invoke,
+            Some(serde_json::to_value(req).expect("InvokeReq")),
+            timeout,
+        )
     }
 
     /// One invocation with the default mapping: any loss becomes `failed` with
@@ -351,11 +392,19 @@ impl PluginClient {
     }
 
     pub fn minimize(&self, req: &MinimizeReq, timeout: Duration) -> Call<MinimizeResp> {
-        self.request(Method::Minimize, Some(serde_json::to_value(req).expect("MinimizeReq")), timeout)
+        self.request(
+            Method::Minimize,
+            Some(serde_json::to_value(req).expect("MinimizeReq")),
+            timeout,
+        )
     }
 
     pub fn reproducer(&self, req: &ReproducerReq, timeout: Duration) -> Call<ReproducerResp> {
-        self.request(Method::Reproducer, Some(serde_json::to_value(req).expect("ReproducerReq")), timeout)
+        self.request(
+            Method::Reproducer,
+            Some(serde_json::to_value(req).expect("ReproducerReq")),
+            timeout,
+        )
     }
 
     pub fn coverage_map(&self, timeout: Duration) -> Call<CoverageMap> {
@@ -384,7 +433,9 @@ pub fn spawn_discovered(
     discovery: &DiscoverReq,
 ) -> Result<(PluginClient, Option<LostReason>), LostReason> {
     let client = PluginClient::spawn(launch)?;
-    let lost = client.discover(discovery, crate::supervise::DISCOVERY_TIMEOUT).err();
+    let lost = client
+        .discover(discovery, crate::supervise::DISCOVERY_TIMEOUT)
+        .err();
     Ok((client, lost))
 }
 
@@ -418,7 +469,9 @@ fn spawn_reader(stdout: ChildStdout, state: Arc<Mutex<State>>) {
             let mut buf = String::new();
             // EOF or a read error ends the loop, and the line below records the loss.
             while let Ok(Some(line)) = read_line(&mut reader, &mut buf) {
-                let Ok(resp) = parse_response(&line) else { continue };
+                let Ok(resp) = parse_response(&line) else {
+                    continue;
+                };
                 let slot = {
                     let mut state = state.lock().expect("state lock");
                     state.slots.remove(&resp.id())
@@ -460,7 +513,10 @@ fn spawn_reaper(
                 }
             };
             let reason = match status {
-                Ok(status) => LostReason::Exited { code: status.code(), signal: exit_signal(&status) },
+                Ok(status) => LostReason::Exited {
+                    code: status.code(),
+                    signal: exit_signal(&status),
+                },
                 Err(_) => LostReason::Eof,
             };
             state.lock().expect("state lock").lose(reason);

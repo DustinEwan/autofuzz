@@ -30,7 +30,11 @@ fn launch() -> Launch {
 /// The runtime the plugin ran on: the reproducer must run on the same Node build, not on
 /// whatever `node` happens to be on the PATH.
 fn plugin_program() -> String {
-    launch().argv.first().expect("the recorded launch has a program").clone()
+    launch()
+        .argv
+        .first()
+        .expect("the recorded launch has a program")
+        .clone()
 }
 
 #[test]
@@ -38,13 +42,21 @@ fn plugin_program() -> String {
 fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
     let input_path = target_root().join("order-input.json");
     let text = std::fs::read_to_string(&input_path).expect("the committed target input");
-    let values: Vec<ValueTree> = serde_json::from_str(&text).expect("the target input is a JSON array of ValueTree");
+    let values: Vec<ValueTree> =
+        serde_json::from_str(&text).expect("the target input is a JSON array of ValueTree");
     let bytes_on_disk = text.len();
-    assert_eq!(bytes_on_disk, 1842, "the plan names the target input's size exactly");
+    assert_eq!(
+        bytes_on_disk, 1842,
+        "the plan names the target input's size exactly"
+    );
     // `bytesBefore` sums the arguments' own wire size; the file adds the two-byte JSON array
     // wrapper around them, so the two numbers differ by exactly that.
     let bytes_before: usize = values.iter().map(ValueTree::wire_bytes).sum();
-    assert_eq!(bytes_before + 2, bytes_on_disk, "the file is the canonical wire form of the input");
+    assert_eq!(
+        bytes_before + 2,
+        bytes_on_disk,
+        "the file is the canonical wire form of the input"
+    );
     assert_eq!(serde_json::to_string(&values).expect("reserialize"), text);
     let launch = launch();
     let client = PluginClient::spawn(&launch).expect("spawn the js-ts plugin");
@@ -63,12 +75,30 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
         .targets
         .iter()
         .find(|t| t.name == "describe")
-        .unwrap_or_else(|| panic!("discovery reported no `describe`; got {:?}", discovery.targets.iter().map(|t| &t.name).collect::<Vec<_>>()));
+        .unwrap_or_else(|| {
+            panic!(
+                "discovery reported no `describe`; got {:?}",
+                discovery
+                    .targets
+                    .iter()
+                    .map(|t| &t.name)
+                    .collect::<Vec<_>>()
+            )
+        });
 
     let prepared = client
-        .prepare(&afz_protocol::PrepareReq { target_id: target.id.clone(), values: values.clone() }, Duration::from_secs(30))
+        .prepare(
+            &afz_protocol::PrepareReq {
+                target_id: target.id.clone(),
+                values: values.clone(),
+            },
+            Duration::from_secs(30),
+        )
         .expect("prepare the target");
-    assert!(matches!(prepared, afz_protocol::PrepareResp::Ok { .. }), "the target must be buildable: {prepared:?}");
+    assert!(
+        matches!(prepared, afz_protocol::PrepareResp::Ok { .. }),
+        "the target must be buildable: {prepared:?}"
+    );
 
     let invoke = |args: &[ValueTree]| -> Outcome {
         client
@@ -88,30 +118,64 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
     let original = invoke(&values);
     let fault = original.fault().expect("the target input must fail");
     assert_eq!(fault.class, "TypeError", "{original:?}");
-    let top = fault.top_frame().expect("a TypeError from the target carries a frame");
+    let top = fault
+        .top_frame()
+        .expect("a TypeError from the target carries a frame");
     let (file, line) = (top.file.clone(), top.line);
     assert!(file.ends_with("src/order.ts"), "{file}");
 
-    let result = minimize(&values, 2000, Duration::MAX, 4, &mut |batch| batch.iter().map(|candidate| invoke(candidate)).collect());
-    assert!(result.reproduces, "the original input must reproduce before anything is shrunk");
+    let result = minimize(&values, 2000, Duration::MAX, 4, &mut |batch| {
+        batch.iter().map(|candidate| invoke(candidate)).collect()
+    });
+    assert!(
+        result.reproduces,
+        "the original input must reproduce before anything is shrunk"
+    );
     // The plan's bound. The empty list is what makes `lines[0]` undefined, so a search that stops
     // dropping fields shows up here as a byte count that stays near the original, rather than in a
     // scan report where nobody compares it to anything.
-    assert!(result.bytes_after < 200, "minimized to {} bytes after {} attempts", result.bytes_after, result.attempts);
-    assert!(result.bytes_after < bytes_before / 4, "the shrink must be substantial, not cosmetic");
+    assert!(
+        result.bytes_after < 200,
+        "minimized to {} bytes after {} attempts",
+        result.bytes_after,
+        result.attempts
+    );
+    assert!(
+        result.bytes_after < bytes_before / 4,
+        "the shrink must be substantial, not cosmetic"
+    );
 
     let after = invoke(&result.values);
     let matched = FaultMatch::from_outcome(&original).expect("the original fault");
-    assert!(matched.reproduces(&after), "the minimized input reports {after:?}");
-    let after_top = after.fault().and_then(|f| f.top_frame().cloned()).expect("the minimized fault keeps its frame");
-    assert_eq!((after_top.file.as_str(), after_top.line), (file.as_str(), line), "the bug moved to another line");
+    assert!(
+        matched.reproduces(&after),
+        "the minimized input reports {after:?}"
+    );
+    let after_top = after
+        .fault()
+        .and_then(|f| f.top_frame().cloned())
+        .expect("the minimized fault keeps its frame");
+    assert_eq!(
+        (after_top.file.as_str(), after_top.line),
+        (file.as_str(), line),
+        "the bug moved to another line"
+    );
 
     // The reproducer is the artifact a triager runs. The plugin renders it — the engine holds
     // no target-language code — and it has to fail the same way on its own.
     let resp = client
-        .reproducer(&ReproducerReq { target_id: target.id.clone(), values: result.values.clone() }, Duration::from_secs(10))
+        .reproducer(
+            &ReproducerReq {
+                target_id: target.id.clone(),
+                values: result.values.clone(),
+            },
+            Duration::from_secs(10),
+        )
         .expect("the js-ts plugin renders a reproducer");
-    assert_eq!(resp.extension, "mjs", "the js-ts plugin renders a Node-runnable module");
+    assert_eq!(
+        resp.extension, "mjs",
+        "the js-ts plugin renders a Node-runnable module"
+    );
     let script = resp.script;
     let run_dir = std::env::temp_dir().join(format!("afz-minimize-{}", std::process::id()));
     std::fs::create_dir_all(&run_dir).expect("temp dir for the reproducer");
@@ -124,9 +188,16 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
     let _ = std::fs::remove_dir_all(&run_dir);
 
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    assert!(!output.status.success(), "the reproducer must fail the way the finding did; stdout: {}", String::from_utf8_lossy(&output.stdout));
+    assert!(
+        !output.status.success(),
+        "the reproducer must fail the way the finding did; stdout: {}",
+        String::from_utf8_lossy(&output.stdout)
+    );
     assert!(stderr.contains("TypeError"), "{stderr}");
-    assert!(stderr.contains(&format!("order.ts:{line}")), "the reproducer failed somewhere else:\n{stderr}");
+    assert!(
+        stderr.contains(&format!("order.ts:{line}")),
+        "the reproducer failed somewhere else:\n{stderr}"
+    );
 }
 
 #[test]
@@ -160,11 +231,18 @@ fn minimization_refuses_a_candidate_that_changes_the_fault() {
                 },
             })
         } else {
-            Outcome::Ok(afz_protocol::OkOutcome { duration_ms: 1.0, memory_bytes: None, coverage: None, value: None })
+            Outcome::Ok(afz_protocol::OkOutcome {
+                duration_ms: 1.0,
+                memory_bytes: None,
+                coverage: None,
+                value: None,
+            })
         }
     };
 
-    let result = minimize(&values, 200, Duration::MAX, 4, &mut |batch| batch.iter().map(|candidate| run(candidate)).collect());
+    let result = minimize(&values, 200, Duration::MAX, 4, &mut |batch| {
+        batch.iter().map(|candidate| run(candidate)).collect()
+    });
     assert!(result.reproduces);
     let kept = match &result.values[0].node {
         afz_protocol::ValueNode::Array { items } => items,
@@ -182,12 +260,16 @@ fn minimization_drops_the_lines_before_the_one_that_breaks() {
     // The fault depends on one line near the end of a long document, which is the usual shape for a
     // parser input. A shrink that can only empty a string or keep its first half cannot express
     // "delete what came before", so every irrelevant line would stay in the reported input.
-    let filler = (0..200).map(|at| format!("filler{at}\n")).collect::<String>();
+    let filler = (0..200)
+        .map(|at| format!("filler{at}\n"))
+        .collect::<String>();
     let values = vec![ValueTree::string(format!("{filler}boom\n"))];
     let run = |args: &[ValueTree]| -> Outcome {
         let text = match &args[0].node {
             afz_protocol::ValueNode::String { value } => value.clone(),
-            other => return Outcome::plugin_lost(0.0, format!("the argument shape changed: {other:?}")),
+            other => {
+                return Outcome::plugin_lost(0.0, format!("the argument shape changed: {other:?}"))
+            }
         };
         if text.contains("boom") {
             broken()
@@ -196,17 +278,34 @@ fn minimization_drops_the_lines_before_the_one_that_breaks() {
         }
     };
 
-    let result = minimize(&values, 2000, Duration::MAX, 6, &mut |batch| batch.iter().map(|candidate| run(candidate)).collect());
+    let result = minimize(&values, 2000, Duration::MAX, 6, &mut |batch| {
+        batch.iter().map(|candidate| run(candidate)).collect()
+    });
     assert!(result.reproduces);
     let shrunk = match &result.values[0].node {
         afz_protocol::ValueNode::String { value } => value.clone(),
         other => panic!("the argument shape changed: {other:?}"),
     };
-    assert!(shrunk.contains("boom"), "the line the fault depends on did not survive: {shrunk:?}");
-    assert!(!shrunk.starts_with("filler0"), "the minimized input still carries the document's first line: {shrunk:?}");
-    assert!(result.bytes_after * 10 < result.bytes_before, "shrunk {} bytes to {}", result.bytes_before, result.bytes_after);
+    assert!(
+        shrunk.contains("boom"),
+        "the line the fault depends on did not survive: {shrunk:?}"
+    );
+    assert!(
+        !shrunk.starts_with("filler0"),
+        "the minimized input still carries the document's first line: {shrunk:?}"
+    );
+    assert!(
+        result.bytes_after * 10 < result.bytes_before,
+        "shrunk {} bytes to {}",
+        result.bytes_before,
+        result.bytes_after
+    );
     // Delta debugging halves what it rejects, so a return to one trial per line shows up here.
-    assert!(result.attempts < 60, "the search cost {} trials for a 201-line document", result.attempts);
+    assert!(
+        result.attempts < 60,
+        "the search cost {} trials for a 201-line document",
+        result.attempts
+    );
 }
 
 /// The fault every candidate has to reproduce: one class, one frame.
@@ -229,7 +328,12 @@ fn broken() -> Outcome {
 }
 
 fn accepted() -> Outcome {
-    Outcome::Ok(afz_protocol::OkOutcome { duration_ms: 1.0, memory_bytes: None, coverage: None, value: None })
+    Outcome::Ok(afz_protocol::OkOutcome {
+        duration_ms: 1.0,
+        memory_bytes: None,
+        coverage: None,
+        value: None,
+    })
 }
 
 #[test]
@@ -240,7 +344,9 @@ fn one_round_offers_candidates_for_every_node_of_the_input() {
     // asked for is actually reachable.
     let list = |prefix: &str| {
         ValueTree::new(afz_protocol::ValueNode::Array {
-            items: (0..8).map(|at| ValueTree::string(format!("{prefix}{at}"))).collect(),
+            items: (0..8)
+                .map(|at| ValueTree::string(format!("{prefix}{at}")))
+                .collect(),
         })
     };
     let values = vec![list("a"), list("b")];
@@ -251,7 +357,9 @@ fn one_round_offers_candidates_for_every_node_of_the_input() {
         for (at, left) in batch.iter().enumerate() {
             for right in &batch[at + 1..] {
                 // Two candidates that differ in both argument slots changed different arguments.
-                let differing = (0..left.len()).filter(|slot| left[*slot].wire_bytes() != right[*slot].wire_bytes()).count();
+                let differing = (0..left.len())
+                    .filter(|slot| left[*slot].wire_bytes() != right[*slot].wire_bytes())
+                    .count();
                 if differing == 2 {
                     spans_both = true;
                 }
@@ -260,8 +368,14 @@ fn one_round_offers_candidates_for_every_node_of_the_input() {
         batch.iter().map(|_| broken()).collect()
     });
     assert!(result.reproduces);
-    assert!(widest >= 6, "the widest round offered {widest} candidates to a width of 6");
-    assert!(spans_both, "no round offered candidates for both arguments at once");
+    assert!(
+        widest >= 6,
+        "the widest round offered {widest} candidates to a width of 6"
+    );
+    assert!(
+        spans_both,
+        "no round offered candidates for both arguments at once"
+    );
 }
 
 #[test]
@@ -278,8 +392,21 @@ fn minimization_never_returns_a_larger_input_than_it_was_given() {
         }
     };
 
-    let result = minimize(&values, 50, Duration::MAX, 4, &mut |batch| batch.iter().map(|candidate| run(candidate)).collect());
-    assert!(result.reproduces, "the original input reproduces, so the finding is real");
-    assert_eq!(result.bytes_after, result.bytes_before, "the input grew from {} to {} bytes", result.bytes_before, result.bytes_after);
-    assert!(matches!(result.values[0].node, afz_protocol::ValueNode::Null), "the grown candidate was kept: {:?}", result.values[0]);
+    let result = minimize(&values, 50, Duration::MAX, 4, &mut |batch| {
+        batch.iter().map(|candidate| run(candidate)).collect()
+    });
+    assert!(
+        result.reproduces,
+        "the original input reproduces, so the finding is real"
+    );
+    assert_eq!(
+        result.bytes_after, result.bytes_before,
+        "the input grew from {} to {} bytes",
+        result.bytes_before, result.bytes_after
+    );
+    assert!(
+        matches!(result.values[0].node, afz_protocol::ValueNode::Null),
+        "the grown candidate was kept: {:?}",
+        result.values[0]
+    );
 }

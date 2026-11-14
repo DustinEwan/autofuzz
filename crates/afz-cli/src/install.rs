@@ -16,9 +16,15 @@ use crate::probe;
 use crate::validate;
 
 /// `afz install-harness <url>`.
-pub fn run(url: &str, reference: Option<&str>, no_validate: bool, json: bool) -> Result<(), String> {
+pub fn run(
+    url: &str,
+    reference: Option<&str>,
+    no_validate: bool,
+    json: bool,
+) -> Result<(), String> {
     let registry = harnesses::root();
-    std::fs::create_dir_all(&registry).map_err(|e| format!("cannot create {}: {e}", registry.display()))?;
+    std::fs::create_dir_all(&registry)
+        .map_err(|e| format!("cannot create {}: {e}", registry.display()))?;
     let staging = registry.join(format!(".staging-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&staging);
 
@@ -56,7 +62,8 @@ pub fn run(url: &str, reference: Option<&str>, no_validate: bool, json: bool) ->
             let _ = std::fs::remove_dir_all(&staging);
             if !json {
                 if let Some(argv) = record_only {
-                    println!("installed {name}  <- {}", argv.join(" "));
+                    println!("Installed harness {name} at {commit} from {url}");
+                    println!("  command: {}", argv.join(" "));
                 }
             }
             Ok(())
@@ -75,10 +82,22 @@ pub fn run(url: &str, reference: Option<&str>, no_validate: bool, json: bool) ->
 
 /// Clone, pin the reference, and read the manifest. Nothing outside `staging` is touched, so
 /// the caller owns the whole cleanup on the error path.
-fn preflight(registry: &Path, source: &str, url: &str, reference: Option<&str>, staging: &Path) -> Result<(String, HarnessManifest), String> {
-    git(registry, &["clone", source, &staging.display().to_string()], &[]).map_err(|e| format!("clone {url} failed: {e}"))?;
+fn preflight(
+    registry: &Path,
+    source: &str,
+    url: &str,
+    reference: Option<&str>,
+    staging: &Path,
+) -> Result<(String, HarnessManifest), String> {
+    git(
+        registry,
+        &["clone", source, &staging.display().to_string()],
+        &[],
+    )
+    .map_err(|e| format!("clone {url} failed: {e}"))?;
     if let Some(reference) = reference {
-        git(staging, &["checkout", reference], &[]).map_err(|e| format!("checkout {reference} failed: {e}"))?;
+        git(staging, &["checkout", reference], &[])
+            .map_err(|e| format!("checkout {reference} failed: {e}"))?;
     }
     let commit = git(staging, &["rev-parse", "HEAD"], &[]).map_err(|e| e.to_string())?;
     let manifest = harnesses::read_manifest(staging)?;
@@ -99,7 +118,8 @@ fn install(
     let name = &manifest.name;
     std::fs::create_dir_all(dest).map_err(|e| format!("cannot create {}: {e}", dest.display()))?;
     let checkout = dest.join("checkout");
-    std::fs::rename(staging, &checkout).map_err(|e| format!("cannot move the checkout into place: {e}"))?;
+    std::fs::rename(staging, &checkout)
+        .map_err(|e| format!("cannot move the checkout into place: {e}"))?;
 
     // Only an install runs the `install` argv: fetching dependencies is a once-per-checkout
     // act, and compiling is what keeps a validation honest about current source.
@@ -116,16 +136,28 @@ fn install(
         .conformance
         .as_ref()
         .map(|conformance| InstalledConformance {
-            emitter: harnesses::resolve_argv(&checkout, &conformance.emitter).into_iter().map(PathBuf::from).collect(),
+            emitter: harnesses::resolve_argv(&checkout, &conformance.emitter)
+                .into_iter()
+                .map(PathBuf::from)
+                .collect(),
             deadline_ms: conformance.deadline_ms,
         });
 
     if !no_validate {
         match &conformance {
             Some(conformance) => {
-                let target = validate::Target { argv: argv.clone(), root: checkout.clone(), conformance: conformance.clone() };
-                let out = dest.parent().map(Path::to_path_buf).unwrap_or_default().join(format!(".validate-{name}"));
-                let report = validate::drive(&target, &out, 8, conformance.deadline_ms.unwrap_or(1000))?;
+                let target = validate::Target {
+                    argv: argv.clone(),
+                    root: checkout.clone(),
+                    conformance: conformance.clone(),
+                };
+                let out = dest
+                    .parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_default()
+                    .join(format!(".validate-{name}"));
+                let report =
+                    validate::drive(&target, &out, 8, conformance.deadline_ms.unwrap_or(1000))?;
                 // The handshake name is what the record is keyed on: this is what catches a
                 // manifest naming the wrong harness.
                 if !report.plugin.starts_with(&format!("{name} ")) {
@@ -135,20 +167,32 @@ fn install(
                     ));
                 }
                 if json {
-                    println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+                    );
                 } else {
                     print!("{}", afz_conformance::render(&report));
                 }
                 if !report.violations.is_empty() {
-                    return Err(format!("harness \"{name}\" did not conform: {} rule(s) violated", report.violations.len()));
+                    return Err(format!(
+                        "harness \"{name}\" did not conform: {} rule(s) violated",
+                        report.violations.len()
+                    ));
                 }
             }
             // Nothing to render, so validate what can be checked without a project: the
             // handshake, with the same protocol-version rule `probe-plugin` prints.
             None => {
-                let client = PluginClient::spawn(&Launch::new(argv.clone()).with_cwd(checkout.display().to_string()))
-                    .map_err(|reason| format!("cannot start harness \"{name}\": {}", reason.detail()))?;
-                let handshake = client.handshake().map_err(|reason| format!("handshake with \"{name}\" failed: {}", reason.detail()))?;
+                let client = PluginClient::spawn(
+                    &Launch::new(argv.clone()).with_cwd(checkout.display().to_string()),
+                )
+                .map_err(|reason| {
+                    format!("cannot start harness \"{name}\": {}", reason.detail())
+                })?;
+                let handshake = client.handshake().map_err(|reason| {
+                    format!("handshake with \"{name}\" failed: {}", reason.detail())
+                })?;
                 probe::check_protocol(&handshake)?;
                 if handshake.name != *name {
                     return Err(format!(
@@ -186,16 +230,35 @@ fn install(
 pub fn list(json: bool) -> Result<(), String> {
     let installed = harnesses::all();
     if json {
-        println!("{}", serde_json::to_string_pretty(&installed).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&installed).map_err(|e| e.to_string())?
+        );
         return Ok(());
     }
     if installed.is_empty() {
-        println!("no harnesses installed; run `afz install-harness <git-url>`");
+        println!("No harness is installed. Run `afz install-harness <git-url>`.");
         return Ok(());
     }
+    println!("{:<12} {:<8} COMMAND", "NAME", "COMMIT");
     for harness in &installed {
-        println!("{:<10} {} @ {}  {}", harness.name, harness.url, harness.commit, harness.argv.join(" "));
+        let commit: String = harness.commit.chars().take(8).collect();
+        println!(
+            "{:<12} {:<8} {}",
+            harness.name,
+            commit,
+            harness.argv.join(" ")
+        );
     }
-    println!("\n{} harness(es) under {}", installed.len(), harnesses::root().display());
+    let noun = if installed.len() == 1 {
+        "harness"
+    } else {
+        "harnesses"
+    };
+    println!(
+        "\n{} {noun} under {}",
+        installed.len(),
+        harnesses::root().display()
+    );
     Ok(())
 }

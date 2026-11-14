@@ -33,14 +33,21 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
                 root: scope.root.display().to_string(),
                 include: scope.include,
                 exclude: scope.exclude,
-                config_path: scope.config.as_ref().map(|loaded| loaded.path.display().to_string()),
+                config_path: scope
+                    .config
+                    .as_ref()
+                    .map(|loaded| loaded.path.display().to_string()),
             },
             std::time::Duration::from_secs(120),
         )
         .map_err(|r| r.detail())?;
     let coverage = client.coverage_map(std::time::Duration::from_secs(30)).ok();
     let ready = if handshake.capabilities.contains(&Capability::Readiness) {
-        Some(client.ready(std::time::Duration::from_secs(5)).map_err(|r| r.detail())?)
+        Some(
+            client
+                .ready(std::time::Duration::from_secs(5))
+                .map_err(|r| r.detail())?,
+        )
     } else {
         None
     };
@@ -59,29 +66,39 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
         return not_ready(ready.as_ref()).map_or(Ok(()), Err);
     }
 
-    println!("plugin      {} {} ({})", handshake.name, handshake.version, launch.display());
-    println!("protocol    {}", handshake.protocol_version);
-    println!("class       {}", handshake.target_class.as_str());
-    println!("languages   {}", handshake.languages.join(", "));
+    println!("plugin        {} {}", handshake.name, handshake.version);
+    println!("command       {}", launch.display());
+    println!("protocol      {}", handshake.protocol_version);
+    println!("target class  {}", handshake.target_class.as_str());
+    println!("languages     {}", handshake.languages.join(", "));
     println!(
-        "capability  {}",
+        "capabilities  {}",
         if handshake.capabilities.is_empty() {
             "none".to_string()
         } else {
             handshake
                 .capabilities
                 .iter()
-                .map(|c| serde_json::to_value(c).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default())
+                .map(|c| {
+                    serde_json::to_value(c)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_default()
+                })
                 .collect::<Vec<_>>()
                 .join(", ")
         }
     );
     println!(
-        "discovery   {}",
-        if handshake.discover_requires_execution { "executes target code" } else { "static" }
+        "discovery     {}",
+        if handshake.discover_requires_execution {
+            "executes target code"
+        } else {
+            "static"
+        }
     );
     println!();
-    println!("targets     {}", discovery.targets.len());
+    println!("targets       {}", discovery.targets.len());
     for t in &discovery.targets {
         let params = t
             .parameters
@@ -93,11 +110,14 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
             "  {:<12} {:<24} ({params}) {}",
             t.id,
             t.name,
-            serde_json::to_value(t.materialization).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+            serde_json::to_value(t.materialization)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default()
         );
     }
     println!();
-    println!("skipped     {}", discovery.skipped.len());
+    println!("skipped       {}", discovery.skipped.len());
     for s in &discovery.skipped {
         let blocker = s
             .blocked_by
@@ -107,22 +127,32 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
                 None => format!(" blockedBy {} at {}", b.type_, b.path),
             })
             .unwrap_or_default();
-        let unlocks = s.unlocks_targets.map(|n| format!(" unlocksTargets {n}")).unwrap_or_default();
-        let detail = s.detail.as_deref().map(|d| format!(" — {d}")).unwrap_or_default();
+        let unlocks = s
+            .unlocks_targets
+            .map(|n| format!(" unlocksTargets {n}"))
+            .unwrap_or_default();
+        let detail = s
+            .detail
+            .as_deref()
+            .map(|d| format!(" — {d}"))
+            .unwrap_or_default();
         println!(
             "  {:<12} {:<24} {}{blocker}{unlocks}{detail}",
             s.target_id,
             s.name,
-            serde_json::to_value(s.reason).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+            serde_json::to_value(s.reason)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_string))
+                .unwrap_or_default()
         );
     }
     match &coverage {
-        Some(map) => println!("\ncoverage    {} edges mapped", map.entries.len()),
-        None => println!("\ncoverage    coverageMap not offered"),
+        Some(map) => println!("\ncoverage      {} edges", map.entries.len()),
+        None => println!("\ncoverage      not offered"),
     }
     if let Some(ready) = &ready {
         println!(
-            "readiness   {}",
+            "readiness     {}",
             match (&ready.detail, ready.ready) {
                 (Some(d), true) => format!("ready — {d}"),
                 (Some(d), false) => format!("NOT READY — {d}"),
@@ -167,7 +197,7 @@ pub(crate) fn check_protocol(handshake: &Handshake) -> Result<(), String> {
 fn not_ready(ready: Option<&ReadyResp>) -> Option<String> {
     ready.filter(|r| !r.ready).map(|r| {
         format!(
-            "the harness reports the target environment is not ready: {}",
+            "the harness reports that the target environment is not ready: {}",
             r.detail.as_deref().unwrap_or("the harness gave no reason")
         )
     })
@@ -182,12 +212,20 @@ fn launch_for(argv: Vec<String>) -> Result<Launch, String> {
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = exe.parent().unwrap_or(Path::new("."));
-    for candidate in [dir.join("afz-fakeplugin"), dir.join("debug").join("afz-fakeplugin"), dir.join("release").join("afz-fakeplugin")] {
+    for candidate in [
+        dir.join("afz-fakeplugin"),
+        dir.join("debug").join("afz-fakeplugin"),
+        dir.join("release").join("afz-fakeplugin"),
+    ] {
         if candidate.is_file() {
             return Ok(Launch::new([candidate.display().to_string()]));
         }
     }
-    Err("no --command given and afz-fakeplugin is not beside this binary; build it with `cargo build --workspace`".to_string())
+    Err(
+        "no --command given and afz-fakeplugin is not beside this binary. Build it with \
+         `cargo build --workspace`, or pass --command or --path."
+            .to_string(),
+    )
 }
 
 /// Where to discover, and the scan project that said so, if there was one.
@@ -211,7 +249,12 @@ fn scope_for(root: &Path) -> Result<Scope, String> {
             config: Some(loaded),
         });
     }
-    Ok(Scope { root: root.to_path_buf(), include: None, exclude: None, config: None })
+    Ok(Scope {
+        root: root.to_path_buf(),
+        include: None,
+        exclude: None,
+        config: None,
+    })
 }
 
 fn wire_kind(kind: Kind) -> &'static str {

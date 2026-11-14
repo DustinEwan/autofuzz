@@ -21,7 +21,10 @@ use afz_engine::config::Severity;
 use afz_engine::report::scanresult::{self, FindingRecord, GitScope, SCAN_FILE};
 use afz_engine::rpc::client::PluginClient;
 use afz_engine::scan::{self, Options, Progress};
-use afz_protocol::{CoverageMap, DiscoverReq, Handshake, SkippedTarget, TargetDescriptor, SUPPORTED_VERSIONS, is_deprecated};
+use afz_protocol::{
+    is_deprecated, CoverageMap, DiscoverReq, Handshake, SkippedTarget, TargetDescriptor,
+    SUPPORTED_VERSIONS,
+};
 
 use crate::jobs::{self, Job, JobState, Shared};
 use crate::project::{self, Resolved};
@@ -53,7 +56,8 @@ fn structured<T: Serialize>(value: &T) -> Result<CallToolResult, ErrorData> {
 /// (`crates/afz-cli/src/scan.rs`), restated for a tool argument.
 fn parse_duration(text: &str) -> Result<Duration, String> {
     let invalid = || format!("budget.wall {text} is not a duration; use 1500ms, 90s, 10m, or 1h");
-    let digits = |unit: &str| -> Option<u64> { text.strip_suffix(unit)?.trim().parse::<u64>().ok() };
+    let digits =
+        |unit: &str| -> Option<u64> { text.strip_suffix(unit)?.trim().parse::<u64>().ok() };
     if let Some(ms) = digits("ms") {
         return Ok(Duration::from_millis(ms));
     }
@@ -75,11 +79,15 @@ fn parse_duration(text: &str) -> Result<Duration, String> {
 /// `0x`-prefixed hex or decimal; the CLI's `parse_seed` rule.
 fn parse_seed(text: &str) -> Result<u64, String> {
     let trimmed = text.trim();
-    let (radix, digits) = match trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+    let (radix, digits) = match trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+    {
         Some(rest) => (16, rest),
         None => (10, trimmed),
     };
-    u64::from_str_radix(digits, radix).map_err(|_| format!("seed {text} is not a number, decimal or 0x-prefixed"))
+    u64::from_str_radix(digits, radix)
+        .map_err(|_| format!("seed {text} is not a number, decimal or 0x-prefixed"))
 }
 
 fn parse_strategy(name: &str) -> Result<afz_engine::config::Strategy, String> {
@@ -98,7 +106,9 @@ fn parse_severity(text: &str) -> Result<Option<Severity>, String> {
         "medium" => Ok(Some(Severity::Medium)),
         "high" => Ok(Some(Severity::High)),
         "critical" => Ok(Some(Severity::Critical)),
-        other => Err(format!("severity {other} is not one of any, low, medium, high, critical")),
+        other => Err(format!(
+            "severity {other} is not one of any, low, medium, high, critical"
+        )),
     }
 }
 
@@ -360,7 +370,12 @@ fn build_scan_options(resolved: &Resolved, params: &ScanParams) -> Result<Option
     };
     // Parsed here so a bad selector is the tool's error text, and so preflight can see the
     // scope it needs to check.
-    let scope = params.git.as_deref().map(afz_engine::git::parse).transpose().map_err(|e| e.0)?;
+    let scope = params
+        .git
+        .as_deref()
+        .map(afz_engine::git::parse)
+        .transpose()
+        .map_err(|e| e.0)?;
     let workers = params.workers.map(|count| count.max(1) as usize);
     Ok(jobs::build(resolved, |options| {
         options.seed = seed;
@@ -400,14 +415,22 @@ fn job_result(view: JobView) -> Result<CallToolResult, ErrorData> {
 /// `notifications/cancelled` for this request id cancels `ctx.ct`
 /// (`rmcp::service::RequestContext`), which ends the wait. Neither stops the scan:
 /// `afz_scan_cancel` is the only thing that stops a scan.
-async fn await_job(shared: &Shared, id: &str, timeout: Option<Duration>, ctx: &RequestContext<RoleServer>) -> JobView {
+async fn await_job(
+    shared: &Shared,
+    id: &str,
+    timeout: Option<Duration>,
+    ctx: &RequestContext<RoleServer>,
+) -> JobView {
     let token = ctx.meta.get_progress_token();
     let deadline = timeout.map(|wait| Instant::now() + wait);
     let mut last_sent: Option<u64> = None;
     loop {
         let view = {
             let registry = jobs::lock(shared);
-            let job = registry.jobs.get(id).expect("the job is registered before its wait begins");
+            let job = registry
+                .jobs
+                .get(id)
+                .expect("the job is registered before its wait begins");
             JobView::of(job)
         };
         if view.state != JobState::Running {
@@ -425,9 +448,10 @@ async fn await_job(shared: &Shared, id: &str, timeout: Option<Duration>, ctx: &R
                     progress.findings
                 );
                 let total = view.budget.invocations.max(1) as f64;
-                let param = ProgressNotificationParam::new(token.clone(), progress.invocations as f64)
-                    .with_total(total)
-                    .with_message(message);
+                let param =
+                    ProgressNotificationParam::new(token.clone(), progress.invocations as f64)
+                        .with_total(total)
+                        .with_message(message);
                 // A client that hung up must not fail the scan's waiter.
                 let _ = ctx.peer.notify_progress(param).await;
             }
@@ -466,9 +490,15 @@ fn probe_blocking(resolved: &Resolved, limit: usize) -> Result<ProbeResult, Stri
         ));
     }
     if is_deprecated(&handshake.protocol_version) {
-        eprintln!("warning: protocol {} is deprecated and a future engine will refuse it", handshake.protocol_version);
+        eprintln!(
+            "warning: protocol {} is deprecated and a future engine will refuse it",
+            handshake.protocol_version
+        );
     }
-    let scope = resolved.loaded.discovery_scope().map_err(|e| e.to_string())?;
+    let scope = resolved
+        .loaded
+        .discovery_scope()
+        .map_err(|e| e.to_string())?;
     let discovery = client
         .discover(
             &DiscoverReq {
@@ -482,7 +512,11 @@ fn probe_blocking(resolved: &Resolved, limit: usize) -> Result<ProbeResult, Stri
         .map_err(|reason| reason.detail())?;
     let coverage = client.coverage_map(Duration::from_secs(30)).ok();
     let discovered = discovery.targets.len() as u64;
-    let fuzzable = discovery.targets.iter().filter(|target| target.is_fuzzable()).count() as u64;
+    let fuzzable = discovery
+        .targets
+        .iter()
+        .filter(|target| target.is_fuzzable())
+        .count() as u64;
     let truncated = discovery.targets.len() > limit;
     let mut targets = discovery.targets;
     targets.truncate(limit);
@@ -507,7 +541,9 @@ fn probe_blocking(resolved: &Resolved, limit: usize) -> Result<ProbeResult, Stri
 fn findings_dir(shared: &Shared, params: &FindingsParams) -> Result<(PathBuf, String), String> {
     if let Some(job_id) = params.job_id.as_deref() {
         let registry = jobs::lock(shared);
-        let job = jobs::find(&registry, Some(job_id)).ok_or_else(|| format!("no job {job_id} in this server; afz only knows the scans it started"))?;
+        let job = jobs::find(&registry, Some(job_id)).ok_or_else(|| {
+            format!("no job {job_id} in this server; afz only knows the scans it started")
+        })?;
         return job_dir(job);
     }
     if let Some(scan_id) = params.scan_id.as_deref() {
@@ -520,18 +556,33 @@ fn findings_dir(shared: &Shared, params: &FindingsParams) -> Result<(PathBuf, St
         if project::has_scan_file(&candidate) {
             return Ok((candidate, resolved.scan_root.display().to_string()));
         }
-        return Err(format!("no scan {scan_id} under {}; run afz_scan first", resolved.out_dir.display()));
+        return Err(format!(
+            "no scan {scan_id} under {}; run afz_scan first",
+            resolved.out_dir.display()
+        ));
     }
     let resolved = project::resolve(params.path.as_deref(), params.config.as_deref())?;
-    let newest = newest_scan_dir(&resolved.out_dir).ok_or_else(|| format!("no scan found under {}; run afz_scan first", resolved.out_dir.display()))?;
+    let newest = newest_scan_dir(&resolved.out_dir).ok_or_else(|| {
+        format!(
+            "no scan found under {}; run afz_scan first",
+            resolved.out_dir.display()
+        )
+    })?;
     Ok((newest, resolved.scan_root.display().to_string()))
 }
 
 fn job_dir(job: &Job) -> Result<(PathBuf, String), String> {
     match &job.dir {
         Some(dir) => Ok((dir.clone(), job.root.display().to_string())),
-        None if job.state == JobState::Running => Err(format!("job {} is still running; afz_findings reads finished scans", job.id)),
-        None => Err(format!("job {} wrote no result: {}", job.id, job.error.as_deref().unwrap_or("unknown reason"))),
+        None if job.state == JobState::Running => Err(format!(
+            "job {} is still running; afz_findings reads finished scans",
+            job.id
+        )),
+        None => Err(format!(
+            "job {} wrote no result: {}",
+            job.id,
+            job.error.as_deref().unwrap_or("unknown reason")
+        )),
     }
 }
 
@@ -551,15 +602,21 @@ fn newest_scan_dir(out_dir: &std::path::Path) -> Option<PathBuf> {
 #[tool_router(vis = "pub(crate)")]
 impl Afz {
     #[tool(
-        description = "Report the harness plugin a directory uses and the targets it would fuzz. Cheap: starts the plugin, handshakes, discovers, and stops.",
+        description = "Report the harness plugin that a directory uses and the targets that it would fuzz. Starts the plugin, completes discovery, and stops. Costs no invocations.",
         annotations(title = "Probe a scan project", read_only_hint = true)
     )]
-    async fn afz_probe(&self, Parameters(params): Parameters<ProbeParams>) -> Result<CallToolResult, ErrorData> {
+    async fn afz_probe(
+        &self,
+        Parameters(params): Parameters<ProbeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
         let resolved = match project::resolve(params.path.as_deref(), params.config.as_deref()) {
             Ok(resolved) => resolved,
             Err(message) => return Ok(action_error(message)),
         };
-        let limit = params.target_limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT) as usize;
+        let limit = params
+            .target_limit
+            .unwrap_or(DEFAULT_LIMIT)
+            .clamp(1, MAX_LIMIT) as usize;
         let outcome = tokio::task::spawn_blocking(move || probe_blocking(&resolved, limit))
             .await
             .map_err(internal)?;
@@ -570,10 +627,17 @@ impl Afz {
     }
 
     #[tool(
-        description = "Start a coverage-guided scan and answer at once with its jobId. Use await_scan to block until it ends and afz_scan_status for progress. One scan runs at a time.",
-        annotations(title = "Scan a tree", destructive_hint = false, idempotent_hint = false)
+        description = "Start a coverage-guided scan and return its jobId at once. Use await_scan to wait for the end, and afz_scan_status for progress. The server runs one scan at a time.",
+        annotations(
+            title = "Scan a tree",
+            destructive_hint = false,
+            idempotent_hint = false
+        )
     )]
-    async fn afz_scan(&self, Parameters(params): Parameters<ScanParams>) -> Result<CallToolResult, ErrorData> {
+    async fn afz_scan(
+        &self,
+        Parameters(params): Parameters<ScanParams>,
+    ) -> Result<CallToolResult, ErrorData> {
         let resolved = match project::resolve(params.path.as_deref(), params.config.as_deref()) {
             Ok(resolved) => resolved,
             Err(message) => return Ok(action_error(message)),
@@ -584,9 +648,10 @@ impl Afz {
         };
         // Preflight before the job exists, so "--git {selector} needs a git repository"
         // answers the call instead of failing a job.
-        let preflighted = tokio::task::spawn_blocking(move || scan::preflight(&options).map(|()| options))
-            .await
-            .map_err(internal)?;
+        let preflighted =
+            tokio::task::spawn_blocking(move || scan::preflight(&options).map(|()| options))
+                .await
+                .map_err(internal)?;
         let options = match preflighted {
             Ok(options) => options,
             Err(e) => return Ok(action_error(e.to_string())),
@@ -603,10 +668,13 @@ impl Afz {
     }
 
     #[tool(
-        description = "Report one scan's state and live progress right now. Answers immediately; use await_scan to block until the scan ends.",
+        description = "Return a scan's state and live progress now. Answers immediately. Use await_scan to wait for the end.",
         annotations(title = "Scan status", read_only_hint = true)
     )]
-    async fn afz_scan_status(&self, Parameters(params): Parameters<StatusParams>) -> Result<CallToolResult, ErrorData> {
+    async fn afz_scan_status(
+        &self,
+        Parameters(params): Parameters<StatusParams>,
+    ) -> Result<CallToolResult, ErrorData> {
         let id = {
             let registry = jobs::lock(&self.shared);
             jobs::find(&registry, params.job_id.as_deref()).map(|job| job.id.clone())
@@ -616,16 +684,23 @@ impl Afz {
         };
         let view = {
             let registry = jobs::lock(&self.shared);
-            JobView::of(jobs::find(&registry, Some(&id)).expect("the id came from this registry moments ago"))
+            JobView::of(
+                jobs::find(&registry, Some(&id))
+                    .expect("the id came from this registry moments ago"),
+            )
         };
         job_result(view)
     }
 
     #[tool(
-        description = "Block until a scan ends and answer with its final state. Run it as a background task to be woken when the scan finishes; afz_scan_status still answers instantly for progress meanwhile. Pass timeoutSeconds to answer with the state as it is then instead. Cancelling this call stops the wait, not the scan - afz_scan_cancel stops a scan.",
+        description = "Wait for a scan to end and return its final state. Run it as a background task to be woken when the scan finishes. timeoutSeconds returns the current state instead. Cancelling this call stops the wait, not the scan; afz_scan_cancel stops a scan.",
         annotations(title = "Wait for a scan", read_only_hint = true)
     )]
-    async fn await_scan(&self, Parameters(params): Parameters<AwaitParams>, ctx: RequestContext<RoleServer>) -> Result<CallToolResult, ErrorData> {
+    async fn await_scan(
+        &self,
+        Parameters(params): Parameters<AwaitParams>,
+        ctx: RequestContext<RoleServer>,
+    ) -> Result<CallToolResult, ErrorData> {
         let id = {
             let registry = jobs::lock(&self.shared);
             jobs::find(&registry, params.job_id.as_deref()).map(|job| job.id.clone())
@@ -633,16 +708,21 @@ impl Afz {
         let Some(id) = id else {
             return Ok(action_error("no scan to wait for; run afz_scan first"));
         };
-        let timeout = params.timeout_seconds.map(|seconds| Duration::from_secs_f64(seconds.max(0.0)));
+        let timeout = params
+            .timeout_seconds
+            .map(|seconds| Duration::from_secs_f64(seconds.max(0.0)));
         let view = await_job(&self.shared, &id, timeout, &ctx).await;
         job_result(view)
     }
 
     #[tool(
-        description = "Ask a running scan to stop between batches. The scan still writes its result, with stoppedReason interrupted.",
+        description = "Stop a running scan between batches. The scan still writes its result, with stoppedReason interrupted.",
         annotations(title = "Stop a scan", destructive_hint = false)
     )]
-    async fn afz_scan_cancel(&self, Parameters(params): Parameters<CancelParams>) -> Result<CallToolResult, ErrorData> {
+    async fn afz_scan_cancel(
+        &self,
+        Parameters(params): Parameters<CancelParams>,
+    ) -> Result<CallToolResult, ErrorData> {
         let mut registry = jobs::lock(&self.shared);
         let Some(job) = jobs::find_mut(&mut registry, params.job_id.as_deref()) else {
             return Ok(action_error("no scan to stop; run afz_scan first"));
@@ -666,11 +746,13 @@ impl Afz {
     }
 
     #[tool(
-        description = "Read the findings of a finished scan, newest first, with the artifact path of each input.",
+        description = "Read the findings of a finished scan, newest scan first. Each finding names its input file and its reproducer file. Set markdown to include report.md.",
         annotations(title = "Read findings", read_only_hint = true)
-    )
-    ]
-    async fn afz_findings(&self, Parameters(params): Parameters<FindingsParams>) -> Result<CallToolResult, ErrorData> {
+    )]
+    async fn afz_findings(
+        &self,
+        Parameters(params): Parameters<FindingsParams>,
+    ) -> Result<CallToolResult, ErrorData> {
         let (dir, root) = match findings_dir(&self.shared, &params) {
             Ok(found) => found,
             Err(message) => return Ok(action_error(message)),
@@ -688,7 +770,9 @@ impl Afz {
         let matched: Vec<&FindingRecord> = document
             .findings
             .iter()
-            .filter(|finding| floor.is_none_or(|min| severity_rank(finding.severity) >= severity_rank(min)))
+            .filter(|finding| {
+                floor.is_none_or(|min| severity_rank(finding.severity) >= severity_rank(min))
+            })
             .collect();
         let truncated = matched.len() > limit;
         let findings: Vec<FindingRecord> = matched.into_iter().take(limit).cloned().collect();
@@ -714,7 +798,8 @@ impl Afz {
                 corpus_size: document.execution.corpus_size,
                 coverage_edges: document.execution.coverage_edges,
                 coverage_ratio: document.execution.coverage_ratio,
-                stopped_reason: jobs::stopped_reason(&document.execution.stopped_reason).to_string(),
+                stopped_reason: jobs::stopped_reason(&document.execution.stopped_reason)
+                    .to_string(),
                 unattempted: document.execution.unattempted,
                 restarts: document.execution.restarts,
             },

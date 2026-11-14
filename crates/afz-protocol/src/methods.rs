@@ -4,9 +4,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::outcome::FaultSignature;
 use crate::outcome::Outcome;
 use crate::targets::{CoverageMap, Discovery, Handshake, SkipReason};
-use crate::outcome::FaultSignature;
 use crate::value::{MaterializedCall, ValueTree};
 
 /// `discover` request. Discovery must not execute target code unless the handshake said
@@ -87,11 +87,15 @@ impl<'de> Deserialize<'de> for PrepareResp {
         match (wire.ok, wire.materialized, wire.reason) {
             (true, Some(materialized), None) => Ok(PrepareResp::Ok { materialized }),
             (false, None, Some(reason)) => Ok(PrepareResp::Skip { reason }),
-            (true, None, _) => Err(serde::de::Error::custom("`ok: true` requires `materialized`")),
-            (true, _, Some(_)) => {
-                Err(serde::de::Error::custom("`ok: true` must not carry `reason`"))
-            }
-            (false, Some(_), _) => Err(serde::de::Error::custom("`ok: false` must not carry `materialized`")),
+            (true, None, _) => Err(serde::de::Error::custom(
+                "`ok: true` requires `materialized`",
+            )),
+            (true, _, Some(_)) => Err(serde::de::Error::custom(
+                "`ok: true` must not carry `reason`",
+            )),
+            (false, Some(_), _) => Err(serde::de::Error::custom(
+                "`ok: false` must not carry `materialized`",
+            )),
             (false, None, None) => Err(serde::de::Error::custom("`ok: false` requires `reason`")),
         }
     }
@@ -207,4 +211,3 @@ pub struct ReadyResp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
-

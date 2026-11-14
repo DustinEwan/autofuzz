@@ -69,7 +69,13 @@ pub fn mutate(value: &ValueTree, ty: &TypeNode, rng: &mut Rng) -> ValueTree {
 /// mutations deep is unreachable if every intermediate has to earn its own place in the corpus,
 /// so the run is what lets a ladder with a rung that earns no coverage be climbed at all. The
 /// length of the run is drawn from the same `rng`, so a seed replays the same inputs.
-pub fn mutate_with_donor(value: &ValueTree, ty: &TypeNode, rng: &mut Rng, donor: Option<&ValueTree>, donor_id: &str) -> ValueTree {
+pub fn mutate_with_donor(
+    value: &ValueTree,
+    ty: &TypeNode,
+    rng: &mut Rng,
+    donor: Option<&ValueTree>,
+    donor_id: &str,
+) -> ValueTree {
     let mut out = value.clone();
     for _ in 0..HAVOC_MIN + rng.below(HAVOC_SPAN) {
         out = mutate_once(&out, ty, rng, donor, donor_id);
@@ -79,7 +85,13 @@ pub fn mutate_with_donor(value: &ValueTree, ty: &TypeNode, rng: &mut Rng, donor:
 
 /// Rewrite one node of `value`. Every operator is node-level, which is what lets the minimizer
 /// reason about the result and lets a finding name the operator that produced the fault.
-fn mutate_once(value: &ValueTree, ty: &TypeNode, rng: &mut Rng, donor: Option<&ValueTree>, donor_id: &str) -> ValueTree {
+fn mutate_once(
+    value: &ValueTree,
+    ty: &TypeNode,
+    rng: &mut Rng,
+    donor: Option<&ValueTree>,
+    donor_id: &str,
+) -> ValueTree {
     let mut out = value.clone();
     // The root path is a valid target: replacing the whole argument is a legal mutation, and a
     // scheduler that only ever mutated children could never leave an input's shape.
@@ -87,11 +99,17 @@ fn mutate_once(value: &ValueTree, ty: &TypeNode, rng: &mut Rng, donor: Option<&V
     if candidates.is_empty() {
         return out;
     }
-    let Some(path) = rng.pick(&candidates).cloned() else { return out };
-    let Some(current) = path.get(&out).cloned() else { return out };
+    let Some(path) = rng.pick(&candidates).cloned() else {
+        return out;
+    };
+    let Some(current) = path.get(&out).cloned() else {
+        return out;
+    };
     let node_ty = type_at(ty, &path);
 
-    let Some(op) = choose_op(rng, &current.node, donor) else { return out };
+    let Some(op) = choose_op(rng, &current.node, donor) else {
+        return out;
+    };
     // The paste needs a second position in the same input, which `apply` does not see.
     let Some(replacement) = (if op == Op::Paste {
         paste_source(&out, ty, &path, &candidates, rng)
@@ -121,7 +139,12 @@ fn selectable_paths(value: &ValueTree) -> Vec<NodePath> {
 fn choose_op(rng: &mut Rng, node: &ValueNode, donor: Option<&ValueTree>) -> Option<Op> {
     let mut ops = vec![Op::Sibling, Op::Boundary];
     match node {
-        ValueNode::Array { .. } | ValueNode::Set { .. } | ValueNode::Map { .. } | ValueNode::Tuple { .. } | ValueNode::Stream { .. } | ValueNode::Buffer { .. } => {
+        ValueNode::Array { .. }
+        | ValueNode::Set { .. }
+        | ValueNode::Map { .. }
+        | ValueNode::Tuple { .. }
+        | ValueNode::Stream { .. }
+        | ValueNode::Buffer { .. } => {
             ops.push(Op::Resize);
         }
         ValueNode::Object { .. } => ops.push(Op::ToggleOptional),
@@ -143,19 +166,33 @@ fn choose_op(rng: &mut Rng, node: &ValueNode, donor: Option<&ValueTree>) -> Opti
 /// are filtered by the same declaration check a graft uses, and a node that contains the
 /// destination is excluded, because copying an ancestor over its own descendant doubles the input
 /// every time the operator runs.
-fn paste_source(value: &ValueTree, ty: &TypeNode, dest: &NodePath, candidates: &[NodePath], rng: &mut Rng) -> Option<ValueTree> {
+fn paste_source(
+    value: &ValueTree,
+    ty: &TypeNode,
+    dest: &NodePath,
+    candidates: &[NodePath],
+    rng: &mut Rng,
+) -> Option<ValueTree> {
     let dest_ty = type_at(ty, dest);
     let sources: Vec<&NodePath> = candidates
         .iter()
         .filter(|p| {
             !dest.steps.starts_with(&p.steps)
-                && p.get(value).is_some_and(|sub| sub.wire_bytes() <= PASTE_MAX_BYTES && matches(&dest_ty, &sub.node))
+                && p.get(value).is_some_and(|sub| {
+                    sub.wire_bytes() <= PASTE_MAX_BYTES && matches(&dest_ty, &sub.node)
+                })
         })
         .collect();
     let path = *rng.pick(&sources)?;
     let subtree = path.get(value)?.clone();
     let from = kind_label(&subtree.node);
-    Some(ValueTree::with_provenance(subtree.node, Provenance::Mutated { op: Op::Paste.name().into(), from }))
+    Some(ValueTree::with_provenance(
+        subtree.node,
+        Provenance::Mutated {
+            op: Op::Paste.name().into(),
+            from,
+        },
+    ))
 }
 
 fn apply(
@@ -174,19 +211,37 @@ fn apply(
         Op::Paste => return None,
         Op::Sibling => (
             generate::generate(ty, generate::DEFAULT_DEPTH, rng).node,
-            Provenance::Mutated { op: op.name().into(), from: ty_label(ty) },
+            Provenance::Mutated {
+                op: op.name().into(),
+                from: ty_label(ty),
+            },
         ),
         Op::Boundary => {
             let (node, source) = boundary_for(&current.node, ty, rng)?;
-            (node, Provenance::Mutated { op: op.name().into(), from: source.into() })
+            (
+                node,
+                Provenance::Mutated {
+                    op: op.name().into(),
+                    from: source.into(),
+                },
+            )
         }
         Op::Resize => (
             resize(&current.node, ty, rng)?,
-            Provenance::Mutated { op: op.name().into(), from: kind_label(&current.node) },
+            Provenance::Mutated {
+                op: op.name().into(),
+                from: kind_label(&current.node),
+            },
         ),
         Op::ToggleOptional => {
             let (node, field) = toggle_optional(&current.node, ty, rng)?;
-            (node, Provenance::Mutated { op: op.name().into(), from: field })
+            (
+                node,
+                Provenance::Mutated {
+                    op: op.name().into(),
+                    from: field,
+                },
+            )
         }
         Op::Transplant => {
             let donor = donor?;
@@ -195,11 +250,19 @@ fn apply(
             // `inv.lines === undefined`, and a number grafted onto a field declared
             // `region: string` reaches it as `region.toUpperCase is not a function`. Both faults
             // report that a caller ignored the types, which is not the target's logic.
-            let compatible: Vec<NodePath> =
-                donor.paths().into_iter().filter(|path| path.get(donor).is_some_and(|sub| matches(ty, &sub.node))).collect();
+            let compatible: Vec<NodePath> = donor
+                .paths()
+                .into_iter()
+                .filter(|path| path.get(donor).is_some_and(|sub| matches(ty, &sub.node)))
+                .collect();
             let path = rng.pick(&compatible).cloned()?;
             let subtree = path.get(donor)?.clone();
-            (subtree.node, Provenance::Transplanted { from_entry: donor_id.to_string() })
+            (
+                subtree.node,
+                Provenance::Transplanted {
+                    from_entry: donor_id.to_string(),
+                },
+            )
         }
     };
     Some(ValueTree::with_provenance(node, provenance))
@@ -213,13 +276,22 @@ fn apply(
 /// whose shape the wire type does not carry beyond its own fields.
 fn matches(ty: &TypeNode, node: &ValueNode) -> bool {
     match (ty, node) {
-        (TypeNode::Composite { composite, members, .. }, _) => match composite {
+        (
+            TypeNode::Composite {
+                composite, members, ..
+            },
+            _,
+        ) => match composite {
             afz_protocol::CompositeKind::Union => members.iter().any(|m| matches(m, node)),
             afz_protocol::CompositeKind::Intersection => members.iter().all(|m| matches(m, node)),
         },
-        (TypeNode::Ref { fields, .. }, ValueNode::Object { fields: have }) => fields.iter().all(|f| {
-            have.iter().find(|(n, _)| n == &f.name).is_none_or(|(_, v)| matches(&f.ty, &v.node))
-        }),
+        (TypeNode::Ref { fields, .. }, ValueNode::Object { fields: have }) => {
+            fields.iter().all(|f| {
+                have.iter()
+                    .find(|(n, _)| n == &f.name)
+                    .is_none_or(|(_, v)| matches(&f.ty, &v.node))
+            })
+        }
         (TypeNode::Scalar { scalar, .. }, other) => match (scalar, other) {
             (afz_protocol::ScalarKind::Null, ValueNode::Null) => true,
             (afz_protocol::ScalarKind::Undefined, ValueNode::Undefined) => true,
@@ -239,21 +311,40 @@ fn matches(ty: &TypeNode, node: &ValueNode) -> bool {
         },
         (TypeNode::StringFormat { .. }, ValueNode::String { .. }) => true,
         (TypeNode::Literal { values }, ValueNode::Literal { value }) => values.contains(value),
-        (TypeNode::Collection { collection, element, key, .. }, other) => match (collection, other) {
+        (
+            TypeNode::Collection {
+                collection,
+                element,
+                key,
+                ..
+            },
+            other,
+        ) => match (collection, other) {
             (afz_protocol::CollectionKind::Array, ValueNode::Array { items }) => {
                 items.iter().all(|i| matches(element, &i.node))
             }
-            (afz_protocol::CollectionKind::Set, ValueNode::Set { items }) => items.iter().all(|i| matches(element, &i.node)),
-            (afz_protocol::CollectionKind::Map, ValueNode::Map { entries }) => entries.iter().all(|(k, v)| {
-                key.as_ref().is_some_and(|kt| matches(kt, &k.node)) && matches(element, &v.node)
-            }),
+            (afz_protocol::CollectionKind::Set, ValueNode::Set { items }) => {
+                items.iter().all(|i| matches(element, &i.node))
+            }
+            (afz_protocol::CollectionKind::Map, ValueNode::Map { entries }) => {
+                entries.iter().all(|(k, v)| {
+                    key.as_ref().is_some_and(|kt| matches(kt, &k.node)) && matches(element, &v.node)
+                })
+            }
             _ => false,
         },
         (TypeNode::Object { fields, .. }, ValueNode::Object { fields: have }) => {
-            fields.iter().all(|f| match have.iter().find(|(n, _)| n == &f.name) {
-                Some((_, v)) => matches(&f.ty, &v.node),
-                None => !f.required,
-            }) && have.iter().all(|(n, v)| fields.iter().any(|f| &f.name == n && matches(&f.ty, &v.node)))
+            fields
+                .iter()
+                .all(|f| match have.iter().find(|(n, _)| n == &f.name) {
+                    Some((_, v)) => matches(&f.ty, &v.node),
+                    None => !f.required,
+                })
+                && have.iter().all(|(n, v)| {
+                    fields
+                        .iter()
+                        .any(|f| &f.name == n && matches(&f.ty, &v.node))
+                })
         }
         (TypeNode::Tuple { items }, ValueNode::Tuple { items: have }) => {
             items.len() == have.len() && items.iter().zip(have).all(|(t, v)| matches(t, &v.node))
@@ -261,9 +352,15 @@ fn matches(ty: &TypeNode, node: &ValueNode) -> bool {
         (TypeNode::Buffer { .. }, ValueNode::Buffer { .. }) => true,
         (TypeNode::Promise { .. }, ValueNode::Function { .. }) => true,
         (TypeNode::Function { .. }, ValueNode::Function { .. }) => true,
-        (TypeNode::Stream { iterable, element, .. }, ValueNode::Stream { iterable: is_iterable, items }) => {
-            iterable == is_iterable && items.iter().all(|i| matches(element, &i.node))
-        }
+        (
+            TypeNode::Stream {
+                iterable, element, ..
+            },
+            ValueNode::Stream {
+                iterable: is_iterable,
+                items,
+            },
+        ) => iterable == is_iterable && items.iter().all(|i| matches(element, &i.node)),
         (TypeNode::Opaque { ty: name, .. }, ValueNode::Opaque { ty }) => name == ty,
         _ => false,
     }
@@ -274,21 +371,53 @@ fn matches(ty: &TypeNode, node: &ValueNode) -> bool {
 /// A composite boundary comes from the declared type, not the table: an empty object would drop
 /// required fields and an all-null tuple would break arity, so the boundary of a composite is
 /// its declared type's terminated form.
-fn boundary_for(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<(ValueNode, &'static str)> {
+fn boundary_for(
+    node: &ValueNode,
+    ty: &TypeNode,
+    rng: &mut Rng,
+) -> Option<(ValueNode, &'static str)> {
     let wrapped = |n: ValueNode, s: &'static str| Some((n, s));
-    if node.kind() == ty.kind() && matches!(node, ValueNode::Object { .. } | ValueNode::Tuple { .. }) {
+    if node.kind() == ty.kind()
+        && matches!(node, ValueNode::Object { .. } | ValueNode::Tuple { .. })
+    {
         return wrapped(generate::terminate(ty), "declared-type");
     }
     match node {
-        ValueNode::Number { .. } => wrapped(boundaries::number_node(rng, declared_number_bounds(ty)), "boundary-table"),
+        ValueNode::Number { .. } => wrapped(
+            boundaries::number_node(rng, declared_number_bounds(ty)),
+            "boundary-table",
+        ),
         ValueNode::BigInt { .. } => wrapped(boundaries::bigint_node(rng), "boundary-table"),
-        ValueNode::String { .. } => wrapped(boundaries::string_node(rng, declared_string_length(ty)), "boundary-table"),
-        ValueNode::Boolean { .. } => wrapped(ValueNode::Boolean { value: rng.boolean() }, "boundary-table"),
-        ValueNode::Array { .. } => wrapped(ValueNode::Array { items: Vec::new() }, "boundary-table"),
+        ValueNode::String { .. } => wrapped(
+            boundaries::string_node(rng, declared_string_length(ty)),
+            "boundary-table",
+        ),
+        ValueNode::Boolean { .. } => wrapped(
+            ValueNode::Boolean {
+                value: rng.boolean(),
+            },
+            "boundary-table",
+        ),
+        ValueNode::Array { .. } => {
+            wrapped(ValueNode::Array { items: Vec::new() }, "boundary-table")
+        }
         ValueNode::Set { .. } => wrapped(ValueNode::Set { items: Vec::new() }, "boundary-table"),
-        ValueNode::Map { .. } => wrapped(ValueNode::Map { entries: Vec::new() }, "boundary-table"),
-        ValueNode::Buffer { .. } => wrapped(ValueNode::Buffer { bytes: Vec::new() }, "boundary-table"),
-        ValueNode::Stream { iterable, .. } => wrapped(ValueNode::Stream { iterable: *iterable, items: Vec::new() }, "boundary-table"),
+        ValueNode::Map { .. } => wrapped(
+            ValueNode::Map {
+                entries: Vec::new(),
+            },
+            "boundary-table",
+        ),
+        ValueNode::Buffer { .. } => {
+            wrapped(ValueNode::Buffer { bytes: Vec::new() }, "boundary-table")
+        }
+        ValueNode::Stream { iterable, .. } => wrapped(
+            ValueNode::Stream {
+                iterable: *iterable,
+                items: Vec::new(),
+            },
+            "boundary-table",
+        ),
         // Without a declared object type the mutator cannot know which fields are required, so
         // it declines rather than emit an object the target cannot read.
         ValueNode::Object { .. } => None,
@@ -305,7 +434,9 @@ const ABSOLUTE_MAX: u64 = 256;
 fn resize(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<ValueNode> {
     let (min, max) = declared_length(ty);
     let element = match ty {
-        TypeNode::Collection { element, .. } | TypeNode::Stream { element, .. } => Some(element.as_ref()),
+        TypeNode::Collection { element, .. } | TypeNode::Stream { element, .. } => {
+            Some(element.as_ref())
+        }
         _ => None,
     };
     match node {
@@ -325,10 +456,15 @@ fn resize(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<ValueNode> {
             let len = step(items.len() as u64, min, max, rng)?;
             let mut items = items.clone();
             resize_to(&mut items, len, element, rng)?;
-            Some(ValueNode::Stream { iterable: *iterable, items })
+            Some(ValueNode::Stream {
+                iterable: *iterable,
+                items,
+            })
         }
         ValueNode::Map { entries } => {
-            let TypeNode::Collection { element, key, .. } = ty else { return None };
+            let TypeNode::Collection { element, key, .. } = ty else {
+                return None;
+            };
             let len = step(entries.len() as u64, min, max, rng)?;
             let mut entries = entries.clone();
             if entries.len() < len {
@@ -358,7 +494,9 @@ fn resize(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<ValueNode> {
         ValueNode::Tuple { items } => {
             // A tuple is fixed-arity, so a resize changes one element instead of the length,
             // and only when the declaration says what that element's type is.
-            let TypeNode::Tuple { items: declared } = ty else { return None };
+            let TypeNode::Tuple { items: declared } = ty else {
+                return None;
+            };
             if items.is_empty() || items.len() != declared.len() {
                 return None;
             }
@@ -381,7 +519,11 @@ fn step(len: u64, min: u64, max: Option<u64>, rng: &mut Rng) -> Option<usize> {
     let can_grow = len < max.unwrap_or(ABSOLUTE_MAX);
     let can_shrink = len > min;
     match (can_grow, can_shrink) {
-        (true, true) => Some(if rng.chance(1, 2) { (len + 1) as usize } else { (len - 1) as usize }),
+        (true, true) => Some(if rng.chance(1, 2) {
+            (len + 1) as usize
+        } else {
+            (len - 1) as usize
+        }),
         (true, false) => Some((len + 1) as usize),
         (false, true) => Some((len - 1) as usize),
         (false, false) => None,
@@ -391,9 +533,10 @@ fn step(len: u64, min: u64, max: Option<u64>, rng: &mut Rng) -> Option<usize> {
 /// The declared length bounds of a collection, buffer, or stream type.
 fn declared_length(ty: &TypeNode) -> (u64, Option<u64>) {
     match ty {
-        TypeNode::Collection { length, .. } | TypeNode::Buffer { length } => {
-            (length.and_then(|l| l.min).unwrap_or(0), length.and_then(|l| l.max))
-        }
+        TypeNode::Collection { length, .. } | TypeNode::Buffer { length } => (
+            length.and_then(|l| l.min).unwrap_or(0),
+            length.and_then(|l| l.max),
+        ),
         TypeNode::Stream { max_items, .. } => (0, *max_items),
         _ => (0, None),
     }
@@ -405,7 +548,12 @@ fn declared_length(ty: &TypeNode) -> (u64, Option<u64>) {
 /// possible when there is one, and a `number` pushed into a `Row[]` is a type error the target
 /// never sees rather than logic it has to handle, so an element with no declaration and no
 /// sibling to copy leaves the resize undone.
-fn resize_to(items: &mut Vec<ValueTree>, len: usize, element: Option<&TypeNode>, rng: &mut Rng) -> Option<()> {
+fn resize_to(
+    items: &mut Vec<ValueTree>,
+    len: usize,
+    element: Option<&TypeNode>,
+    rng: &mut Rng,
+) -> Option<()> {
     if items.len() < len {
         let seed = match items.last() {
             Some(last) => last.clone(),
@@ -419,8 +567,13 @@ fn resize_to(items: &mut Vec<ValueTree>, len: usize, element: Option<&TypeNode>,
 }
 
 fn toggle_optional(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<(ValueNode, String)> {
-    let ValueNode::Object { fields } = node else { return None };
-    let TypeNode::Object { fields: declared, .. } = ty else {
+    let ValueNode::Object { fields } = node else {
+        return None;
+    };
+    let TypeNode::Object {
+        fields: declared, ..
+    } = ty
+    else {
         // Without a declaration the mutator cannot tell which field is optional, so it drops a
         // field it is allowed to drop: any of them.
         if fields.is_empty() {
@@ -437,7 +590,12 @@ fn toggle_optional(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<(Va
     let removable: Vec<usize> = fields
         .iter()
         .enumerate()
-        .filter(|(_, (name, _))| declared.iter().find(|f| &f.name == name).is_none_or(|f| !f.required))
+        .filter(|(_, (name, _))| {
+            declared
+                .iter()
+                .find(|f| &f.name == name)
+                .is_none_or(|f| !f.required)
+        })
         .map(|(i, _)| i)
         .collect();
     let missing: Vec<&afz_protocol::Field> = declared
@@ -454,7 +612,10 @@ fn toggle_optional(node: &ValueNode, ty: &TypeNode, rng: &mut Rng) -> Option<(Va
     }
     let field = *rng.pick(&missing)?;
     let mut fields = fields.clone();
-    fields.push((field.name.clone(), generate::generate(&field.ty, generate::DEFAULT_DEPTH, rng)));
+    fields.push((
+        field.name.clone(),
+        generate::generate(&field.ty, generate::DEFAULT_DEPTH, rng),
+    ));
     Some((ValueNode::Object { fields }, format!("+{}", field.name)))
 }
 
@@ -472,10 +633,24 @@ pub fn type_at(ty: &TypeNode, path: &NodePath) -> TypeNode {
                 .unwrap_or_else(TypeNode::null),
             // A map key is a distinct type from the element, so it is matched before the
             // element arm that would otherwise swallow every `Key` step.
-            (Step::Key(_, afz_protocol::KeySide::Key), TypeNode::Collection { key: Some(key), .. }) => (**key).clone(),
-            (Step::Index(_) | Step::Key(_, afz_protocol::KeySide::Value), TypeNode::Collection { element, .. }) => (**element).clone(),
-            (Step::Return, TypeNode::Function { returns: Some(inner), .. }) => (**inner).clone(),
-            (Step::Index(i), TypeNode::Tuple { items }) => items.get(*i).cloned().unwrap_or_else(TypeNode::null),
+            (
+                Step::Key(_, afz_protocol::KeySide::Key),
+                TypeNode::Collection { key: Some(key), .. },
+            ) => (**key).clone(),
+            (
+                Step::Index(_) | Step::Key(_, afz_protocol::KeySide::Value),
+                TypeNode::Collection { element, .. },
+            ) => (**element).clone(),
+            (
+                Step::Return,
+                TypeNode::Function {
+                    returns: Some(inner),
+                    ..
+                },
+            ) => (**inner).clone(),
+            (Step::Index(i), TypeNode::Tuple { items }) => {
+                items.get(*i).cloned().unwrap_or_else(TypeNode::null)
+            }
             (Step::Index(_), TypeNode::Stream { element, .. }) => (**element).clone(),
             _ => TypeNode::null(),
         };

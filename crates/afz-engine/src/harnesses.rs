@@ -47,7 +47,9 @@ pub fn root() -> PathBuf {
     let base = unset(std::env::var_os("AFZ_HOME"))
         .or_else(|| unset(std::env::var_os("XDG_DATA_HOME")).map(|d| d.join("autofuzz")))
         .unwrap_or_else(|| {
-            unset(std::env::var_os("HOME")).unwrap_or_else(|| PathBuf::from(".")).join(".local/share/autofuzz")
+            unset(std::env::var_os("HOME"))
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".local/share/autofuzz")
         });
     base.join("harnesses")
 }
@@ -65,7 +67,11 @@ pub fn read_manifest(dir: &Path) -> Result<HarnessManifest, String> {
 pub fn resolve_argv(root: &Path, argv: &[String]) -> Vec<String> {
     argv.iter()
         .enumerate()
-        .map(|(index, argument)| absolutized(index, argument.clone(), root, |path| root.join(path).exists()))
+        .map(|(index, argument)| {
+            absolutized(index, argument.clone(), root, |path| {
+                root.join(path).exists()
+            })
+        })
         .collect()
 }
 
@@ -109,7 +115,9 @@ pub fn lookup(name: &str) -> Option<InstalledHarness> {
 /// Every record under `root()`, sorted by name.
 pub fn all() -> Vec<InstalledHarness> {
     let mut harnesses = Vec::new();
-    let Ok(entries) = std::fs::read_dir(root()) else { return harnesses };
+    let Ok(entries) = std::fs::read_dir(root()) else {
+        return harnesses;
+    };
     for entry in entries.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         if let Some(harness) = lookup(&name) {
@@ -127,7 +135,8 @@ pub fn record(harness: &InstalledHarness) -> Result<PathBuf, String> {
     let path = dir.join("harness.json");
     let text = serde_json::to_string_pretty(harness)
         .map_err(|e| format!("cannot serialize the record for {}: {e}", harness.name))?;
-    std::fs::write(&path, text.as_bytes()).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    std::fs::write(&path, text.as_bytes())
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(path)
 }
 

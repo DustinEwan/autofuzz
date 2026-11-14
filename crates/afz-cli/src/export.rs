@@ -16,7 +16,7 @@ use afz_protocol::PROTOCOL_VERSION;
 pub(crate) fn schema_set(version: &str) -> Result<&'static [(&'static str, &'static str)], String> {
     embedded_schemas(version).ok_or_else(|| {
         format!(
-            "this engine carries no schema set for protocol \"{version}\"; it carries {}",
+            "This build carries no schemas for protocol \"{version}\". It carries {}.",
             schema_versions().join(", ")
         )
     })
@@ -52,23 +52,45 @@ mod tests {
         run(None, Some(dir.clone())).expect("the newest revision always has a set");
         let mut files: Vec<String> = std::fs::read_dir(&dir)
             .expect("export dir")
-            .map(|e| e.unwrap().path().file_name().unwrap().to_string_lossy().to_string())
+            .map(|e| {
+                e.unwrap()
+                    .path()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string()
+            })
             .collect();
         files.sort();
-        assert_eq!(files.len(), 22, "every committed schema exports, got {files:?}");
+        assert_eq!(
+            files.len(),
+            22,
+            "every committed schema exports, got {files:?}"
+        );
         assert!(files.contains(&"handshake.json".to_string()));
         let handshake: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(dir.join("handshake.json")).unwrap()).unwrap();
-        assert_eq!(handshake["$schema"].as_str(), Some("https://json-schema.org/draft/2020-12/schema"));
+            serde_json::from_str(&std::fs::read_to_string(dir.join("handshake.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            handshake["$schema"].as_str(),
+            Some("https://json-schema.org/draft/2020-12/schema")
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn an_unsupported_version_is_refused_naming_the_supported_ones() {
         let dir = temp_dir("unknown");
-        let err = run(Some("afz/9".to_string()), Some(dir.clone())).expect_err("no afz/9 set exists");
-        assert!(err.contains("afz/9"), "the message names the asked-for revision: {err}");
-        assert!(err.contains(afz_protocol::PROTOCOL_VERSION), "the message names what the engine carries: {err}");
+        let err =
+            run(Some("afz/9".to_string()), Some(dir.clone())).expect_err("no afz/9 set exists");
+        assert!(
+            err.contains("afz/9"),
+            "the message names the asked-for revision: {err}"
+        );
+        assert!(
+            err.contains(afz_protocol::PROTOCOL_VERSION),
+            "the message names what the engine carries: {err}"
+        );
         assert!(!dir.exists(), "a refused export writes nothing");
     }
 }

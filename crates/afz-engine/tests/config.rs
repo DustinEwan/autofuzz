@@ -45,7 +45,10 @@ fn a_harness_block_loads_with_design_defaults() {
 
     let scope = loaded.discovery_scope().expect("scope");
     assert_eq!(scope.root, loaded.root);
-    assert_eq!(scope.include.as_deref(), Some(&["src/**/*.ts".to_string()][..]));
+    assert_eq!(
+        scope.include.as_deref(),
+        Some(&["src/**/*.ts".to_string()][..])
+    );
     assert_eq!(
         scope.exclude.as_deref(),
         Some(&["**/*.test.ts".to_string(), "**/.autofuzz/**".to_string()][..]),
@@ -53,14 +56,34 @@ fn a_harness_block_loads_with_design_defaults() {
     );
 
     let hash = loaded.config_hash().expect("hash");
-    assert!(hash.starts_with("sha256:") && hash.len() == 71, "hash was {hash}");
-    assert_eq!(hash, loaded.config_hash().expect("stable"), "hash changed between reads");
+    assert!(
+        hash.starts_with("sha256:") && hash.len() == 71,
+        "hash was {hash}"
+    );
+    assert_eq!(
+        hash,
+        loaded.config_hash().expect("stable"),
+        "hash changed between reads"
+    );
 
     let launch = loaded.launch().expect("launch");
-    assert_eq!(launch.argv, vec!["node".to_string(), "server.js".to_string()]);
-    assert_eq!(launch.cwd.as_deref(), Some(loaded.root.display().to_string().as_str()));
-    assert_eq!(launch.env.get("AFZ_ROOT").map(String::as_str), Some(loaded.root.display().to_string().as_str()));
-    assert_eq!(loaded.project.harness.as_ref().expect("block").options["rejectClasses"][0], "RangeError", "options is the harness's own pass-through");
+    assert_eq!(
+        launch.argv,
+        vec!["node".to_string(), "server.js".to_string()]
+    );
+    assert_eq!(
+        launch.cwd.as_deref(),
+        Some(loaded.root.display().to_string().as_str())
+    );
+    assert_eq!(
+        launch.env.get("AFZ_ROOT").map(String::as_str),
+        Some(loaded.root.display().to_string().as_str())
+    );
+    assert_eq!(
+        loaded.project.harness.as_ref().expect("block").options["rejectClasses"][0],
+        "RangeError",
+        "options is the harness's own pass-through"
+    );
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -75,7 +98,15 @@ fn an_explicit_command_overrides_the_builtin_launch() {
     );
     let loaded = config::load(&path).expect("loads");
     let launch = loaded.launch().expect("launch");
-    assert_eq!(launch.argv, vec!["node".to_string(), "--import".to_string(), "tsx".to_string(), "server.mjs".to_string()]);
+    assert_eq!(
+        launch.argv,
+        vec![
+            "node".to_string(),
+            "--import".to_string(),
+            "tsx".to_string(),
+            "server.mjs".to_string()
+        ]
+    );
     assert_eq!(launch.env.get("AFZ_TRACE").map(String::as_str), Some("1"));
     std::fs::remove_dir_all(dir).ok();
 }
@@ -83,9 +114,15 @@ fn an_explicit_command_overrides_the_builtin_launch() {
 #[test]
 fn an_unknown_harness_without_a_command_is_rejected() {
     let dir = tmp("unknown-harness");
-    let path = write(&dir, r#"{ "project": "p", "harness": { "name": "ocaml" } }"#);
+    let path = write(
+        &dir,
+        r#"{ "project": "p", "harness": { "name": "ocaml" } }"#,
+    );
     let err = message(&config::load(&path).unwrap_err());
-    assert_eq!(err, "`command` is required for harness \"ocaml\": the engine does not guess a runtime; install one with `afz install-harness <git-url>`");
+    assert_eq!(
+        err,
+        "`command` is required for harness \"ocaml\". Install it with `afz install-harness <git-url>`, or set `harness.command`."
+    );
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -102,16 +139,32 @@ fn an_installed_harness_needs_no_command() {
         url: "https://example.invalid/cfgtest.git".to_string(),
         commit: "0123456789abcdef0123456789abcdef01234567".to_string(),
         root: checkout.clone(),
-        argv: vec!["node".to_string(), checkout.join("server.js").display().to_string()],
+        argv: vec![
+            "node".to_string(),
+            checkout.join("server.js").display().to_string(),
+        ],
         conformance: None,
     })
     .expect("record");
     let dir = tmp("installed-project");
-    let path = write(&dir, r#"{ "project": "p", "harness": { "name": "cfgtest" } }"#);
+    let path = write(
+        &dir,
+        r#"{ "project": "p", "harness": { "name": "cfgtest" } }"#,
+    );
     let loaded = config::load(&path).expect("an installed name loads without a command");
     let launch = loaded.launch().expect("launch");
-    assert_eq!(launch.argv, vec!["node".to_string(), checkout.join("server.js").display().to_string()]);
-    assert_eq!(launch.cwd.as_deref(), Some(dir.display().to_string().as_str()), "the scan root is the plugin's cwd");
+    assert_eq!(
+        launch.argv,
+        vec![
+            "node".to_string(),
+            checkout.join("server.js").display().to_string()
+        ]
+    );
+    assert_eq!(
+        launch.cwd.as_deref(),
+        Some(dir.display().to_string().as_str()),
+        "the scan root is the plugin's cwd"
+    );
     std::env::remove_var("AFZ_HOME");
     std::fs::remove_dir_all(home).ok();
     std::fs::remove_dir_all(dir).ok();
@@ -132,11 +185,19 @@ fn the_harness_block_is_required() {
 fn an_unimplemented_oracle_is_a_configuration_error() {
     // The design names this message exactly: naming an oracle the engine does not run must
     // never be a silent no-op.
-    for (name, body) in [("differential", r#"{ "against": "v1.4.0", "severity": "high" }"#), ("property", r#"{ "severity": "high" }"#)] {
+    for (name, body) in [
+        (
+            "differential",
+            r#"{ "against": "v1.4.0", "severity": "high" }"#,
+        ),
+        ("property", r#"{ "severity": "high" }"#),
+    ] {
         let dir = tmp("oracle");
         let path = write(
             &dir,
-            &format!(r#"{{ "project": "p", "harness": {{ "name": "js-ts", "command": ["node", "server.js"] }}, "oracles": {{ "{name}": {body} }} }}"#),
+            &format!(
+                r#"{{ "project": "p", "harness": {{ "name": "js-ts", "command": ["node", "server.js"] }}, "oracles": {{ "{name}": {body} }} }}"#
+            ),
         );
         assert_eq!(
             message(&config::load(&path).unwrap_err()),
@@ -149,11 +210,18 @@ fn an_unimplemented_oracle_is_a_configuration_error() {
 #[test]
 fn defaults_match_the_design() {
     let dir = tmp("defaults");
-    let path = write(&dir, r#"{ "project": "p", "harness": { "name": "js-ts", "command": ["node", "server.js"] } }"#);
+    let path = write(
+        &dir,
+        r#"{ "project": "p", "harness": { "name": "js-ts", "command": ["node", "server.js"] } }"#,
+    );
     let loaded = config::load(&path).expect("loads");
     let o = &loaded.project.oracles;
     assert_eq!(o.failed.severity, config::Severity::High);
-    assert_eq!(o.rejected.severity, config::Severity::Off, "rejected is off by default");
+    assert_eq!(
+        o.rejected.severity,
+        config::Severity::Off,
+        "rejected is off by default"
+    );
     assert_eq!(o.deadline.severity, config::Severity::Medium);
     assert_eq!(o.deadline.ms, Some(2000));
     assert_eq!(o.memory_growth.severity, config::Severity::Medium);
@@ -162,7 +230,11 @@ fn defaults_match_the_design() {
     assert_eq!(loaded.project.budget.max_corpus, 2048);
     assert_eq!(loaded.project.budget.strategy, config::Strategy::Guided);
     assert_eq!(loaded.project.output.dir, ".autofuzz");
-    assert_eq!(loaded.project.budget.workers_or_default(), num_cpus::get() as u32, "the default is one worker per core, with no cap");
+    assert_eq!(
+        loaded.project.budget.workers_or_default(),
+        num_cpus::get() as u32,
+        "the default is one worker per core, with no cap"
+    );
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -176,7 +248,10 @@ fn overrides_are_checked_and_severity_off_disables() {
                           "overrides": [ { "target": "afz:t:44be", "via": "result-err", "treatAs": "failed" } ] } }"#,
     );
     let loaded = config::load(&path).expect("loads");
-    assert_eq!(loaded.project.oracles.rejected.severity, config::Severity::High);
+    assert_eq!(
+        loaded.project.oracles.rejected.severity,
+        config::Severity::High
+    );
     assert!(loaded.project.oracles.rejected.severity.enabled());
     assert!(!config::Severity::Off.enabled());
     assert_eq!(loaded.project.oracles.overrides.len(), 1);
@@ -202,8 +277,16 @@ fn a_zero_budget_is_rejected_rather_than_running_forever() {
         ("maxCorpus", r#"{ "maxCorpus": 0 }"#),
     ] {
         let dir = tmp("budget");
-        let path = write(&dir, &format!(r#"{{ "project": "p", "harness": {{ "name": "js-ts", "command": ["node", "server.js"] }}, "budget": {json} }}"#));
-        assert_eq!(message(&config::load(&path).unwrap_err()), format!("`budget.{field}` must be greater than 0"));
+        let path = write(
+            &dir,
+            &format!(
+                r#"{{ "project": "p", "harness": {{ "name": "js-ts", "command": ["node", "server.js"] }}, "budget": {json} }}"#
+            ),
+        );
+        assert_eq!(
+            message(&config::load(&path).unwrap_err()),
+            format!("`budget.{field}` must be greater than 0")
+        );
         std::fs::remove_dir_all(dir).ok();
     }
 }
@@ -211,7 +294,10 @@ fn a_zero_budget_is_rejected_rather_than_running_forever() {
 #[test]
 fn an_unknown_top_level_key_is_rejected() {
     let dir = tmp("unknown-key");
-    let path = write(&dir, r#"{ "project": "p", "harness": { "name": "js-ts", "command": ["node", "server.js"] }, "target": {} }"#);
+    let path = write(
+        &dir,
+        r#"{ "project": "p", "harness": { "name": "js-ts", "command": ["node", "server.js"] }, "target": {} }"#,
+    );
     let err = message(&config::load(&path).unwrap_err());
     assert!(err.contains("unknown field `target`"), "err was {err}");
     std::fs::remove_dir_all(dir).ok();
@@ -220,18 +306,30 @@ fn an_unknown_top_level_key_is_rejected() {
 #[test]
 fn discovery_walks_up_to_find_the_project_file() {
     let dir = tmp("discover");
-    let path = write(&dir, r#"{ "project": "p", "harness": { "name": "js-ts", "command": ["node", "server.js"] } }"#);
+    let path = write(
+        &dir,
+        r#"{ "project": "p", "harness": { "name": "js-ts", "command": ["node", "server.js"] } }"#,
+    );
     let nested = dir.join("src").join("deep");
     std::fs::create_dir_all(&nested).expect("nested dir");
 
     let found = config::discover(&nested).expect("found upward");
     assert_eq!(found.canonicalize().unwrap(), path.canonicalize().unwrap());
     // A file argument is used directly.
-    assert_eq!(config::discover(&path).expect("file argument").canonicalize().unwrap(), path.canonicalize().unwrap());
+    assert_eq!(
+        config::discover(&path)
+            .expect("file argument")
+            .canonicalize()
+            .unwrap(),
+        path.canonicalize().unwrap()
+    );
 
     let orphan = tmp("orphan");
     let missing = config::discover(&orphan).unwrap_err();
-    assert!(message(&missing).contains("no autofuzz.json found from"), "err was {missing}");
+    assert!(
+        message(&missing).contains("no autofuzz.json found from"),
+        "err was {missing}"
+    );
     assert!(message(&missing).contains("--config"), "err was {missing}");
     std::fs::remove_dir_all(dir).ok();
     std::fs::remove_dir_all(orphan).ok();
@@ -240,13 +338,19 @@ fn discovery_walks_up_to_find_the_project_file() {
 #[test]
 fn a_missing_file_says_which_file_it_tried() {
     let err = config::load(Path::new("/nonexistent/autofuzz.json")).unwrap_err();
-    assert!(message(&err).contains("/nonexistent/autofuzz.json"), "err was {err}");
+    assert!(
+        message(&err).contains("/nonexistent/autofuzz.json"),
+        "err was {err}"
+    );
 }
 
 #[test]
 fn malformed_json_names_the_file_and_the_parser() {
     let dir = tmp("malformed");
-    let path = write(&dir, r#"{ "project": "p", "harness": { "name": "js-ts", "command": ["node", "server.js"], } }"#);
+    let path = write(
+        &dir,
+        r#"{ "project": "p", "harness": { "name": "js-ts", "command": ["node", "server.js"], } }"#,
+    );
     let err = message(&config::load(&path).unwrap_err());
     assert!(err.contains("autofuzz.json"), "err was {err}");
     assert!(err.contains("trailing comma"), "err was {err}");
@@ -262,9 +366,15 @@ fn validate_is_callable_on_an_in_memory_project() {
     );
     project.project = "p".into();
     project.output.renderers = vec!["sarif".into(), "docx".into()];
-    project.harness =
-        Some(config::HarnessBlock { name: "js-ts".into(), command: Some(vec!["node".into()]), ..Default::default() });
-    assert_eq!(message(&project.validate().unwrap_err()), "renderer \"docx\" is not implemented in this version");
+    project.harness = Some(config::HarnessBlock {
+        name: "js-ts".into(),
+        command: Some(vec!["node".into()]),
+        ..Default::default()
+    });
+    assert_eq!(
+        message(&project.validate().unwrap_err()),
+        "renderer \"sarif\" is not implemented in this version"
+    );
 }
 
 /// A scan writes the reproducer scripts the plugin renders into the tree it scans, so its own
@@ -280,5 +390,8 @@ fn the_scan_output_directory_is_never_discovered() {
     );
     let loaded = config::load(&path).expect("loads");
     let scope = loaded.discovery_scope().expect("scope");
-    assert_eq!(scope.exclude.as_deref(), Some(&["**/results/**".to_string()][..]));
+    assert_eq!(
+        scope.exclude.as_deref(),
+        Some(&["**/results/**".to_string()][..])
+    );
 }

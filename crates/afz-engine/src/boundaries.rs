@@ -102,7 +102,12 @@ pub const DEFAULT_RANGE: f64 = 1_000_000.0;
 /// the range excludes every boundary, a value is drawn from inside the range instead.
 pub fn number_node(rng: &mut Rng, bounds: NumberBounds) -> ValueNode {
     if bounds.int {
-        let mut in_range: Vec<f64> = INTEGERS.iter().copied().map(|v| v as f64).filter(|v| in_declared(*v, bounds)).collect();
+        let mut in_range: Vec<f64> = INTEGERS
+            .iter()
+            .copied()
+            .map(|v| v as f64)
+            .filter(|v| in_declared(*v, bounds))
+            .collect();
         for v in SMALL_INTEGERS {
             let v = v as f64;
             if in_declared(v, bounds) && !in_range.contains(&v) {
@@ -123,7 +128,10 @@ pub fn number_node(rng: &mut Rng, bounds: NumberBounds) -> ValueNode {
     let v = match rng.pick(&in_range) {
         Some(v) => *v,
         None => {
-            let mut v = rng.float_in(bounds.min.unwrap_or(-DEFAULT_RANGE), bounds.max.unwrap_or(DEFAULT_RANGE));
+            let mut v = rng.float_in(
+                bounds.min.unwrap_or(-DEFAULT_RANGE),
+                bounds.max.unwrap_or(DEFAULT_RANGE),
+            );
             if bounds.finite_only && !v.is_finite() {
                 v = 0.0;
             }
@@ -198,7 +206,9 @@ pub fn permits_long_string(declared_max: Option<u64>) -> bool {
 
 /// A `bigint` boundary as a node.
 pub fn bigint_node(rng: &mut Rng) -> ValueNode {
-    ValueNode::BigInt { value: (*rng.pick(BIGINTS).unwrap_or(&"0")).to_string() }
+    ValueNode::BigInt {
+        value: (*rng.pick(BIGINTS).unwrap_or(&"0")).to_string(),
+    }
 }
 
 /// A collection length boundary, clamped to a declared bound when there is one.
@@ -245,7 +255,13 @@ mod tests {
     fn an_int_declaration_never_draws_a_non_integer() {
         let mut rng = Rng::seeded(3);
         for _ in 0..200 {
-            let ValueNode::Number { value } = number_node(&mut rng, NumberBounds { int: true, ..NumberBounds::default() }) else {
+            let ValueNode::Number { value } = number_node(
+                &mut rng,
+                NumberBounds {
+                    int: true,
+                    ..NumberBounds::default()
+                },
+            ) else {
                 panic!("int boundary must be a number")
             };
             let v = value.as_f64();
@@ -257,24 +273,53 @@ mod tests {
     fn finite_only_skips_nan_and_infinity() {
         let mut rng = Rng::seeded(4);
         for _ in 0..400 {
-            let ValueNode::Number { value } = number_node(&mut rng, NumberBounds { finite_only: true, ..NumberBounds::default() }) else { panic!() };
-            assert!(value.as_f64().is_finite(), "{} drew a non-finite value", value.as_f64());
+            let ValueNode::Number { value } = number_node(
+                &mut rng,
+                NumberBounds {
+                    finite_only: true,
+                    ..NumberBounds::default()
+                },
+            ) else {
+                panic!()
+            };
+            assert!(
+                value.as_f64().is_finite(),
+                "{} drew a non-finite value",
+                value.as_f64()
+            );
         }
     }
 
     #[test]
     fn a_declared_number_range_filters_the_table() {
         let mut rng = Rng::seeded(12);
-        let small = NumberBounds { int: true, finite_only: true, min: Some(0.0), max: Some(10.0) };
+        let small = NumberBounds {
+            int: true,
+            finite_only: true,
+            min: Some(0.0),
+            max: Some(10.0),
+        };
         for _ in 0..500 {
-            let ValueNode::Number { value } = number_node(&mut rng, small) else { panic!("not a number") };
+            let ValueNode::Number { value } = number_node(&mut rng, small) else {
+                panic!("not a number")
+            };
             let v = value.as_f64();
-            assert!((0.0..=10.0).contains(&v), "i64::MAX reached a 0..=10 parameter");
+            assert!(
+                (0.0..=10.0).contains(&v),
+                "i64::MAX reached a 0..=10 parameter"
+            );
         }
         // A range that excludes every table entry still draws from inside the range.
-        let tight = NumberBounds { int: true, finite_only: true, min: Some(3.0), max: Some(4.0) };
+        let tight = NumberBounds {
+            int: true,
+            finite_only: true,
+            min: Some(3.0),
+            max: Some(4.0),
+        };
         for _ in 0..100 {
-            let ValueNode::Number { value } = number_node(&mut rng, tight) else { panic!("not a number") };
+            let ValueNode::Number { value } = number_node(&mut rng, tight) else {
+                panic!("not a number")
+            };
             assert!((3.0..=4.0).contains(&value.as_f64()));
         }
     }
@@ -282,23 +327,37 @@ mod tests {
     #[test]
     fn a_declared_string_length_filters_the_table() {
         let mut rng = Rng::seeded(13);
-        let short = Some(LengthBounds { min: Some(1), max: Some(3) });
+        let short = Some(LengthBounds {
+            min: Some(1),
+            max: Some(3),
+        });
         for _ in 0..500 {
-            let ValueNode::String { value } = string_node(&mut rng, short) else { panic!("not a string") };
-            assert!((1..=3).contains(&value.chars().count()), "{value:?} ignores the declared length");
+            let ValueNode::String { value } = string_node(&mut rng, short) else {
+                panic!("not a string")
+            };
+            assert!(
+                (1..=3).contains(&value.chars().count()),
+                "{value:?} ignores the declared length"
+            );
         }
         // The one MiB entry needs a declared maximum that permits it.
         assert!(!permits_long_string(None));
         assert!(!permits_long_string(Some(64)));
         assert!(permits_long_string(Some(LONG_STRING_LEN as u64)));
-        let roomy = Some(LengthBounds { min: None, max: Some(2 * LONG_STRING_LEN as u64) });
+        let roomy = Some(LengthBounds {
+            min: None,
+            max: Some(2 * LONG_STRING_LEN as u64),
+        });
         let mut saw_long = false;
         for _ in 0..4000 {
             if let ValueNode::String { value } = string_node(&mut rng, roomy) {
                 saw_long |= value.len() == LONG_STRING_LEN;
             }
         }
-        assert!(saw_long, "the one MiB boundary is unreachable from a type that permits it");
+        assert!(
+            saw_long,
+            "the one MiB boundary is unreachable from a type that permits it"
+        );
     }
 
     #[test]

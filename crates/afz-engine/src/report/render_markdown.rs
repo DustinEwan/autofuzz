@@ -49,13 +49,18 @@ pub fn render(document: &ScanDocument) -> String {
             .harness
             .capabilities
             .iter()
-            .map(|c| serde_json::to_value(c).ok().and_then(|v| v.as_str().map(str::to_owned)).unwrap_or_default())
+            .map(|c| serde_json::to_value(c)
+                .ok()
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_default())
             .collect::<Vec<_>>()
             .join(", ")
     ));
     out.push_str(&format!(
-        "Started {}, finished {} — stopped: {}.\n\n",
-        document.started_at, document.finished_at, keyword(&document.execution.stopped_reason)
+        "Started {}. Finished {}. Stopped by {}.\n\n",
+        document.started_at,
+        document.finished_at,
+        keyword(&document.execution.stopped_reason)
     ));
     out.push_str(&format!(
         "Engine {} with seed {}, config {}.\n\n",
@@ -64,18 +69,31 @@ pub fn render(document: &ScanDocument) -> String {
 
     out.push_str("## Summary\n\n");
     out.push_str("| | |\n|---|---|\n");
-    row(&mut out, "targets discovered", &document.inventory.discovered.to_string());
-    row(&mut out, "fuzzable", &document.inventory.fuzzable.to_string());
-    row(&mut out, "skipped", &document.inventory.skipped.len().to_string());
-    for (materialization, count) in &document.inventory.materialization_counts {
-        row(
-            &mut out,
-            &format!("materialization: {}", keyword(materialization)),
-            &count.to_string(),
-        );
-    }
-    row(&mut out, "invocations", &document.execution.invocations.to_string());
-    row(&mut out, "corpus entries", &document.execution.corpus_size.to_string());
+    row(
+        &mut out,
+        "targets discovered",
+        &document.inventory.discovered.to_string(),
+    );
+    row(
+        &mut out,
+        "fuzzable",
+        &document.inventory.fuzzable.to_string(),
+    );
+    row(
+        &mut out,
+        "skipped",
+        &document.inventory.skipped.len().to_string(),
+    );
+    row(
+        &mut out,
+        "invocations",
+        &document.execution.invocations.to_string(),
+    );
+    row(
+        &mut out,
+        "corpus entries",
+        &document.execution.corpus_size.to_string(),
+    );
     row(
         &mut out,
         "coverage",
@@ -85,15 +103,47 @@ pub fn render(document: &ScanDocument) -> String {
             document.execution.coverage_ratio * 100.0
         ),
     );
-    row(&mut out, "deadline exceeded", &document.execution.deadline_exceeded.to_string());
-    row(&mut out, "ran to deadline", &document.execution.deadline_cuts.to_string());
-    row(&mut out, "plugin restarts", &document.execution.restarts.to_string());
-    row(&mut out, "unattempted invocations", &document.execution.unattempted.to_string());
+    row(
+        &mut out,
+        "invocations past deadline",
+        &document.execution.deadline_exceeded.to_string(),
+    );
+    row(
+        &mut out,
+        "invocations cut at deadline",
+        &document.execution.deadline_cuts.to_string(),
+    );
+    row(
+        &mut out,
+        "plugin restarts",
+        &document.execution.restarts.to_string(),
+    );
+    row(
+        &mut out,
+        "unattempted invocations",
+        &document.execution.unattempted.to_string(),
+    );
     if !document.execution.disabled_targets.is_empty() {
-        row(&mut out, "disabled targets", &document.execution.disabled_targets.join(", "));
+        row(
+            &mut out,
+            "disabled targets",
+            &document.execution.disabled_targets.join(", "),
+        );
     }
     row(&mut out, "findings", &document.findings.len().to_string());
     out.push('\n');
+
+    if !document.inventory.materialization_counts.is_empty() {
+        out.push_str("#### Materialization\n\n");
+        out.push_str(
+            "These counts cover the fuzzable targets and the skipped symbols that report a materialization.\n\n",
+        );
+        out.push_str("| | |\n|---|---|\n");
+        for (materialization, count) in &document.inventory.materialization_counts {
+            row(&mut out, &keyword(materialization), &count.to_string());
+        }
+        out.push('\n');
+    }
 
     if !document.inventory.skipped.is_empty() {
         out.push_str("## Skipped targets\n\n");
@@ -111,7 +161,10 @@ pub fn render(document: &ScanDocument) -> String {
                 "| `{}` | {} | {blocked} | {} |\n",
                 skipped.target_id,
                 keyword(&skipped.reason),
-                skipped.unlocks_targets.map(|n| n.to_string()).unwrap_or_else(|| "-".to_string())
+                skipped
+                    .unlocks_targets
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|| "-".to_string())
             ));
         }
         out.push('\n');
@@ -141,7 +194,10 @@ pub fn render(document: &ScanDocument) -> String {
                 .as_deref()
                 .map(|f| format!(" in `{f}`"))
                 .unwrap_or_default();
-            out.push_str(&format!("  - {}:{}{column}{function}\n", frame.file, frame.line));
+            out.push_str(&format!(
+                "  - {}:{}{column}{function}\n",
+                frame.file, frame.line
+            ));
         }
         out.push_str(&format!(
             "- Input: `{}` ({})\n",
@@ -154,13 +210,15 @@ pub fn render(document: &ScanDocument) -> String {
                 minimized.artifact, minimized.bytes_after, minimized.bytes_before
             )),
             None if finding.seen_before => {
-                out.push_str("- Minimized input: not shrunk again, because an earlier scan reported this identity\n")
+                out.push_str("- Minimized input: none. The engine does not minimize a repeat.\n")
             }
-            None => out.push_str("- Minimized input: not smaller than the original\n"),
+            None => {
+                out.push_str("- Minimized input: none. No smaller input reproduced the fault.\n")
+            }
         }
         match &finding.reproducer {
             Some(reproducer) => out.push_str(&format!("- Reproducer: `{}`\n", reproducer.artifact)),
-            None => out.push_str("- Reproducer: none emitted\n"),
+            None => out.push_str("- Reproducer: none emitted.\n"),
         }
         out.push_str(&format!(
             "- Reproduced: {}; first seen at invocation {}\n",

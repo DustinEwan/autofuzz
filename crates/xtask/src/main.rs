@@ -14,7 +14,9 @@ fn repo_root() -> PathBuf {
 }
 
 fn main() {
-    let task = std::env::args().nth(1).unwrap_or_else(|| "help".to_string());
+    let task = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "help".to_string());
     match task.as_str() {
         "schema" => {
             let dir = std::env::args()
@@ -106,7 +108,10 @@ fn check_harness(argv: &[String]) -> Result<afz_conformance::Report, String> {
     let mut check = afz_conformance::Check::new(launch, scope.root.display().to_string());
     check.include = scope.include.unwrap_or_default();
     check.exclude = scope.exclude.unwrap_or_default();
-    check.config_path = scope.config.as_ref().map(|loaded| loaded.path.display().to_string());
+    check.config_path = scope
+        .config
+        .as_ref()
+        .map(|loaded| loaded.path.display().to_string());
     // A rendered conformance project ships `afz-conformance-manifest.json` at its root; its
     // presence turns on template mode, exactly as it does for `afz validate-harness`.
     let manifest = scope.root.join("afz-conformance-manifest.json");
@@ -118,7 +123,10 @@ fn check_harness(argv: &[String]) -> Result<afz_conformance::Report, String> {
 
     let report = afz_conformance::run(&check);
     if json {
-        println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
     }
     Ok(report)
 }
@@ -139,7 +147,12 @@ impl Scope {
     /// read the guide types first, and what the fake-plugin tests below rely on.
     fn for_path(path: Option<&str>) -> Result<Scope, String> {
         let Some(given) = path.map(PathBuf::from) else {
-            return Ok(Scope { root: PathBuf::from("."), include: None, exclude: None, config: None });
+            return Ok(Scope {
+                root: PathBuf::from("."),
+                include: None,
+                exclude: None,
+                config: None,
+            });
         };
         // `--path` may name the scan project's directory or the file itself, the way `afz scan`
         // accepts either.
@@ -170,7 +183,11 @@ impl Scope {
 fn fakeplugin_launch() -> Result<Launch, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = exe.parent().unwrap_or(Path::new("."));
-    for candidate in [dir.join("afz-fakeplugin"), dir.join("debug").join("afz-fakeplugin"), dir.join("release").join("afz-fakeplugin")] {
+    for candidate in [
+        dir.join("afz-fakeplugin"),
+        dir.join("debug").join("afz-fakeplugin"),
+        dir.join("release").join("afz-fakeplugin"),
+    ] {
         if candidate.is_file() {
             return Ok(Launch::new([candidate.display().to_string()]));
         }

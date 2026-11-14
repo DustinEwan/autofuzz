@@ -29,8 +29,8 @@ const STARTER_REPOSITORY: &str = "https://github.com/DustinEwan/autofuzz-harness
 
 /// The renderers this engine writes. The first two are the default, and `ScanProject::validate`
 /// refuses any name outside this list, so the menu offers exactly what a scan project may hold.
-const RENDERERS: [&str; 3] = ["json", "markdown", "sarif"];
-const DEFAULT_RENDERERS: [bool; 3] = [true, true, false];
+const RENDERERS: [&str; 2] = ["json", "markdown"];
+const DEFAULT_RENDERERS: [bool; 2] = [true, true];
 const STRATEGIES: [&str; 2] = ["guided", "random"];
 const DEFAULT_INVOCATIONS: u64 = 100_000;
 const DEFAULT_WALL_CLOCK_SECONDS: u64 = 900;
@@ -67,7 +67,7 @@ pub struct ProjectArgs {
     /// Directory a scan writes into. Defaults to `.autofuzz`.
     #[arg(long)]
     output_dir: Option<String>,
-    /// Output renderers, comma-separated: json, markdown, sarif. Defaults to json,markdown.
+    /// Output renderers, comma-separated: json, markdown. Defaults to json,markdown.
     #[arg(long)]
     renderers: Option<String>,
     /// budget.invocations. Defaults to 100000.
@@ -157,7 +157,10 @@ impl Prompter {
     /// The refusal a non-terminal run gets, and the message every aborted prompt gets: an
     /// interrupted prompt and an unanswerable one want the same remedy.
     fn stuck(&self) -> String {
-        format!("afz init needs a terminal to ask its questions; pass {} (see `{} --help`)", self.flags, self.command)
+        format!(
+            "afz init needs a terminal to ask its questions; pass {} (see `{} --help`)",
+            self.flags, self.command
+        )
     }
 
     /// A line of text. With no default, an empty answer is refused in place; without a terminal to
@@ -206,7 +209,10 @@ impl Prompter {
             })
             .interact_text()
             .map_err(|_| self.stuck())?;
-        Ok(answer.trim().parse::<u64>().expect("the validator accepted only whole numbers"))
+        Ok(answer
+            .trim()
+            .parse::<u64>()
+            .expect("the validator accepted only whole numbers"))
     }
 
     /// A menu whose answer changes what lands on disk, so a script has to give it.
@@ -235,9 +241,19 @@ impl Prompter {
     }
 
     /// A multi-choice menu; the checked rows are the documented default.
-    fn choose_many(&self, label: &str, options: &[&str], defaults: &[bool]) -> Result<Vec<usize>, String> {
+    fn choose_many(
+        &self,
+        label: &str,
+        options: &[&str],
+        defaults: &[bool],
+    ) -> Result<Vec<usize>, String> {
         if !self.terminal() {
-            return Ok(defaults.iter().enumerate().filter(|(_, on)| **on).map(|(row, _)| row).collect());
+            return Ok(defaults
+                .iter()
+                .enumerate()
+                .filter(|(_, on)| **on)
+                .map(|(row, _)| row)
+                .collect());
         }
         dialoguer::MultiSelect::new()
             .with_prompt(label)
@@ -273,16 +289,23 @@ fn collect_project(args: ProjectArgs) -> Result<ProjectAnswers, String> {
     let path = args.path.unwrap_or_else(|| PathBuf::from("."));
     let name = match args.name {
         Some(name) => name.trim().to_string(),
-        None => prompts.ask("Project name", path.file_name().and_then(|name| name.to_str()))?,
+        None => prompts.ask(
+            "Project name",
+            path.file_name().and_then(|name| name.to_str()),
+        )?,
     };
     let (harness, command) = ask_harness(&prompts, args.harness, args.command)?;
     let include = match !args.include.is_empty() {
         true => args.include,
-        false => split_list(&prompts.ask_optional("Include globs, comma-separated (empty for the harness's own default)")?),
+        false => split_list(&prompts.ask_optional(
+            "Include globs, comma-separated (empty for the harness's own default)",
+        )?),
     };
     let exclude = match !args.exclude.is_empty() {
         true => args.exclude,
-        false => split_list(&prompts.ask_optional("Exclude globs, comma-separated (empty for none)")?),
+        false => {
+            split_list(&prompts.ask_optional("Exclude globs, comma-separated (empty for none)")?)
+        }
     };
     let output_dir = match args.output_dir {
         Some(dir) => dir,
@@ -291,7 +314,11 @@ fn collect_project(args: ProjectArgs) -> Result<ProjectAnswers, String> {
     let renderers = match args.renderers {
         Some(list) => split_list(&list),
         None => prompts
-            .choose_many("Which renderers write the scan result?", &RENDERERS, &DEFAULT_RENDERERS)?
+            .choose_many(
+                "Which renderers write the scan result?",
+                &RENDERERS,
+                &DEFAULT_RENDERERS,
+            )?
             .into_iter()
             .map(|row| RENDERERS[row].to_string())
             .collect(),
@@ -304,11 +331,14 @@ fn collect_project(args: ProjectArgs) -> Result<ProjectAnswers, String> {
         Some(seconds) => seconds,
         None => prompts.ask_number("Wall clock, seconds", DEFAULT_WALL_CLOCK_SECONDS)?,
     };
-    let wall_clock_ms =
-        wall_clock_seconds.checked_mul(1_000).ok_or("`budget.wallClockMs` would overflow: name a smaller wall clock")?;
+    let wall_clock_ms = wall_clock_seconds
+        .checked_mul(1_000)
+        .ok_or("`budget.wallClockMs` would overflow: name a smaller wall clock")?;
     let strategy = match args.strategy {
         Some(strategy) => strategy,
-        None => STRATEGIES[prompts.choose_with("Which strategy steers the scan?", &STRATEGIES, 0)?].to_string(),
+        None => STRATEGIES
+            [prompts.choose_with("Which strategy steers the scan?", &STRATEGIES, 0)?]
+        .to_string(),
     };
     Ok(ProjectAnswers {
         path,
@@ -328,8 +358,15 @@ fn collect_project(args: ProjectArgs) -> Result<ProjectAnswers, String> {
 /// The harness a scan drives: a name, plus the argv to start it when the registry has no record
 /// for that name. An installed name is recorded alone, so the launch stays the one
 /// `afz install-harness` validated.
-fn ask_harness(prompts: &Prompter, named: Option<String>, command: Option<String>) -> Result<(String, Option<Vec<String>>), String> {
-    let installed: Vec<String> = harnesses::all().into_iter().map(|harness| harness.name).collect();
+fn ask_harness(
+    prompts: &Prompter,
+    named: Option<String>,
+    command: Option<String>,
+) -> Result<(String, Option<Vec<String>>), String> {
+    let installed: Vec<String> = harnesses::all()
+        .into_iter()
+        .map(|harness| harness.name)
+        .collect();
     let typed = "Other (type a name)";
     let name = match named {
         Some(name) => name.trim().to_string(),
@@ -363,7 +400,7 @@ fn ask_harness(prompts: &Prompter, named: Option<String>, command: Option<String
 /// The engine's own wording, so the wizard refuses an unlaunchable harness the way a scan does.
 fn command_required(harness: &str) -> String {
     format!(
-        "`command` is required for harness \"{harness}\": the engine does not guess a runtime; install one with `afz install-harness <git-url>`"
+        "`command` is required for harness \"{harness}\". Install it with `afz install-harness <git-url>`, or set `harness.command`."
     )
 }
 
@@ -387,7 +424,10 @@ fn write_project(answers: &ProjectAnswers) -> Result<PathBuf, String> {
     let dir = absolute(&answers.path)?;
     let path = dir.join("autofuzz.json");
     if path.exists() {
-        return Err(format!("`autofuzz.json` already exists in {}: edit it, or delete it to start over", dir.display()));
+        return Err(format!(
+            "`autofuzz.json` already exists in {}: edit it, or delete it to start over",
+            dir.display()
+        ));
     }
     let document = ProjectFile {
         project: &answers.name,
@@ -406,14 +446,22 @@ fn write_project(answers: &ProjectAnswers) -> Result<PathBuf, String> {
             max_corpus: 2048,
             strategy: strategy_of(&answers.strategy)?,
         },
-        output: OutputConfig { dir: answers.output_dir.clone(), renderers: answers.renderers.clone() },
+        output: OutputConfig {
+            dir: answers.output_dir.clone(),
+            renderers: answers.renderers.clone(),
+        },
     };
-    let written: ScanProject = serde_json::from_value(serde_json::to_value(&document).map_err(|e| format!("cannot serialize the scan project: {e}"))?)
-        .map_err(|e| format!("the scan project afz init built does not parse: {e}"))?;
+    let written: ScanProject = serde_json::from_value(
+        serde_json::to_value(&document)
+            .map_err(|e| format!("cannot serialize the scan project: {e}"))?,
+    )
+    .map_err(|e| format!("the scan project afz init built does not parse: {e}"))?;
     written.validate().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let text = serde_json::to_string_pretty(&document).map_err(|e| format!("cannot serialize the scan project: {e}"))?;
-    std::fs::write(&path, format!("{text}\n")).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let text = serde_json::to_string_pretty(&document)
+        .map_err(|e| format!("cannot serialize the scan project: {e}"))?;
+    std::fs::write(&path, format!("{text}\n"))
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     println!("{}", path.display());
     println!("next: afz scan {}", dir.display());
     Ok(path)
@@ -461,14 +509,22 @@ fn collect_harness(args: HarnessArgs) -> Result<HarnessAnswers, String> {
     };
     let name = match args.name {
         Some(name) => name.trim().to_string(),
-        None => prompts.ask("Harness name", path.file_name().and_then(|name| name.to_str()))?,
+        None => prompts.ask(
+            "Harness name",
+            path.file_name().and_then(|name| name.to_str()),
+        )?,
     };
     check_name(&name)?;
     let revisions = revisions();
     let options: Vec<&str> = revisions.iter().map(String::as_str).collect();
     let protocol = match args.protocol {
         Some(protocol) => protocol,
-        None => revisions[prompts.choose_with("Which protocol revision will the plugin speak?", &options, 0)?].clone(),
+        None => revisions[prompts.choose_with(
+            "Which protocol revision will the plugin speak?",
+            &options,
+            0,
+        )?]
+        .clone(),
     };
     if let Scaffold::Starter = from {
         return Ok(HarnessAnswers {
@@ -490,22 +546,48 @@ fn collect_harness(args: HarnessArgs) -> Result<HarnessAnswers, String> {
     if command.is_empty() {
         return Err("`command` is required: a harness manifest names the plugin `afz validate-harness` starts".to_string());
     }
-    let install = one_argv(args.install, &prompts, "Dependency install command (afz install-harness runs it; empty to skip)")?;
-    let build = one_argv(args.build, &prompts, "Build command (afz install-harness and afz validate-harness run it; empty to skip)")?;
+    let install = one_argv(
+        args.install,
+        &prompts,
+        "Dependency install command (afz install-harness runs it; empty to skip)",
+    )?;
+    let build = one_argv(
+        args.build,
+        &prompts,
+        "Build command (afz install-harness and afz validate-harness run it; empty to skip)",
+    )?;
     let emitter = match args.emitter {
         Some(text) => argv_of(&text),
-        None => argv_of(&prompts.ask_optional("Conformance emitter command (empty if the harness ships none)")?),
+        None => argv_of(
+            &prompts
+                .ask_optional("Conformance emitter command (empty if the harness ships none)")?,
+        ),
     };
     let conformance = if emitter.is_empty() {
         None
     } else {
         let deadline_ms = match args.deadline_ms {
             Some(ms) => ms,
-            None => prompts.ask_number("Conformance deadline, milliseconds", DEFAULT_DEADLINE_MS)?,
+            None => {
+                prompts.ask_number("Conformance deadline, milliseconds", DEFAULT_DEADLINE_MS)?
+            }
         };
-        Some(Conformance { emitter, deadline_ms: Some(deadline_ms) })
+        Some(Conformance {
+            emitter,
+            deadline_ms: Some(deadline_ms),
+        })
     };
-    Ok(HarnessAnswers { path, from, source: args.source, name, protocol, command, install, build, conformance })
+    Ok(HarnessAnswers {
+        path,
+        from,
+        source: args.source,
+        name,
+        protocol,
+        command,
+        install,
+        build,
+        conformance,
+    })
 }
 
 /// The protocol revisions this build carries, newest first: `PROTOCOL_VERSION` is the newest one
@@ -537,13 +619,21 @@ fn check_name(name: &str) -> Result<(), String> {
 
 /// One optional command line, split into argv: `install` and `build` are lists of commands, and
 /// the wizard asks for one of each. An empty answer contributes no command.
-fn one_argv(given: Option<String>, prompts: &Prompter, label: &str) -> Result<Vec<Vec<String>>, String> {
+fn one_argv(
+    given: Option<String>,
+    prompts: &Prompter,
+    label: &str,
+) -> Result<Vec<Vec<String>>, String> {
     let text = match given {
         Some(text) => text,
         None => prompts.ask_optional(label)?,
     };
     let argv = argv_of(&text);
-    Ok(if argv.is_empty() { Vec::new() } else { vec![argv] })
+    Ok(if argv.is_empty() {
+        Vec::new()
+    } else {
+        vec![argv]
+    })
 }
 
 /// Write a blank harness repository: the manifest, then the schemas of the chosen revision.
@@ -554,7 +644,10 @@ fn write_harness(answers: &HarnessAnswers) -> Result<PathBuf, String> {
     }
     let dir = absolute(&answers.path)?;
     if dir.join("afz-harness.json").exists() {
-        return Err(format!("`afz-harness.json` already exists in {}: edit it, or delete it to start over", dir.display()));
+        return Err(format!(
+            "`afz-harness.json` already exists in {}: edit it, or delete it to start over",
+            dir.display()
+        ));
     }
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     let manifest = HarnessManifest {
@@ -567,7 +660,10 @@ fn write_harness(answers: &HarnessAnswers) -> Result<PathBuf, String> {
     let path = write_manifest(&dir, &manifest)?;
     export::run(Some(answers.protocol.clone()), Some(dir.join("schema")))?;
     println!("{}", path.display());
-    println!("next: write the plugin and the emitter, then run afz validate-harness {}", dir.display());
+    println!(
+        "next: write the plugin and the emitter, then run afz validate-harness {}",
+        dir.display()
+    );
     Ok(path)
 }
 
@@ -586,15 +682,23 @@ fn write_starter(answers: &HarnessAnswers) -> Result<PathBuf, String> {
         ));
     }
     let source = local_source(answers.source.as_deref().unwrap_or(STARTER_REPOSITORY));
-    let parent = dir.parent().ok_or_else(|| format!("{} has no parent directory to clone into", dir.display()))?;
-    std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
-    git(parent, &["clone", &source, &dir.display().to_string()], &[]).map_err(|e| format!("clone {source} failed: {e}"))?;
+    let parent = dir
+        .parent()
+        .ok_or_else(|| format!("{} has no parent directory to clone into", dir.display()))?;
+    std::fs::create_dir_all(parent)
+        .map_err(|e| format!("cannot create {}: {e}", parent.display()))?;
+    git(parent, &["clone", &source, &dir.display().to_string()], &[])
+        .map_err(|e| format!("clone {source} failed: {e}"))?;
     // The scaffold ships code, not history: the author starts their own repository.
-    std::fs::remove_dir_all(dir.join(".git")).map_err(|e| format!("cannot remove {}: {e}", dir.join(".git").display()))?;
+    std::fs::remove_dir_all(dir.join(".git"))
+        .map_err(|e| format!("cannot remove {}: {e}", dir.join(".git").display()))?;
     rename_manifest(&dir, &answers.name)?;
     export::run(Some(answers.protocol.clone()), Some(dir.join("schema")))?;
     println!("{}", dir.join("afz-harness.json").display());
-    println!("next: edit plugin/ and conformance/, then run afz validate-harness {}", dir.display());
+    println!(
+        "next: edit plugin/ and conformance/, then run afz validate-harness {}",
+        dir.display()
+    );
     Ok(dir.join("afz-harness.json"))
 }
 
@@ -610,8 +714,10 @@ fn rename_manifest(dir: &Path, name: &str) -> Result<HarnessManifest, String> {
 
 fn write_manifest(dir: &Path, manifest: &HarnessManifest) -> Result<PathBuf, String> {
     let path = dir.join("afz-harness.json");
-    let text = serde_json::to_string_pretty(manifest).map_err(|e| format!("cannot serialize the harness manifest: {e}"))?;
-    std::fs::write(&path, format!("{text}\n")).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+    let text = serde_json::to_string_pretty(manifest)
+        .map_err(|e| format!("cannot serialize the harness manifest: {e}"))?;
+    std::fs::write(&path, format!("{text}\n"))
+        .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     Ok(path)
 }
 
@@ -645,7 +751,11 @@ fn argv_of(text: &str) -> Vec<String> {
 
 /// A comma-separated answer as a list, with the blanks a trailing comma leaves removed.
 fn split_list(text: &str) -> Vec<String> {
-    text.split(',').map(str::trim).filter(|item| !item.is_empty()).map(str::to_string).collect()
+    text.split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 /// An empty glob list is no scope limit at all, so the key is left out rather than written as
@@ -690,30 +800,55 @@ mod tests {
             command: argv_of("sh plugin/server.sh"),
             install: Vec::new(),
             build: Vec::new(),
-            conformance: Some(Conformance { emitter: argv_of("sh conformance/emit.sh"), deadline_ms: Some(DEFAULT_DEADLINE_MS) }),
+            conformance: Some(Conformance {
+                emitter: argv_of("sh conformance/emit.sh"),
+                deadline_ms: Some(DEFAULT_DEADLINE_MS),
+            }),
         }
     }
 
     #[test]
     fn a_written_scan_project_is_a_file_the_engine_loads() {
         let dir = temp_dir("project");
-        let path = write_project(&project_answers(dir.clone())).expect("a complete answer set writes the file");
+        let path = write_project(&project_answers(dir.clone()))
+            .expect("a complete answer set writes the file");
         let text = std::fs::read_to_string(&path).expect("the file is there");
-        assert!(text.contains("\"wallClockMs\": 900000"), "camelCase keys, seconds turned into ms:\n{text}");
-        assert!(text.contains("\"project\": \"demo\""), "the name is the one asked for:\n{text}");
+        assert!(
+            text.contains("\"wallClockMs\": 900000"),
+            "camelCase keys, seconds turned into ms:\n{text}"
+        );
+        assert!(
+            text.contains("\"project\": \"demo\""),
+            "the name is the one asked for:\n{text}"
+        );
         let keys: Vec<&str> = ["project", "harness", "oracles", "budget", "output"]
             .iter()
             .filter(|key| text.contains(&format!("\"{key}\"")))
             .copied()
             .collect();
-        assert_eq!(keys, vec!["project", "harness", "oracles", "budget", "output"], "the file reads in the engine's own key order:\n{text}");
-        let loaded = afz_engine::config::load(&path).expect("afz scan can load what afz init wrote");
-        assert_eq!(loaded.root, std::path::absolute(&dir).expect("the directory resolves"), "the project root is the directory init was pointed at");
-        let harness = loaded.project.harness.expect("a scan project names a harness");
+        assert_eq!(
+            keys,
+            vec!["project", "harness", "oracles", "budget", "output"],
+            "the file reads in the engine's own key order:\n{text}"
+        );
+        let loaded =
+            afz_engine::config::load(&path).expect("afz scan can load what afz init wrote");
+        assert_eq!(
+            loaded.root,
+            std::path::absolute(&dir).expect("the directory resolves"),
+            "the project root is the directory init was pointed at"
+        );
+        let harness = loaded
+            .project
+            .harness
+            .expect("a scan project names a harness");
         assert_eq!(harness.name, "js-ts");
         assert_eq!(harness.command, Some(argv_of("node server.js")));
         assert_eq!(harness.include, None, "an empty glob answer omits the key");
-        assert_eq!(loaded.project.output.renderers, vec!["json".to_string(), "markdown".to_string()]);
+        assert_eq!(
+            loaded.project.output.renderers,
+            vec!["json".to_string(), "markdown".to_string()]
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -722,19 +857,24 @@ mod tests {
         let dir = temp_dir("strategy");
         let mut answers = project_answers(dir.clone());
         answers.strategy = "random".to_string();
-        answers.renderers = vec![RENDERERS[2].to_string()];
         answers.include = split_list("**/*.ts, src/**");
         let path = write_project(&answers).expect("random is a strategy the engine knows");
         let loaded = afz_engine::config::load(&path).expect("the file loads");
         assert_eq!(loaded.project.budget.strategy, Strategy::Random);
-        assert_eq!(loaded.project.harness.expect("harness block").include, Some(split_list("**/*.ts, src/**")));
+        assert_eq!(
+            loaded.project.harness.expect("harness block").include,
+            Some(split_list("**/*.ts, src/**"))
+        );
         let bogus = write_project(&{
             let mut answers = project_answers(temp_dir("strategy-bogus"));
             answers.strategy = "coverage".to_string();
             answers
         })
         .expect_err("a strategy the engine does not have is refused before anything is written");
-        assert!(bogus.contains("coverage"), "the message names the answer it rejected: {bogus}");
+        assert!(
+            bogus.contains("coverage"),
+            "the message names the answer it rejected: {bogus}"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -744,26 +884,47 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("the directory is creatable");
         let existing = dir.join("autofuzz.json");
         std::fs::write(&existing, "{ the author's own bytes }").expect("the file is writable");
-        let err = write_project(&project_answers(dir.clone())).expect_err("init never overwrites a scan project");
-        assert!(err.contains("already exists"), "the refusal says what to do instead: {err}");
-        assert_eq!(std::fs::read_to_string(&existing).expect("still there"), "{ the author's own bytes }");
+        let err = write_project(&project_answers(dir.clone()))
+            .expect_err("init never overwrites a scan project");
+        assert!(
+            err.contains("already exists"),
+            "the refusal says what to do instead: {err}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&existing).expect("still there"),
+            "{ the author's own bytes }"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn a_blank_harness_is_a_manifest_and_the_schemas_it_validates_against() {
         let dir = temp_dir("blank");
-        let manifest_path = write_harness(&harness_answers(dir.clone())).expect("a complete answer set writes the repository");
-        let manifest = harnesses::read_manifest(&dir).expect("afz validate-harness can read the manifest");
+        let manifest_path = write_harness(&harness_answers(dir.clone()))
+            .expect("a complete answer set writes the repository");
+        let manifest =
+            harnesses::read_manifest(&dir).expect("afz validate-harness can read the manifest");
         assert_eq!(manifest.name, "demo-h");
         assert_eq!(manifest.command, argv_of("sh plugin/server.sh"));
         assert_eq!(
             manifest.conformance,
-            Some(Conformance { emitter: argv_of("sh conformance/emit.sh"), deadline_ms: Some(DEFAULT_DEADLINE_MS) })
+            Some(Conformance {
+                emitter: argv_of("sh conformance/emit.sh"),
+                deadline_ms: Some(DEFAULT_DEADLINE_MS)
+            })
         );
-        assert_eq!(manifest.install, Vec::<Vec<String>>::new(), "a skipped install answer writes []");
-        let schemas = std::fs::read_dir(dir.join("schema")).expect("the schemas are exported beside the manifest");
-        assert_eq!(schemas.count(), 22, "the whole embedded set for the chosen revision");
+        assert_eq!(
+            manifest.install,
+            Vec::<Vec<String>>::new(),
+            "a skipped install answer writes []"
+        );
+        let schemas = std::fs::read_dir(dir.join("schema"))
+            .expect("the schemas are exported beside the manifest");
+        assert_eq!(
+            schemas.count(),
+            22,
+            "the whole embedded set for the chosen revision"
+        );
         assert!(dir.join("schema/handshake.json").exists());
         assert!(manifest_path.ends_with("afz-harness.json"));
         std::fs::remove_dir_all(&dir).ok();
@@ -775,12 +936,20 @@ mod tests {
         let mut answers = harness_answers(dir.clone());
         answers.protocol = "afz/9".to_string();
         let err = write_harness(&answers).expect_err("this engine carries no afz/9 schema set");
-        assert!(err.contains("afz/9"), "the message names the revision that was asked for: {err}");
-        assert!(!dir.join("afz-harness.json").exists(), "a refused revision writes no manifest");
+        assert!(
+            err.contains("afz/9"),
+            "the message names the revision that was asked for: {err}"
+        );
+        assert!(
+            !dir.join("afz-harness.json").exists(),
+            "a refused revision writes no manifest"
+        );
         let mut starter = harness_answers(temp_dir("revision-starter"));
         starter.from = Scaffold::Starter;
         starter.protocol = "afz/9".to_string();
-        assert!(write_starter(&starter).expect_err("starter mode checks the revision before it clones").contains("afz/9"));
+        assert!(write_starter(&starter)
+            .expect_err("starter mode checks the revision before it clones")
+            .contains("afz/9"));
     }
 
     #[test]
@@ -799,8 +968,15 @@ mod tests {
         let manifest = rename_manifest(&dir, "my-h").expect("the starter manifest renames");
         assert_eq!(manifest.name, "my-h");
         let read = harnesses::read_manifest(&dir).expect("the renamed manifest still parses");
-        assert_eq!(read.command, argv_of("sh plugin/server.sh"), "the shipped launch is untouched");
-        assert_eq!(read.conformance, manifest.conformance, "the shipped conformance block is untouched");
+        assert_eq!(
+            read.command,
+            argv_of("sh plugin/server.sh"),
+            "the shipped launch is untouched"
+        );
+        assert_eq!(
+            read.conformance, manifest.conformance,
+            "the shipped conformance block is untouched"
+        );
         assert!(read.install.is_empty() && read.build.is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -808,11 +984,22 @@ mod tests {
     #[test]
     fn a_question_with_no_default_stops_a_run_that_has_no_terminal() {
         // A test process is given no terminal, so this is the scripted path.
-        let err = collect_project(ProjectArgs::default()).expect_err("the project name has no default for `.`");
-        assert!(err.contains("needs a terminal"), "the refusal says why: {err}");
-        assert!(err.contains("--name"), "the refusal names the flags that answer it: {err}");
-        let err = collect_harness(HarnessArgs::default()).expect_err("the scaffold choice has no default");
-        assert!(err.contains("--from"), "the refusal names this flow's flags: {err}");
+        let err = collect_project(ProjectArgs::default())
+            .expect_err("the project name has no default for `.`");
+        assert!(
+            err.contains("needs a terminal"),
+            "the refusal says why: {err}"
+        );
+        assert!(
+            err.contains("--name"),
+            "the refusal names the flags that answer it: {err}"
+        );
+        let err = collect_harness(HarnessArgs::default())
+            .expect_err("the scaffold choice has no default");
+        assert!(
+            err.contains("--from"),
+            "the refusal names this flow's flags: {err}"
+        );
     }
 
     #[test]
@@ -831,8 +1018,15 @@ mod tests {
         assert_eq!(answers.harness, "js-ts");
         assert_eq!(answers.command, Some(argv_of("node server.js")));
         assert_eq!(answers.include, vec!["**/*.ts".to_string()]);
-        assert_eq!(answers.exclude, Vec::<String>::new(), "an unanswered optional answer is no key");
-        assert_eq!(answers.output_dir, ".autofuzz", "the defaults a terminal would have shown are the defaults a script gets");
+        assert_eq!(
+            answers.exclude,
+            Vec::<String>::new(),
+            "an unanswered optional answer is no key"
+        );
+        assert_eq!(
+            answers.output_dir, ".autofuzz",
+            "the defaults a terminal would have shown are the defaults a script gets"
+        );
         assert_eq!(answers.wall_clock_ms, 900_000);
         assert_eq!(answers.strategy, "guided");
         let harness = collect_harness(HarnessArgs {
@@ -844,8 +1038,17 @@ mod tests {
             ..Default::default()
         })
         .expect("blank mode needs no terminal either");
-        assert_eq!(harness.protocol, PROTOCOL_VERSION, "the newest revision is the documented default");
-        assert_eq!(harness.conformance.expect("an emitter answer makes the block").deadline_ms, Some(DEFAULT_DEADLINE_MS));
+        assert_eq!(
+            harness.protocol, PROTOCOL_VERSION,
+            "the newest revision is the documented default"
+        );
+        assert_eq!(
+            harness
+                .conformance
+                .expect("an emitter answer makes the block")
+                .deadline_ms,
+            Some(DEFAULT_DEADLINE_MS)
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -861,7 +1064,10 @@ mod tests {
                 ..Default::default()
             })
             .expect_err(&format!("{name:?} is not a name the registry can store"));
-            assert!(err.contains(name) || err.contains("must not"), "the message names the answer it rejected: {err}");
+            assert!(
+                err.contains(name) || err.contains("must not"),
+                "the message names the answer it rejected: {err}"
+            );
         }
     }
 }

@@ -3,12 +3,19 @@
 use afz_engine::generate::{self, DEFAULT_DEPTH};
 use afz_engine::mutate::{self, Op};
 use afz_engine::rng::Rng;
-use afz_protocol::{Field, LengthBounds, NumberBounds, Provenance, ScalarKind, TypeNode, ValueNode, ValueTree};
+use afz_protocol::{
+    Field, LengthBounds, NumberBounds, Provenance, ScalarKind, TypeNode, ValueNode, ValueTree,
+};
 
 fn bounded_number() -> TypeNode {
     TypeNode::Scalar {
         scalar: ScalarKind::Number,
-        bounds: Some(NumberBounds { int: true, finite_only: true, min: Some(0.0), max: Some(10.0) }),
+        bounds: Some(NumberBounds {
+            int: true,
+            finite_only: true,
+            min: Some(0.0),
+            max: Some(10.0),
+        }),
         length: None,
     }
 }
@@ -18,9 +25,21 @@ fn object_type() -> TypeNode {
         name: Some("Config".into()),
         id: None,
         fields: vec![
-            Field { name: "id".into(), ty: TypeNode::number(), required: true },
-            Field { name: "label".into(), ty: TypeNode::string(), required: false },
-            Field { name: "tags".into(), ty: TypeNode::array(TypeNode::string()), required: false },
+            Field {
+                name: "id".into(),
+                ty: TypeNode::number(),
+                required: true,
+            },
+            Field {
+                name: "label".into(),
+                ty: TypeNode::string(),
+                required: false,
+            },
+            Field {
+                name: "tags".into(),
+                ty: TypeNode::array(TypeNode::string()),
+                required: false,
+            },
         ],
     }
 }
@@ -31,7 +50,10 @@ fn mutation_is_deterministic_for_one_seed() {
     let base = generate::generate(&ty, DEFAULT_DEPTH, &mut Rng::seeded(7));
     let once = mutate::mutate(&base, &ty, &mut Rng::seeded(99));
     let twice = mutate::mutate(&base, &ty, &mut Rng::seeded(99));
-    assert_eq!(serde_json::to_string(&once).unwrap(), serde_json::to_string(&twice).unwrap());
+    assert_eq!(
+        serde_json::to_string(&once).unwrap(),
+        serde_json::to_string(&twice).unwrap()
+    );
 }
 
 #[test]
@@ -42,9 +64,14 @@ fn a_mutated_bounded_number_stays_in_range() {
     for _ in 0..500 {
         let base = generate::generate(&ty, DEFAULT_DEPTH, &mut rng);
         let after = mutate::mutate(&base, &ty, &mut rng);
-        let ValueNode::Number { value } = after.node else { panic!("a number type mutated into {:?}", after.node) };
+        let ValueNode::Number { value } = after.node else {
+            panic!("a number type mutated into {:?}", after.node)
+        };
         let v = value.as_f64();
-        assert!(v.fract() == 0.0 && (0.0..=10.0).contains(&v), "mutation produced {v} outside 0..=10");
+        assert!(
+            v.fract() == 0.0 && (0.0..=10.0).contains(&v),
+            "mutation produced {v} outside 0..=10"
+        );
         if after != base {
             saw_change += 1;
         }
@@ -73,8 +100,17 @@ fn a_mutated_node_records_which_operator_ran() {
             }
         }
     }
-    for expected in [Op::Sibling.name(), Op::Boundary.name(), Op::Resize.name(), Op::ToggleOptional.name(), Op::Paste.name()] {
-        assert!(seen.contains(&expected.to_string()), "operator {expected} never ran across 400 mutations: {seen:?}");
+    for expected in [
+        Op::Sibling.name(),
+        Op::Boundary.name(),
+        Op::Resize.name(),
+        Op::ToggleOptional.name(),
+        Op::Paste.name(),
+    ] {
+        assert!(
+            seen.contains(&expected.to_string()),
+            "operator {expected} never ran across 400 mutations: {seen:?}"
+        );
     }
 }
 
@@ -108,16 +144,32 @@ fn a_transplant_never_violates_the_declared_type() {
         name: Some("Row".into()),
         id: None,
         fields: vec![
-            Field { name: "sku".into(), ty: TypeNode::string(), required: true },
-            Field { name: "qty".into(), ty: TypeNode::number(), required: true },
+            Field {
+                name: "sku".into(),
+                ty: TypeNode::string(),
+                required: true,
+            },
+            Field {
+                name: "qty".into(),
+                ty: TypeNode::number(),
+                required: true,
+            },
         ],
     };
     let ty = TypeNode::Object {
         name: Some("Report".into()),
         id: None,
         fields: vec![
-            Field { name: "region".into(), ty: TypeNode::string(), required: true },
-            Field { name: "rows".into(), ty: TypeNode::array(row), required: true },
+            Field {
+                name: "region".into(),
+                ty: TypeNode::string(),
+                required: true,
+            },
+            Field {
+                name: "rows".into(),
+                ty: TypeNode::array(row),
+                required: true,
+            },
         ],
     };
     let donor = ValueTree::new(ValueNode::Object {
@@ -126,7 +178,9 @@ fn a_transplant_never_violates_the_declared_type() {
             (
                 "rows".into(),
                 ValueTree::new(ValueNode::Array {
-                    items: vec![ValueTree::new(ValueNode::Object { fields: vec![("qty".into(), ValueTree::number(3.0))] })],
+                    items: vec![ValueTree::new(ValueNode::Object {
+                        fields: vec![("qty".into(), ValueTree::number(3.0))],
+                    })],
                 }),
             ),
         ],
@@ -137,32 +191,54 @@ fn a_transplant_never_violates_the_declared_type() {
     for _ in 0..600 {
         let base = generate::generate(&ty, DEFAULT_DEPTH, &mut rng);
         let after = mutate::mutate_with_donor(&base, &ty, &mut rng, Some(&donor), "afz:t:other");
-        let ValueNode::Object { fields } = &after.node else { panic!("the root of a Report stayed no object") };
+        let ValueNode::Object { fields } = &after.node else {
+            panic!("the root of a Report stayed no object")
+        };
         for (name, value) in fields {
             match name.as_str() {
                 "region" => {
-                    assert!(matches!(value.node, ValueNode::String { .. }), "`region: string` holds {:?}", value.node);
+                    assert!(
+                        matches!(value.node, ValueNode::String { .. }),
+                        "`region: string` holds {:?}",
+                        value.node
+                    );
                 }
                 "rows" => {
-                    let ValueNode::Array { items } = &value.node else { panic!("`rows` stayed no array") };
+                    let ValueNode::Array { items } = &value.node else {
+                        panic!("`rows` stayed no array")
+                    };
                     for item in items {
-                        let ValueNode::Object { fields: cells } = &item.node else { panic!("a row stayed no object") };
+                        let ValueNode::Object { fields: cells } = &item.node else {
+                            panic!("a row stayed no object")
+                        };
                         for (field, cell) in cells {
-                            let declared =
-                                matches!((field.as_str(), &cell.node), ("sku", ValueNode::String { .. }) | ("qty", ValueNode::Number { .. }));
-                            assert!(declared, "`{field}` holds {:?}, which the row type does not declare", cell.node);
+                            let declared = matches!(
+                                (field.as_str(), &cell.node),
+                                ("sku", ValueNode::String { .. })
+                                    | ("qty", ValueNode::Number { .. })
+                            );
+                            assert!(
+                                declared,
+                                "`{field}` holds {:?}, which the row type does not declare",
+                                cell.node
+                            );
                         }
                     }
                 }
                 other => panic!("generation invented a field {other}"),
             }
         }
-        saw_transplant |= after
-            .paths()
-            .iter()
-            .any(|p| matches!(p.get(&after).unwrap().provenance, Provenance::Transplanted { .. }));
+        saw_transplant |= after.paths().iter().any(|p| {
+            matches!(
+                p.get(&after).unwrap().provenance,
+                Provenance::Transplanted { .. }
+            )
+        });
     }
-    assert!(saw_transplant, "the filter left no legal graft, so transplant can never fire");
+    assert!(
+        saw_transplant,
+        "the filter left no legal graft, so transplant can never fire"
+    );
 }
 
 #[test]
@@ -173,7 +249,10 @@ fn toggling_an_optional_never_removes_a_required_field() {
         let base = generate::generate(&ty, DEFAULT_DEPTH, &mut rng);
         let after = mutate::mutate(&base, &ty, &mut rng);
         if let ValueNode::Object { fields } = &after.node {
-            assert!(fields.iter().any(|(n, _)| n == "id"), "mutation dropped the required field `id`");
+            assert!(
+                fields.iter().any(|(n, _)| n == "id"),
+                "mutation dropped the required field `id`"
+            );
         }
     }
 }
@@ -191,7 +270,10 @@ fn a_mutated_tree_still_addresses_every_node_by_path() {
     for path in &paths {
         let found = path.get(&after).expect("every reported path resolves");
         let mut rebuilt = after.clone();
-        assert!(path.replace(&mut rebuilt, ValueTree::number(3.0)), "path {path:?} cannot be replaced");
+        assert!(
+            path.replace(&mut rebuilt, ValueTree::number(3.0)),
+            "path {path:?} cannot be replaced"
+        );
         let replaced = path.get(&rebuilt).unwrap();
         assert!(matches!(replaced.node, ValueNode::Number { .. }));
         let _ = found;
@@ -203,14 +285,23 @@ fn mutation_of_a_bounded_string_respects_its_length() {
     let ty = TypeNode::Scalar {
         scalar: ScalarKind::String,
         bounds: None,
-        length: Some(LengthBounds { min: Some(1), max: Some(3) }),
+        length: Some(LengthBounds {
+            min: Some(1),
+            max: Some(3),
+        }),
     };
     let mut rng = Rng::seeded(41);
     for _ in 0..300 {
         let base = generate::generate(&ty, DEFAULT_DEPTH, &mut rng);
         let after = mutate::mutate(&base, &ty, &mut rng);
-        let ValueNode::String { value } = after.node else { panic!("string type mutated into {:?}", after.node) };
-        assert!((1..=3).contains(&value.chars().count()), "mutated string {:?} ignores length 1..=3", value);
+        let ValueNode::String { value } = after.node else {
+            panic!("string type mutated into {:?}", after.node)
+        };
+        assert!(
+            (1..=3).contains(&value.chars().count()),
+            "mutated string {:?} ignores length 1..=3",
+            value
+        );
     }
 }
 
@@ -225,8 +316,16 @@ fn a_paste_copies_a_value_already_in_the_input() {
         name: Some("Pair".into()),
         id: None,
         fields: vec![
-            Field { name: "left".into(), ty: TypeNode::string(), required: true },
-            Field { name: "right".into(), ty: TypeNode::string(), required: true },
+            Field {
+                name: "left".into(),
+                ty: TypeNode::string(),
+                required: true,
+            },
+            Field {
+                name: "right".into(),
+                ty: TypeNode::string(),
+                required: true,
+            },
         ],
     };
     let mut rng = Rng::seeded(0x4a2e);
@@ -235,10 +334,14 @@ fn a_paste_copies_a_value_already_in_the_input() {
     for _ in 0..600 {
         let base = generate::generate(&ty, DEFAULT_DEPTH, &mut rng);
         let after = mutate::mutate(&base, &ty, &mut rng);
-        let ValueNode::Object { fields } = &after.node else { panic!("the root of a Pair stayed no object") };
+        let ValueNode::Object { fields } = &after.node else {
+            panic!("the root of a Pair stayed no object")
+        };
         let field = |name: &str| fields.iter().find(|(n, _)| n == name).map(|(_, v)| &v.node);
         let strings = match (field("left"), field("right")) {
-            (Some(ValueNode::String { value: l }), Some(ValueNode::String { value: r })) => Some((l, r)),
+            (Some(ValueNode::String { value: l }), Some(ValueNode::String { value: r })) => {
+                Some((l, r))
+            }
             _ => None,
         };
         let pasted = after.paths().iter().any(|path| {
@@ -252,7 +355,10 @@ fn a_paste_copies_a_value_already_in_the_input() {
         }
     }
     assert!(saw_paste, "paste never ran across 600 mutations");
-    assert!(saw_copied_equality, "no paste made the two string fields hold the same non-empty value");
+    assert!(
+        saw_copied_equality,
+        "no paste made the two string fields hold the same non-empty value"
+    );
 }
 
 /// A free-text field compared against a literal union is the shape of a real gate: an
@@ -267,11 +373,19 @@ fn a_paste_copies_a_literal_into_a_declared_string_field() {
         name: Some("Reissue".into()),
         id: None,
         fields: vec![
-            Field { name: "issuedBy".into(), ty: TypeNode::string(), required: true },
+            Field {
+                name: "issuedBy".into(),
+                ty: TypeNode::string(),
+                required: true,
+            },
             Field {
                 name: "raisedBy".into(),
                 ty: TypeNode::Literal {
-                    values: vec!["ops-console".into(), "refund-bot".into(), "credit-desk".into()],
+                    values: vec![
+                        "ops-console".into(),
+                        "refund-bot".into(),
+                        "credit-desk".into(),
+                    ],
                 },
                 required: true,
             },
@@ -288,16 +402,23 @@ fn a_paste_copies_a_literal_into_a_declared_string_field() {
     for _ in 0..600 {
         let base = generate::generate(&ty, DEFAULT_DEPTH, &mut rng);
         let after = mutate::mutate(&base, &ty, &mut rng);
-        let ValueNode::Object { fields } = &after.node else { panic!("the root of a Reissue stopped being an object") };
+        let ValueNode::Object { fields } = &after.node else {
+            panic!("the root of a Reissue stopped being an object")
+        };
         let field = |name: &str| fields.iter().find(|(n, _)| n == name).map(|(_, v)| &v.node);
-        let [Some(issued), Some(raised)] = [field("issuedBy").and_then(text), field("raisedBy").and_then(text)] else {
+        let [Some(issued), Some(raised)] = [
+            field("issuedBy").and_then(text),
+            field("raisedBy").and_then(text),
+        ] else {
             continue;
         };
         if issued == raised && !issued.is_empty() {
             return;
         }
     }
-    panic!("no paste copied the raiser's login into the free-text issuer field across 600 mutations");
+    panic!(
+        "no paste copied the raiser's login into the free-text issuer field across 600 mutations"
+    );
 }
 
 /// One execution rewrites a run of nodes rather than exactly one. The run is what lets a gate two
@@ -314,9 +435,17 @@ fn one_execution_rewrites_more_than_one_node() {
         let rewritten = after
             .paths()
             .iter()
-            .filter(|path| matches!(path.get(&after).unwrap().provenance, Provenance::Mutated { .. }))
+            .filter(|path| {
+                matches!(
+                    path.get(&after).unwrap().provenance,
+                    Provenance::Mutated { .. }
+                )
+            })
             .count();
         widest = widest.max(rewritten);
     }
-    assert!(widest >= 2, "every execution rewrote at most one node (widest across 400 runs was {widest})");
+    assert!(
+        widest >= 2,
+        "every execution rewrote at most one node (widest across 400 runs was {widest})"
+    );
 }

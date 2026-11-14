@@ -22,7 +22,10 @@ fn fakeplugin_path() -> PathBuf {
             return candidate;
         }
         let Some(parent) = dir.parent() else {
-            panic!("build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})", exe.display());
+            panic!(
+                "build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})",
+                exe.display()
+            );
         };
         dir = parent;
     }
@@ -47,7 +50,8 @@ fn project(name: &str, script: &str) -> PathBuf {
 }
 
 fn scan(root: &Path) -> scan::ScanReport {
-    let loaded = afz_engine::config::load(&root.join("autofuzz.json")).expect("the scan project validates");
+    let loaded =
+        afz_engine::config::load(&root.join("autofuzz.json")).expect("the scan project validates");
     let mut options = Options::new(loaded, root.to_path_buf());
     options.invocations = 4;
     options.workers = 1;
@@ -63,23 +67,41 @@ fn a_plugin_diagnostic_appears_in_the_engine_log_once() {
     // workers repeat it, and a reader needs it once.
     let root = project("plugin-stderr", r#"[{"stderr":"target said hello"}]"#);
     let report = scan(&root);
-    let log = std::fs::read_to_string(report.dir.join("engine.log")).expect("the scan writes its log");
+    let log =
+        std::fs::read_to_string(report.dir.join("engine.log")).expect("the scan writes its log");
     std::fs::remove_dir_all(&root).ok();
 
-    assert!(log.contains("plugin said: target said hello"), "the diagnostic never reached the log:\n{log}");
+    assert!(
+        log.contains("plugin said: target said hello"),
+        "the diagnostic never reached the log:\n{log}"
+    );
     let repeats = log.matches("plugin said: target said hello").count();
-    assert_eq!(repeats, 1, "the repeated line was reported {repeats} times:\n{log}");
+    assert_eq!(
+        repeats, 1,
+        "the repeated line was reported {repeats} times:\n{log}"
+    );
 }
 
 #[test]
 fn the_reason_a_plugin_gave_survives_its_death() {
     // The death itself is reported as an exit code. The line the plugin wrote before exiting is the
     // only thing in the artifact that says why.
-    let root = project("plugin-died", r#"[{"at":1,"stderr":"the realm is out of memory"},{"at":2,"exit":1}]"#);
+    let root = project(
+        "plugin-died",
+        r#"[{"at":1,"stderr":"the realm is out of memory"},{"at":2,"exit":1}]"#,
+    );
     let report = scan(&root);
-    let log = std::fs::read_to_string(report.dir.join("engine.log")).expect("the scan writes its log");
+    let log =
+        std::fs::read_to_string(report.dir.join("engine.log")).expect("the scan writes its log");
     std::fs::remove_dir_all(&root).ok();
 
-    assert!(log.contains("plugin said: the realm is out of memory"), "the last words of a dead plugin were dropped:\n{log}");
-    assert!(report.document.execution.restarts >= 1, "the script has to kill a worker: {:?}", report.document.execution);
+    assert!(
+        log.contains("plugin said: the realm is out of memory"),
+        "the last words of a dead plugin were dropped:\n{log}"
+    );
+    assert!(
+        report.document.execution.restarts >= 1,
+        "the script has to kill a worker: {:?}",
+        report.document.execution
+    );
 }

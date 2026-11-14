@@ -6,7 +6,11 @@ use clap::Parser;
 /// on, so a harness reaches a different tree by calling a tool again with a different `path`,
 /// exactly as it does with every other tool it has - never by restarting the server.
 #[derive(Parser)]
-#[command(name = "afz-mcp", version, about = "MCP server for autofuzz: probe, scan, and read findings.")]
+#[command(
+    name = "afz-mcp",
+    version,
+    about = "MCP server for autofuzz: probe, scan, and read findings."
+)]
 struct Args {}
 
 #[tokio::main]

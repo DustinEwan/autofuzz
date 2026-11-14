@@ -27,7 +27,7 @@ impl Afz {
 // `CARGO_PKG_VERSION`, so the identity below is the only one the server ever reports.
 #[tool_handler(
     name = "afz",
-    instructions = "autofuzz fuzzes the interfaces a harness plugin discovers. afz_probe answers whether a directory is configured and what would be fuzzed. afz_scan starts a scan and answers with a jobId; await_scan blocks until a scan ends, so run it as a background task to be woken when one finishes; afz_scan_status reports progress without waiting; afz_scan_cancel ends a running scan early and still writes its result; and afz_findings reads the findings of a finished scan. A scan writes into the scan project's own output directory; every finding names the input and reproducer files it came from."
+    instructions = "autofuzz fuzzes the interfaces that a harness plugin discovers. afz_probe reports the plugin and targets of a directory. afz_scan starts a scan and returns a jobId. await_scan waits for a scan to end; run it as a background task to be woken when the scan finishes. afz_scan_status reports progress without waiting. afz_scan_cancel stops a running scan early and still writes its result. afz_findings reads the findings of a finished scan. A scan writes into the scan project's own output directory, and every finding names its input file and its reproducer file."
 )]
 impl ServerHandler for Afz {}
 
@@ -38,11 +38,16 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // and a relative `path` resolves against it. Name it, so a scan that finds nothing in an
     // unexpected place is diagnosable from the client's log.
     match std::env::current_dir() {
-        Ok(cwd) => eprintln!("afz-mcp: a relative `path` resolves against {}", cwd.display()),
+        Ok(cwd) => eprintln!(
+            "afz-mcp: a relative `path` resolves against {}",
+            cwd.display()
+        ),
         Err(e) => eprintln!("afz-mcp: cannot resolve the working directory: {e}"),
     }
     let shared = Shared::default();
-    let service = Afz::new(shared.clone()).serve(rmcp::transport::stdio()).await?;
+    let service = Afz::new(shared.clone())
+        .serve(rmcp::transport::stdio())
+        .await?;
     service.waiting().await?;
     stop_and_reap(&shared).await;
     Ok(())
@@ -58,7 +63,10 @@ async fn stop_and_reap(shared: &Shared) {
     eprintln!("afz-mcp: shutting down, stopping {stopped} scan(s)");
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
-        let running = jobs::lock(shared).jobs.values().any(|job| job.state == JobState::Running);
+        let running = jobs::lock(shared)
+            .jobs
+            .values()
+            .any(|job| job.state == JobState::Running);
         if !running {
             break;
         }

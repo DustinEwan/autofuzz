@@ -42,11 +42,17 @@ pub const DEADLINE_VIA: &str = "deadline";
 
 /// The channels that mean "the environment around the target stopped working". The target did
 /// not break; the process hosting it did, so `processExit` owns them and `failed` ignores them.
-pub const ENVIRONMENT_VIA: &[&str] = &["processExit", "plugin-lost", "plugin-killed", "worker-dead"];
+pub const ENVIRONMENT_VIA: &[&str] =
+    &["processExit", "plugin-lost", "plugin-killed", "worker-dead"];
 
 /// The channels that mean "the harness could not deliver this input to the target". They are
 /// reported as run errors, not as findings against the target.
-pub const HARNESS_VIA: &[&str] = &["module-load-failed", "materialization-blocked", "malformed-value", "stub-call"];
+pub const HARNESS_VIA: &[&str] = &[
+    "module-load-failed",
+    "materialization-blocked",
+    "malformed-value",
+    "stub-call",
+];
 
 /// The fault class an override supplies when it turns a rejection into a failure. Identity is
 /// computed from the fault class, so an overridden finding must not inherit the rejection's
@@ -69,7 +75,13 @@ pub enum Oracle {
 
 impl Oracle {
     /// Every oracle, in the order `Oracles::evaluate` reports them.
-    pub const ALL: [Oracle; 5] = [Oracle::Failed, Oracle::Deadline, Oracle::MemoryGrowth, Oracle::ProcessExit, Oracle::Rejected];
+    pub const ALL: [Oracle; 5] = [
+        Oracle::Failed,
+        Oracle::Deadline,
+        Oracle::MemoryGrowth,
+        Oracle::ProcessExit,
+        Oracle::Rejected,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -106,7 +118,9 @@ pub struct Oracles {
 
 impl Oracles {
     pub fn new(config: &OraclesConfig) -> Oracles {
-        Oracles { config: config.clone() }
+        Oracles {
+            config: config.clone(),
+        }
     }
 
     pub fn config(&self) -> &OraclesConfig {
@@ -120,7 +134,9 @@ impl Oracles {
         if !config.severity.enabled() {
             return None;
         }
-        Some(Duration::from_millis(config.ms.unwrap_or(DEFAULT_DEADLINE_MS)))
+        Some(Duration::from_millis(
+            config.ms.unwrap_or(DEFAULT_DEADLINE_MS),
+        ))
     }
 
     pub fn config_for(&self, oracle: Oracle) -> OracleConfig {
@@ -142,7 +158,9 @@ impl Oracles {
             if !config.severity.enabled() {
                 continue;
             }
-            if let Some(finding) = oracle.check(config, &classified, target_id, invocation_id, outcome) {
+            if let Some(finding) =
+                oracle.check(config, &classified, target_id, invocation_id, outcome)
+            {
                 findings.push(finding);
             }
         }
@@ -166,9 +184,18 @@ enum Kind {
 }
 
 /// Apply the first `oracles.overrides` entry that names this target (or no target) and this `via`.
-fn classify_with_overrides<'a>(config: &OraclesConfig, target_id: &str, outcome: &'a Outcome) -> Classified<'a> {
+fn classify_with_overrides<'a>(
+    config: &OraclesConfig,
+    target_id: &str,
+    outcome: &'a Outcome,
+) -> Classified<'a> {
     let mut classified = match outcome {
-        Outcome::Ok(_) => Classified { kind: Kind::Ok, via: None, detail: None, fault: None },
+        Outcome::Ok(_) => Classified {
+            kind: Kind::Ok,
+            via: None,
+            detail: None,
+            fault: None,
+        },
         Outcome::Rejected(rejected) => Classified {
             kind: Kind::Rejected,
             via: Some(rejected.via.clone()),
@@ -184,7 +211,9 @@ fn classify_with_overrides<'a>(config: &OraclesConfig, target_id: &str, outcome:
     };
 
     // Only a classified channel can be overridden, so an `ok` outcome is never rewritten.
-    let Some(via) = classified.via.clone() else { return classified };
+    let Some(via) = classified.via.clone() else {
+        return classified;
+    };
     let Some(override_) = config
         .overrides
         .iter()
@@ -198,7 +227,10 @@ fn classify_with_overrides<'a>(config: &OraclesConfig, target_id: &str, outcome:
             classified.kind = Kind::Failed;
             classified.fault = Some(Cow::Owned(FaultSignature {
                 class: OVERRIDE_CLASS.to_string(),
-                message: format!("{via} treated as a failure by `oracles.overrides`: {}", classified.detail.clone().unwrap_or_default()),
+                message: format!(
+                    "{via} treated as a failure by `oracles.overrides`: {}",
+                    classified.detail.clone().unwrap_or_default()
+                ),
                 frames: Vec::new(),
             }));
         }
@@ -239,41 +271,77 @@ impl Oracle {
                     return None;
                 }
                 let fault = classified.fault.as_ref()?;
-                (format!("{}: {}", fault.class, fault.message), Some(fault.as_ref()))
+                (
+                    format!("{}: {}", fault.class, fault.message),
+                    Some(fault.as_ref()),
+                )
             }
             Oracle::Deadline => {
                 if via == DEADLINE_VIA {
-                    let detail = classified.detail.clone().unwrap_or_else(|| "no answer".to_string());
-                    (format!("exceeded the deadline ({detail})"), classified.fault.as_deref())
+                    let detail = classified
+                        .detail
+                        .clone()
+                        .unwrap_or_else(|| "no answer".to_string());
+                    (
+                        format!("exceeded the deadline ({detail})"),
+                        classified.fault.as_deref(),
+                    )
                 } else {
                     let limit = config.ms? as f64;
                     if outcome.duration_ms() < limit {
                         return None;
                     }
-                    (format!("took {:.0} ms against a {limit:.0} ms deadline", outcome.duration_ms()), None)
+                    (
+                        format!(
+                            "took {:.0} ms against a {limit:.0} ms deadline",
+                            outcome.duration_ms()
+                        ),
+                        None,
+                    )
                 }
             }
             Oracle::MemoryGrowth => {
-                let Outcome::Ok(ok) = outcome else { return None };
+                let Outcome::Ok(ok) = outcome else {
+                    return None;
+                };
                 let bytes = ok.memory_bytes?;
                 let limit = config.mb?.saturating_mul(1024 * 1024);
                 if bytes < limit {
                     return None;
                 }
-                (format!("allocated {} MB against a {} MB oracle", bytes / (1024 * 1024), config.mb?), None)
+                (
+                    format!(
+                        "allocated {} MB against a {} MB oracle",
+                        bytes / (1024 * 1024),
+                        config.mb?
+                    ),
+                    None,
+                )
             }
             Oracle::ProcessExit => {
                 if classified.kind != Kind::Failed || !ENVIRONMENT_VIA.contains(&via.as_str()) {
                     return None;
                 }
-                let detail = classified.detail.clone().unwrap_or_else(|| "plugin process is gone".to_string());
-                (format!("the plugin process stopped during the call ({detail})"), classified.fault.as_deref())
+                let detail = classified
+                    .detail
+                    .clone()
+                    .unwrap_or_else(|| "plugin process is gone".to_string());
+                (
+                    format!("the plugin process stopped during the call ({detail})"),
+                    classified.fault.as_deref(),
+                )
             }
             Oracle::Rejected => {
                 if classified.kind != Kind::Rejected {
                     return None;
                 }
-                (classified.detail.clone().unwrap_or_else(|| "rejected".to_string()), None)
+                (
+                    classified
+                        .detail
+                        .clone()
+                        .unwrap_or_else(|| "rejected".to_string()),
+                    None,
+                )
             }
         };
         Some(Finding {

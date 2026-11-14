@@ -29,7 +29,10 @@ pub enum Provenance {
     ///
     /// Renamed explicitly: serde's container-level `rename_all` covers variant names, not the
     /// fields of a struct variant, and the wire format is camelCase everywhere.
-    Transplanted { #[serde(rename = "fromEntry")] from_entry: String },
+    Transplanted {
+        #[serde(rename = "fromEntry")]
+        from_entry: String,
+    },
     /// Produced by the minimizer at this step count.
     Minimized { step: u32 },
     /// Supplied by a user fixture.
@@ -84,17 +87,39 @@ impl NumberValue {
 pub enum ValueNode {
     Null,
     Undefined,
-    Boolean { value: bool },
-    Number { value: NumberValue },
-    BigInt { value: String },
-    String { value: String },
-    Literal { value: serde_json::Value },
-    Array { items: Vec<ValueTree> },
-    Set { items: Vec<ValueTree> },
-    Map { entries: Vec<(ValueTree, ValueTree)> },
-    Object { fields: Vec<(String, ValueTree)> },
-    Tuple { items: Vec<ValueTree> },
-    Buffer { bytes: Vec<u8> },
+    Boolean {
+        value: bool,
+    },
+    Number {
+        value: NumberValue,
+    },
+    BigInt {
+        value: String,
+    },
+    String {
+        value: String,
+    },
+    Literal {
+        value: serde_json::Value,
+    },
+    Array {
+        items: Vec<ValueTree>,
+    },
+    Set {
+        items: Vec<ValueTree>,
+    },
+    Map {
+        entries: Vec<(ValueTree, ValueTree)>,
+    },
+    Object {
+        fields: Vec<(String, ValueTree)>,
+    },
+    Tuple {
+        items: Vec<ValueTree>,
+    },
+    Buffer {
+        bytes: Vec<u8>,
+    },
     /// A callable stub. `behavior` selects what the stub does when the target calls it.
     Function {
         behavior: FunctionBehavior,
@@ -102,20 +127,29 @@ pub enum ValueNode {
         returns: Option<Box<ValueTree>>,
     },
     /// A stream or iterable source, generated as an in-memory item list.
-    Stream { iterable: bool, items: Vec<ValueTree> },
+    Stream {
+        iterable: bool,
+        items: Vec<ValueTree>,
+    },
     /// A node the plugin must supply from a fixture. The engine never invents one.
-    Opaque { ty: String },
+    Opaque {
+        ty: String,
+    },
 }
 
 impl ValueNode {
     /// A number node from an `f64`, mapping the non-finite values to their names.
     pub fn number(v: f64) -> ValueNode {
-        ValueNode::Number { value: NumberValue::from_f64(v) }
+        ValueNode::Number {
+            value: NumberValue::from_f64(v),
+        }
     }
 
     /// A string node.
     pub fn string(value: impl Into<String>) -> ValueNode {
-        ValueNode::String { value: value.into() }
+        ValueNode::String {
+            value: value.into(),
+        }
     }
 
     /// The [`crate::types::Kind`] this node's tag corresponds to, so a mutator can check a
@@ -130,7 +164,9 @@ impl ValueNode {
             | ValueNode::BigInt { .. }
             | ValueNode::String { .. } => Kind::Scalar,
             ValueNode::Literal { .. } => Kind::Literal,
-            ValueNode::Array { .. } | ValueNode::Set { .. } | ValueNode::Map { .. } => Kind::Collection,
+            ValueNode::Array { .. } | ValueNode::Set { .. } | ValueNode::Map { .. } => {
+                Kind::Collection
+            }
             ValueNode::Object { .. } => Kind::Object,
             ValueNode::Tuple { .. } => Kind::Tuple,
             ValueNode::Buffer { .. } => Kind::Buffer,
@@ -152,7 +188,10 @@ pub struct ValueTree {
 
 impl ValueTree {
     pub fn new(node: ValueNode) -> ValueTree {
-        ValueTree { node, provenance: Provenance::Generated }
+        ValueTree {
+            node,
+            provenance: Provenance::Generated,
+        }
     }
 
     pub fn with_provenance(node: ValueNode, provenance: Provenance) -> ValueTree {
@@ -172,11 +211,15 @@ impl ValueTree {
     }
 
     pub fn number(v: f64) -> ValueTree {
-        ValueTree::new(ValueNode::Number { value: NumberValue::from_f64(v) })
+        ValueTree::new(ValueNode::Number {
+            value: NumberValue::from_f64(v),
+        })
     }
 
     pub fn string(value: impl Into<String>) -> ValueTree {
-        ValueTree::new(ValueNode::String { value: value.into() })
+        ValueTree::new(ValueNode::String {
+            value: value.into(),
+        })
     }
 
     pub fn boundary(node: ValueNode) -> ValueTree {
@@ -198,9 +241,14 @@ impl ValueTree {
     }
 
     fn collect_paths(&self, trail: &mut Vec<Step>, out: &mut Vec<NodePath>) {
-        out.push(NodePath { steps: trail.clone() });
+        out.push(NodePath {
+            steps: trail.clone(),
+        });
         match &self.node {
-            ValueNode::Array { items } | ValueNode::Set { items } | ValueNode::Tuple { items } | ValueNode::Stream { items, .. } => {
+            ValueNode::Array { items }
+            | ValueNode::Set { items }
+            | ValueNode::Tuple { items }
+            | ValueNode::Stream { items, .. } => {
                 for (i, item) in items.iter().enumerate() {
                     trail.push(Step::Index(i));
                     item.collect_paths(trail, out);
@@ -224,7 +272,10 @@ impl ValueTree {
                     trail.pop();
                 }
             }
-            ValueNode::Function { returns: Some(inner), .. } => {
+            ValueNode::Function {
+                returns: Some(inner),
+                ..
+            } => {
                 trail.push(Step::Return);
                 inner.collect_paths(trail, out);
                 trail.pop();
@@ -266,9 +317,13 @@ impl NodePath {
         let mut node = root;
         for step in &self.steps {
             node = match (step, &node.node) {
-                (Step::Index(i), ValueNode::Array { items } | ValueNode::Set { items } | ValueNode::Tuple { items } | ValueNode::Stream { items, .. }) => {
-                    items.get(*i)?
-                }
+                (
+                    Step::Index(i),
+                    ValueNode::Array { items }
+                    | ValueNode::Set { items }
+                    | ValueNode::Tuple { items }
+                    | ValueNode::Stream { items, .. },
+                ) => items.get(*i)?,
                 (Step::Key(i, side), ValueNode::Map { entries }) => {
                     let (k, v) = entries.get(*i)?;
                     match side {
@@ -279,7 +334,13 @@ impl NodePath {
                 (Step::Field(name), ValueNode::Object { fields }) => {
                     fields.iter().find(|(n, _)| n == name).map(|(_, v)| v)?
                 }
-                (Step::Return, ValueNode::Function { returns: Some(inner), .. }) => inner,
+                (
+                    Step::Return,
+                    ValueNode::Function {
+                        returns: Some(inner),
+                        ..
+                    },
+                ) => inner,
                 _ => return None,
             };
         }
@@ -302,12 +363,16 @@ impl NodePath {
             return true;
         };
         match (step.clone(), &mut node.node) {
-            (Step::Index(i), ValueNode::Array { items } | ValueNode::Set { items } | ValueNode::Tuple { items } | ValueNode::Stream { items, .. }) => {
-                match items.get_mut(i) {
-                    Some(child) => Self::replace_inner(steps, child, next),
-                    None => false,
-                }
-            }
+            (
+                Step::Index(i),
+                ValueNode::Array { items }
+                | ValueNode::Set { items }
+                | ValueNode::Tuple { items }
+                | ValueNode::Stream { items, .. },
+            ) => match items.get_mut(i) {
+                Some(child) => Self::replace_inner(steps, child, next),
+                None => false,
+            },
             (Step::Key(i, side), ValueNode::Map { entries }) => match entries.get_mut(i) {
                 Some((k, v)) => match side {
                     KeySide::Key => Self::replace_inner(steps, k, next),
@@ -321,9 +386,13 @@ impl NodePath {
                     None => false,
                 }
             }
-            (Step::Return, ValueNode::Function { returns: Some(inner), .. }) => {
-                Self::replace_inner(steps, inner, next)
-            }
+            (
+                Step::Return,
+                ValueNode::Function {
+                    returns: Some(inner),
+                    ..
+                },
+            ) => Self::replace_inner(steps, inner, next),
             _ => false,
         }
     }

@@ -125,7 +125,9 @@ pub struct Effects {
 }
 
 /// The honest accounting of what the tool can actually reach.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum Materialization {
     /// The whole parameter graph is buildable from generated values.

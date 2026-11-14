@@ -22,9 +22,15 @@ pub enum ConfigError {
     #[error("{0}")]
     Message(String),
     #[error("cannot read {}: {source}", path.display())]
-    Read { path: PathBuf, source: std::io::Error },
+    Read {
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("cannot parse {}: {source}", path.display())]
-    Parse { path: PathBuf, source: serde_json::Error },
+    Parse {
+        path: PathBuf,
+        source: serde_json::Error,
+    },
 }
 
 impl ConfigError {
@@ -120,7 +126,11 @@ pub struct OraclesConfig {
     /// oracle, or a typo. Naming one is a configuration error, never a silent no-op. This is
     /// a `flatten` catch-all, which is why `OraclesConfig` does not deny unknown fields;
     /// `validate` reads every key.
-    #[serde(flatten, default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    #[serde(
+        flatten,
+        default,
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
     pub unimplemented: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
@@ -129,11 +139,31 @@ impl Default for OraclesConfig {
     /// medium, `processExit` high. `rejected` is off and can be turned on per target.
     fn default() -> Self {
         OraclesConfig {
-            failed: OracleConfig { severity: Severity::High, ms: None, mb: None },
-            rejected: OracleConfig { severity: Severity::Off, ms: None, mb: None },
-            deadline: OracleConfig { severity: Severity::Medium, ms: Some(2000), mb: None },
-            memory_growth: OracleConfig { severity: Severity::Medium, ms: None, mb: Some(256) },
-            process_exit: OracleConfig { severity: Severity::High, ms: None, mb: None },
+            failed: OracleConfig {
+                severity: Severity::High,
+                ms: None,
+                mb: None,
+            },
+            rejected: OracleConfig {
+                severity: Severity::Off,
+                ms: None,
+                mb: None,
+            },
+            deadline: OracleConfig {
+                severity: Severity::Medium,
+                ms: Some(2000),
+                mb: None,
+            },
+            memory_growth: OracleConfig {
+                severity: Severity::Medium,
+                ms: None,
+                mb: Some(256),
+            },
+            process_exit: OracleConfig {
+                severity: Severity::High,
+                ms: None,
+                mb: None,
+            },
             overrides: Vec::new(),
             unimplemented: Default::default(),
         }
@@ -199,7 +229,10 @@ pub struct OutputConfig {
 
 impl Default for OutputConfig {
     fn default() -> Self {
-        OutputConfig { dir: ".autofuzz".to_string(), renderers: vec!["json".to_string(), "markdown".to_string()] }
+        OutputConfig {
+            dir: ".autofuzz".to_string(),
+            renderers: vec!["json".to_string(), "markdown".to_string()],
+        }
     }
 }
 
@@ -227,7 +260,10 @@ impl LoadedConfig {
     /// `sha256:<hex>` over the config file bytes, recorded in the scan result so a replay is
     /// attributable to the exact configuration.
     pub fn config_hash(&self) -> Result<String, ConfigError> {
-        let bytes = std::fs::read(&self.path).map_err(|e| ConfigError::Read { path: self.path.clone(), source: e })?;
+        let bytes = std::fs::read(&self.path).map_err(|e| ConfigError::Read {
+            path: self.path.clone(),
+            source: e,
+        })?;
         let digest = Sha256::digest(bytes);
         let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
         Ok(format!("sha256:{hex}"))
@@ -240,7 +276,11 @@ impl LoadedConfig {
             .harness
             .as_ref()
             .ok_or_else(|| ConfigError::msg("a scan project must declare a `harness` block: it names the plugin that drives the scan"))?;
-        let (harness, command, env) = (block.name.as_str(), block.command.clone(), block.env.clone());
+        let (harness, command, env) = (
+            block.name.as_str(),
+            block.command.clone(),
+            block.env.clone(),
+        );
         // A missing `command` is only legal when the name is installed: the registry holds
         // argv the user installed on purpose, so the engine still never guesses a runtime.
         let argv = match command.filter(|argv| !argv.is_empty()) {
@@ -249,7 +289,7 @@ impl LoadedConfig {
                 Some(recorded) => recorded.argv,
                 None => {
                     return Err(ConfigError::msg(format!(
-                        "`command` is required for harness \"{harness}\": the engine does not guess a runtime; install one with `afz install-harness <git-url>`"
+                        "`command` is required for harness \"{harness}\". Install it with `afz install-harness <git-url>`, or set `harness.command`."
                     )));
                 }
             },
@@ -269,8 +309,12 @@ impl LoadedConfig {
                 launch.env.insert(k, v);
             }
         }
-        launch.env.insert("AFZ_ROOT".to_string(), self.root.display().to_string());
-        launch.env.insert("AFZ_CONFIG".to_string(), self.path.display().to_string());
+        launch
+            .env
+            .insert("AFZ_ROOT".to_string(), self.root.display().to_string());
+        launch
+            .env
+            .insert("AFZ_CONFIG".to_string(), self.path.display().to_string());
         launch.cwd = Some(self.root.display().to_string());
         Ok(launch)
     }
@@ -308,7 +352,12 @@ pub struct DiscoveryScope {
 /// filesystem path, and a program name with no separator is left for `PATH`. `base` is the
 /// directory `afz` was run from for a scan project's `command`, and the harness repository root
 /// for an `afz-harness.json` argv.
-pub fn absolutized(index: usize, argument: String, base: &Path, exists: impl Fn(&Path) -> bool) -> String {
+pub fn absolutized(
+    index: usize,
+    argument: String,
+    base: &Path,
+    exists: impl Fn(&Path) -> bool,
+) -> String {
     if argument.starts_with('-') || (index == 0 && !argument.contains('/')) {
         return argument;
     }
@@ -316,7 +365,10 @@ pub fn absolutized(index: usize, argument: String, base: &Path, exists: impl Fn(
     if path.is_absolute() || !exists(path) {
         return argument;
     }
-    base.join(path).canonicalize().map(|p| p.display().to_string()).unwrap_or(argument)
+    base.join(path)
+        .canonicalize()
+        .map(|p| p.display().to_string())
+        .unwrap_or(argument)
 }
 
 impl ScanProject {
@@ -328,15 +380,19 @@ impl ScanProject {
             ));
         };
         if harness.name.is_empty() {
-            return Err(ConfigError::msg("`harness.name` must name a harness, e.g. \"js-ts\""));
+            return Err(ConfigError::msg(
+                "`harness.name` must name a harness, e.g. \"js-ts\"",
+            ));
         }
         // Fail at load time rather than at the first spawn: a harness with no declared
         // argv cannot run, whatever the scan does later. The engine names no runtime, so
         // `command` is optional only when `afz install-harness` recorded an argv for
         // this name.
-        if harness.command.as_deref().unwrap_or(&[]).is_empty() && crate::harnesses::lookup(&harness.name).is_none() {
+        if harness.command.as_deref().unwrap_or(&[]).is_empty()
+            && crate::harnesses::lookup(&harness.name).is_none()
+        {
             return Err(ConfigError::msg(format!(
-                "`command` is required for harness \"{}\": the engine does not guess a runtime; install one with `afz install-harness <git-url>`",
+                "`command` is required for harness \"{}\". Install it with `afz install-harness <git-url>`, or set `harness.command`.",
                 harness.name
             )));
         }
@@ -348,17 +404,25 @@ impl ScanProject {
             )));
         }
         if self.budget.invocations == 0 {
-            return Err(ConfigError::msg("`budget.invocations` must be greater than 0"));
+            return Err(ConfigError::msg(
+                "`budget.invocations` must be greater than 0",
+            ));
         }
         if self.budget.wall_clock_ms == 0 {
-            return Err(ConfigError::msg("`budget.wallClockMs` must be greater than 0"));
+            return Err(ConfigError::msg(
+                "`budget.wallClockMs` must be greater than 0",
+            ));
         }
         if self.budget.max_corpus == 0 {
-            return Err(ConfigError::msg("`budget.maxCorpus` must be greater than 0"));
+            return Err(ConfigError::msg(
+                "`budget.maxCorpus` must be greater than 0",
+            ));
         }
         if let Some(ms) = self.oracles.deadline.ms {
             if ms == 0 {
-                return Err(ConfigError::msg("`oracles.deadline.ms` must be greater than 0"));
+                return Err(ConfigError::msg(
+                    "`oracles.deadline.ms` must be greater than 0",
+                ));
             }
         }
         for o in &self.oracles.overrides {
@@ -370,8 +434,10 @@ impl ScanProject {
             }
         }
         for renderer in &self.output.renderers {
-            if !matches!(renderer.as_str(), "json" | "markdown" | "sarif") {
-                return Err(ConfigError::msg(format!("renderer \"{renderer}\" is not implemented in this version")));
+            if !matches!(renderer.as_str(), "json" | "markdown") {
+                return Err(ConfigError::msg(format!(
+                    "renderer \"{renderer}\" is not implemented in this version"
+                )));
             }
         }
         if self.output.dir.is_empty() {
@@ -398,19 +464,35 @@ impl ScanProject {
         if !output.is_empty() {
             exclude.push(output);
         }
-        Ok(DiscoveryScope { root: scope_root, include: harness.include.clone(), exclude: Some(exclude) })
+        Ok(DiscoveryScope {
+            root: scope_root,
+            include: harness.include.clone(),
+            exclude: Some(exclude),
+        })
     }
 }
 
 /// Load and validate a scan project file.
 pub fn load(path: &Path) -> Result<LoadedConfig, ConfigError> {
-    let text = std::fs::read_to_string(path).map_err(|e| ConfigError::Read { path: path.to_path_buf(), source: e })?;
-    let project: ScanProject =
-        serde_json::from_str(&text).map_err(|e| ConfigError::Parse { path: path.to_path_buf(), source: e })?;
+    let text = std::fs::read_to_string(path).map_err(|e| ConfigError::Read {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
+    let project: ScanProject = serde_json::from_str(&text).map_err(|e| ConfigError::Parse {
+        path: path.to_path_buf(),
+        source: e,
+    })?;
     project.validate()?;
     let abs = absolute(path)?;
-    let root = abs.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
-    Ok(LoadedConfig { path: abs, root, project })
+    let root = abs
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    Ok(LoadedConfig {
+        path: abs,
+        root,
+        project,
+    })
 }
 
 /// Find `autofuzz.json`. A directory argument is searched for the file, then upward; a bare
@@ -437,7 +519,10 @@ pub fn discover(start: &Path) -> Result<PathBuf, ConfigError> {
 }
 
 fn absolute(path: &Path) -> Result<PathBuf, ConfigError> {
-    std::path::absolute(path).map_err(|e| ConfigError::Read { path: path.to_path_buf(), source: e })
+    std::path::absolute(path).map_err(|e| ConfigError::Read {
+        path: path.to_path_buf(),
+        source: e,
+    })
 }
 
 #[cfg(test)]
@@ -453,14 +538,36 @@ mod tests {
         let base = Path::new(".");
         let exists = |_: &Path| true;
         let missing = |_: &Path| false;
-        assert_eq!(absolutized(0, "node".into(), base, exists), "node", "a bare program name is found on PATH");
+        assert_eq!(
+            absolutized(0, "node".into(), base, exists),
+            "node",
+            "a bare program name is found on PATH"
+        );
         let program = absolutized(0, "src/config.rs".into(), base, exists);
-        assert!(Path::new(&program).is_absolute() && program.ends_with("src/config.rs"), "a program named by path stays put: {program}");
-        assert_eq!(absolutized(2, "--root out".into(), base, exists), "--root out");
-        assert_eq!(absolutized(1, "no-such/plugin.js".into(), base, missing), "no-such/plugin.js");
-        assert_eq!(absolutized(1, "/opt/plugin/server.js".into(), base, missing), "/opt/plugin/server.js");
+        assert!(
+            Path::new(&program).is_absolute() && program.ends_with("src/config.rs"),
+            "a program named by path stays put: {program}"
+        );
+        assert_eq!(
+            absolutized(2, "--root out".into(), base, exists),
+            "--root out"
+        );
+        assert_eq!(
+            absolutized(1, "no-such/plugin.js".into(), base, missing),
+            "no-such/plugin.js"
+        );
+        assert_eq!(
+            absolutized(1, "/opt/plugin/server.js".into(), base, missing),
+            "/opt/plugin/server.js"
+        );
         let resolved = absolutized(1, "Cargo.toml".into(), base, exists);
-        assert!(Path::new(&resolved).is_absolute(), "{resolved} stayed relative");
-        assert!(resolved.ends_with("Cargo.toml"), "{resolved} renamed the argument");
+        assert!(
+            Path::new(&resolved).is_absolute(),
+            "{resolved} stayed relative"
+        );
+        assert!(
+            resolved.ends_with("Cargo.toml"),
+            "{resolved} renamed the argument"
+        );
     }
 }

@@ -126,7 +126,10 @@ pub struct Report {
 impl Report {
     /// The rules that ran and reported nothing.
     pub fn passed(&self) -> usize {
-        RULES.len().saturating_sub(self.violations.len()).saturating_sub(self.not_applicable)
+        RULES
+            .len()
+            .saturating_sub(self.violations.len())
+            .saturating_sub(self.not_applicable)
     }
 
     /// The ids of every rule this plugin violated, for a test that asserts on the exact set.
@@ -205,28 +208,94 @@ impl Check {
 pub const SCHEMA_SETS: &[(&str, &[(&str, &str)])] = &[(
     PROTOCOL_VERSION,
     &[
-        ("call-input.json", include_str!("../../../docs/schema/afz-1/call-input.json")),
-        ("coverage-map.json", include_str!("../../../docs/schema/afz-1/coverage-map.json")),
-        ("discover-req.json", include_str!("../../../docs/schema/afz-1/discover-req.json")),
-        ("discovery.json", include_str!("../../../docs/schema/afz-1/discovery.json")),
-        ("handshake.json", include_str!("../../../docs/schema/afz-1/handshake.json")),
-        ("invoke-req.json", include_str!("../../../docs/schema/afz-1/invoke-req.json")),
-        ("materialized-call.json", include_str!("../../../docs/schema/afz-1/materialized-call.json")),
-        ("minimize-req.json", include_str!("../../../docs/schema/afz-1/minimize-req.json")),
-        ("minimize-resp.json", include_str!("../../../docs/schema/afz-1/minimize-resp.json")),
-        ("outcome.json", include_str!("../../../docs/schema/afz-1/outcome.json")),
-        ("prepare-req.json", include_str!("../../../docs/schema/afz-1/prepare-req.json")),
-        ("prepare-resp.json", include_str!("../../../docs/schema/afz-1/prepare-resp.json")),
-        ("ready-resp.json", include_str!("../../../docs/schema/afz-1/ready-resp.json")),
-        ("reproducer-req.json", include_str!("../../../docs/schema/afz-1/reproducer-req.json")),
-        ("reproducer-resp.json", include_str!("../../../docs/schema/afz-1/reproducer-resp.json")),
-        ("request.json", include_str!("../../../docs/schema/afz-1/request.json")),
-        ("response.json", include_str!("../../../docs/schema/afz-1/response.json")),
-        ("scan-result.json", include_str!("../../../docs/schema/afz-1/scan-result.json")),
-        ("skipped-target.json", include_str!("../../../docs/schema/afz-1/skipped-target.json")),
-        ("target-descriptor.json", include_str!("../../../docs/schema/afz-1/target-descriptor.json")),
-        ("type-node.json", include_str!("../../../docs/schema/afz-1/type-node.json")),
-        ("value-tree.json", include_str!("../../../docs/schema/afz-1/value-tree.json")),
+        (
+            "call-input.json",
+            include_str!("../../../docs/schema/afz-1/call-input.json"),
+        ),
+        (
+            "coverage-map.json",
+            include_str!("../../../docs/schema/afz-1/coverage-map.json"),
+        ),
+        (
+            "discover-req.json",
+            include_str!("../../../docs/schema/afz-1/discover-req.json"),
+        ),
+        (
+            "discovery.json",
+            include_str!("../../../docs/schema/afz-1/discovery.json"),
+        ),
+        (
+            "handshake.json",
+            include_str!("../../../docs/schema/afz-1/handshake.json"),
+        ),
+        (
+            "invoke-req.json",
+            include_str!("../../../docs/schema/afz-1/invoke-req.json"),
+        ),
+        (
+            "materialized-call.json",
+            include_str!("../../../docs/schema/afz-1/materialized-call.json"),
+        ),
+        (
+            "minimize-req.json",
+            include_str!("../../../docs/schema/afz-1/minimize-req.json"),
+        ),
+        (
+            "minimize-resp.json",
+            include_str!("../../../docs/schema/afz-1/minimize-resp.json"),
+        ),
+        (
+            "outcome.json",
+            include_str!("../../../docs/schema/afz-1/outcome.json"),
+        ),
+        (
+            "prepare-req.json",
+            include_str!("../../../docs/schema/afz-1/prepare-req.json"),
+        ),
+        (
+            "prepare-resp.json",
+            include_str!("../../../docs/schema/afz-1/prepare-resp.json"),
+        ),
+        (
+            "ready-resp.json",
+            include_str!("../../../docs/schema/afz-1/ready-resp.json"),
+        ),
+        (
+            "reproducer-req.json",
+            include_str!("../../../docs/schema/afz-1/reproducer-req.json"),
+        ),
+        (
+            "reproducer-resp.json",
+            include_str!("../../../docs/schema/afz-1/reproducer-resp.json"),
+        ),
+        (
+            "request.json",
+            include_str!("../../../docs/schema/afz-1/request.json"),
+        ),
+        (
+            "response.json",
+            include_str!("../../../docs/schema/afz-1/response.json"),
+        ),
+        (
+            "scan-result.json",
+            include_str!("../../../docs/schema/afz-1/scan-result.json"),
+        ),
+        (
+            "skipped-target.json",
+            include_str!("../../../docs/schema/afz-1/skipped-target.json"),
+        ),
+        (
+            "target-descriptor.json",
+            include_str!("../../../docs/schema/afz-1/target-descriptor.json"),
+        ),
+        (
+            "type-node.json",
+            include_str!("../../../docs/schema/afz-1/type-node.json"),
+        ),
+        (
+            "value-tree.json",
+            include_str!("../../../docs/schema/afz-1/value-tree.json"),
+        ),
     ],
 )];
 
@@ -238,7 +307,10 @@ pub fn schema_versions() -> Vec<&'static str> {
 /// The schema set compiled in for one revision as `(file name, text)` pairs, or `None` when
 /// this build does not carry that revision.
 pub fn embedded_schemas(version: &str) -> Option<&'static [(&'static str, &'static str)]> {
-    SCHEMA_SETS.iter().find(|(v, _)| *v == version).map(|(_, set)| *set)
+    SCHEMA_SETS
+        .iter()
+        .find(|(v, _)| *v == version)
+        .map(|(_, set)| *set)
 }
 
 /// One committed schema, loaded once per run.
@@ -258,9 +330,13 @@ impl Schema {
             .unwrap_or_else(|| panic!("the {PROTOCOL_VERSION} schema set has no {file}"))
             .1;
         let path = format!("docs/schema/{}/{}", schema_dir(PROTOCOL_VERSION), file);
-        let document: serde_json::Value = serde_json::from_str(text)
-            .unwrap_or_else(|e| panic!("{path} is not valid JSON: {e}"));
-        Schema { path, validator: jsonschema::validator_for(&document).expect("the committed schema is a valid JSON Schema") }
+        let document: serde_json::Value =
+            serde_json::from_str(text).unwrap_or_else(|e| panic!("{path} is not valid JSON: {e}"));
+        Schema {
+            path,
+            validator: jsonschema::validator_for(&document)
+                .expect("the committed schema is a valid JSON Schema"),
+        }
     }
 
     /// `{subject} does not match {path}: {first error}`, when the document breaks it.
@@ -319,7 +395,10 @@ pub fn render(report: &Report) -> String {
     if report.violations.is_empty() {
         out.push_str(&format!("ok  {} rules passed\n", report.passed()));
         if report.not_applicable > 0 {
-            out.push_str(&format!("      {} rule(s) not applicable to this plugin\n", report.not_applicable));
+            out.push_str(&format!(
+                "      {} rule(s) not applicable to this plugin\n",
+                report.not_applicable
+            ));
         }
     } else {
         out.push_str(&format!("{} rule(s) violated\n", report.violations.len()));
@@ -332,7 +411,11 @@ pub fn render(report: &Report) -> String {
             section.failed(),
             section.not_applicable(),
         ));
-        for property in section.properties.iter().filter(|p| p.verdict == template::Verdict::NotApplicable) {
+        for property in section
+            .properties
+            .iter()
+            .filter(|p| p.verdict == template::Verdict::NotApplicable)
+        {
             out.push_str(&format!("n/a   {}: {}\n", property.id, property.detail));
         }
     }
@@ -361,11 +444,22 @@ fn verdict_word(verdict: template::Verdict) -> &'static str {
 
 /// Compare the fixture-side verdicts with the protocol-side ones. Empty when
 /// every fixture-shaped property agrees.
-pub fn compare_validator(fixture: &template::TemplateReport, protocol: &template::TemplateReport) -> Vec<Violation> {
+pub fn compare_validator(
+    fixture: &template::TemplateReport,
+    protocol: &template::TemplateReport,
+) -> Vec<Violation> {
     let mut violations = Vec::new();
-    let mut fail = |detail: String| violations.push(Violation { rule: "fixture-validator", detail });
+    let mut fail = |detail: String| {
+        violations.push(Violation {
+            rule: "fixture-validator",
+            detail,
+        })
+    };
     if fixture.version != protocol.version {
-        fail(format!("the fixture validator targets template v{}, the suite targets v{}", fixture.version, protocol.version));
+        fail(format!(
+            "the fixture validator targets template v{}, the suite targets v{}",
+            fixture.version, protocol.version
+        ));
     }
     for property in &fixture.properties {
         if !template::is_fixture_shaped(&property.id) {
@@ -380,7 +474,10 @@ pub fn compare_validator(fixture: &template::TemplateReport, protocol: &template
     let mut seen = BTreeSet::new();
     for property in &fixture.properties {
         if !seen.insert(property.id.clone()) {
-            fail(format!("the fixture validator reports {} twice", property.id));
+            fail(format!(
+                "the fixture validator reports {} twice",
+                property.id
+            ));
         }
     }
     for property in &fixture.properties {
@@ -389,7 +486,9 @@ pub fn compare_validator(fixture: &template::TemplateReport, protocol: &template
         }
         // `template_pass` reports all ten ids, so a missing protocol-side line only happens
         // for a hand-built report; the disagreement is still real and is reported below.
-        let Some(plugin) = protocol.properties.iter().find(|p| p.id == property.id) else { continue };
+        let Some(plugin) = protocol.properties.iter().find(|p| p.id == property.id) else {
+            continue;
+        };
         if plugin.verdict != property.verdict {
             fail(format!(
                 "the fixture validator says {} for {} and the plugin says {}: {}",
@@ -454,11 +553,17 @@ impl Runner {
     }
 
     fn fail(&mut self, rule: &'static str, detail: impl Into<String>) {
-        self.violations.push(Violation { rule, detail: detail.into() });
+        self.violations.push(Violation {
+            rule,
+            detail: detail.into(),
+        });
     }
 
     fn note(&mut self, rule: &'static str, detail: impl Into<String>) {
-        self.notes.push(Note { rule, detail: detail.into() });
+        self.notes.push(Note {
+            rule,
+            detail: detail.into(),
+        });
     }
 
     fn skip(&mut self, count: usize) {
@@ -468,13 +573,25 @@ impl Runner {
     /// `process-alive`: a phase that finished on a process the transport has since given up on.
     fn alive(&mut self, client: &PluginClient, phase: &str) {
         if let Some(reason) = client.lost() {
-            self.fail("process-alive", format!("the plugin process {} while {phase} was in flight", reason.detail()));
+            self.fail(
+                "process-alive",
+                format!(
+                    "the plugin process {} while {phase} was in flight",
+                    reason.detail()
+                ),
+            );
         }
     }
 
     /// Ask for the raw document, so the schema check sees exactly what the plugin wrote and the
     /// typed parse sees the same bytes.
-    fn raw(&self, client: &PluginClient, method: Method, params: serde_json::Value, timeout: Duration) -> Call<serde_json::Value> {
+    fn raw(
+        &self,
+        client: &PluginClient,
+        method: Method,
+        params: serde_json::Value,
+        timeout: Duration,
+    ) -> Call<serde_json::Value> {
         client.request::<serde_json::Value>(method, Some(params), timeout)
     }
 
@@ -497,16 +614,22 @@ impl Runner {
         // A runtime harness's service belongs to the package, so the suite starts it before
         // spawning the plugin: discovery may need it, and every failure below names the
         // package's own launch argv. An in-process manifest carries no lifecycle.
-        let lifecycle = self.check.template.as_ref().and_then(|manifest| manifest.lifecycle.clone());
+        let lifecycle = self
+            .check
+            .template
+            .as_ref()
+            .and_then(|manifest| manifest.lifecycle.clone());
         let mut service = match &lifecycle {
-            Some(spec) => match lifecycle::Service::start(spec, std::path::Path::new(&self.check.root)) {
-                Ok(service) => Some(service),
-                Err(detail) => {
-                    self.fail("lifecycle-service", detail);
-                    self.skip(RULES.len());
-                    return self.report();
+            Some(spec) => {
+                match lifecycle::Service::start(spec, std::path::Path::new(&self.check.root)) {
+                    Ok(service) => Some(service),
+                    Err(detail) => {
+                        self.fail("lifecycle-service", detail);
+                        self.skip(RULES.len());
+                        return self.report();
+                    }
                 }
-            },
+            }
             None => None,
         };
         // The plugin reaches the service the suite started, so it needs the port the suite
@@ -514,7 +637,10 @@ impl Runner {
         // substitutes `AFZ_PORT` into its own `harness.options` strings. An in-process manifest
         // carries no lifecycle, so `service` is `None` and the environment is untouched.
         if let Some(service) = &service {
-            self.check.launch.env.insert("AFZ_PORT".to_string(), service.port().to_string());
+            self.check
+                .launch
+                .env
+                .insert("AFZ_PORT".to_string(), service.port().to_string());
         }
         // Connection A is the probe shape: `scan.rs` spawns, handshakes, and discovers on one
         // process, and it is the only connection the engine ever handshakes.
@@ -565,7 +691,8 @@ impl Runner {
         if let Some(fixture) = self.check.validator.clone() {
             self.validator = Some(fixture.clone());
             if let Some(protocol) = &self.template {
-                self.violations.extend(compare_validator(&fixture, protocol));
+                self.violations
+                    .extend(compare_validator(&fixture, protocol));
             }
         }
         // Teardown runs after every drive: the service must outlive the last invocation, and
@@ -580,7 +707,12 @@ impl Runner {
 
     /// `spawn`, `protocol-version`, `handshake-schema`.
     fn handshake(&mut self, client: &PluginClient) -> Option<Handshake> {
-        let raw = match self.raw(client, Method::Handshake, serde_json::Value::Null, HANDSHAKE_TIMEOUT) {
+        let raw = match self.raw(
+            client,
+            Method::Handshake,
+            serde_json::Value::Null,
+            HANDSHAKE_TIMEOUT,
+        ) {
             Ok(raw) => raw,
             Err(reason) => {
                 self.fail("spawn", reason.detail());
@@ -596,7 +728,10 @@ impl Runner {
                     Some(detail) => self.fail("handshake-schema", detail),
                     None => self.fail(
                         "handshake-schema",
-                        format!("handshake is not the shape {} describes: {error}", self.schemas.handshake.path),
+                        format!(
+                            "handshake is not the shape {} describes: {error}",
+                            self.schemas.handshake.path
+                        ),
                     ),
                 }
                 self.skip(RULES.len() - 3);
@@ -622,10 +757,21 @@ impl Runner {
     fn discover(&mut self, client: &PluginClient) -> Option<Discovery> {
         let request = self.check.discovery_request();
         let asked = Instant::now();
-        let raw = match self.raw(client, Method::Discover, to_params(&request), DISCOVERY_TIMEOUT) {
+        let raw = match self.raw(
+            client,
+            Method::Discover,
+            to_params(&request),
+            DISCOVERY_TIMEOUT,
+        ) {
             Ok(raw) => raw,
             Err(reason) => {
-                self.fail("discover-schema", format!("discover answered no discovery document: {}", reason.detail()));
+                self.fail(
+                    "discover-schema",
+                    format!(
+                        "discover answered no discovery document: {}",
+                        reason.detail()
+                    ),
+                );
                 self.alive(client, "discover");
                 self.skip(RULES.len() - 4);
                 return None;
@@ -639,7 +785,10 @@ impl Runner {
                     Some(detail) => self.fail("discover-schema", detail),
                     None => self.fail(
                         "discover-schema",
-                        format!("discovery is not the shape {} describes: {error}", self.schemas.discovery.path),
+                        format!(
+                            "discovery is not the shape {} describes: {error}",
+                            self.schemas.discovery.path
+                        ),
                     ),
                 }
                 self.skip(RULES.len() - 4);
@@ -658,7 +807,9 @@ impl Runner {
         // Discovery is the one cost a harness pays once per plugin process, and the engine replays
         // this same request into every process it starts. The projection is what the operator
         // reads as `setup … ms` in `engine.log` (`scan.rs:1050`).
-        let workers = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1);
         self.note(
             "discover-ms",
             format!(
@@ -673,18 +824,34 @@ impl Runner {
 
     /// `discover-repeatable`: the engine asks the same connection twice when a scan is scoped, and
     /// a plugin that answers differently the second time has an inventory it cannot rely on.
-    fn discover_again(&mut self, client: &PluginClient, request: &DiscoverReq, first_run: &Discovery) {
-        let again = self.raw(client, Method::Discover, to_params(request), DISCOVERY_TIMEOUT);
+    fn discover_again(
+        &mut self,
+        client: &PluginClient,
+        request: &DiscoverReq,
+        first_run: &Discovery,
+    ) {
+        let again = self.raw(
+            client,
+            Method::Discover,
+            to_params(request),
+            DISCOVERY_TIMEOUT,
+        );
         let second = match again {
             Ok(raw) => match serde_json::from_value::<Discovery>(raw) {
                 Ok(second) => second,
                 Err(error) => {
-                    self.fail("discover-repeatable", format!("the second discover answered something unreadable: {error}"));
+                    self.fail(
+                        "discover-repeatable",
+                        format!("the second discover answered something unreadable: {error}"),
+                    );
                     return;
                 }
             },
             Err(reason) => {
-                self.fail("discover-repeatable", format!("the second discover did not answer: {}", reason.detail()));
+                self.fail(
+                    "discover-repeatable",
+                    format!("the second discover did not answer: {}", reason.detail()),
+                );
                 return;
             }
         };
@@ -706,7 +873,10 @@ impl Runner {
                 continue;
             }
             if !seen.insert(target.id.as_str()) {
-                self.fail("target-ids", format!("discover reported target id \"{}\" twice", target.id));
+                self.fail(
+                    "target-ids",
+                    format!("discover reported target id \"{}\" twice", target.id),
+                );
             }
         }
     }
@@ -715,9 +885,15 @@ impl Runner {
     /// (`scan.rs:1115-1121`), so a non-constructible symbol in neither list makes the inventory
     /// arithmetic in `scan.json` lie.
     fn check_skipped_are_reported(&mut self, discovery: &Discovery) {
-        let reported: BTreeSet<&str> = discovery.skipped.iter().map(|s| s.target_id.as_str()).collect();
+        let reported: BTreeSet<&str> = discovery
+            .skipped
+            .iter()
+            .map(|s| s.target_id.as_str())
+            .collect();
         for target in &discovery.targets {
-            if target.materialization == Materialization::Constructible || reported.contains(target.id.as_str()) {
+            if target.materialization == Materialization::Constructible
+                || reported.contains(target.id.as_str())
+            {
                 continue;
             }
             self.fail(
@@ -740,7 +916,12 @@ impl Runner {
 
     /// `prepare-answers`, `prepare-schema`, `invoke-answers`, `invoke-schema`, `outcome-duration`,
     /// `coverage-declared`, `prepare-ms`, `self-cut`, `repeat-drift`.
-    fn drive(&mut self, client: &PluginClient, driven: &[TargetDescriptor], collect_coverage: bool) {
+    fn drive(
+        &mut self,
+        client: &PluginClient,
+        driven: &[TargetDescriptor],
+        collect_coverage: bool,
+    ) {
         let mut rng = Rng::seeded(self.check.seed);
         let mut slowest: Option<(u128, &str)> = None;
         let mut drifted: Vec<&str> = Vec::new();
@@ -777,7 +958,13 @@ impl Runner {
             );
         }
         if !drifted.is_empty() {
-            self.note("repeat-drift", format!("the same values answered a different kind on the second invoke for: {}", drifted.join(", ")));
+            self.note(
+                "repeat-drift",
+                format!(
+                    "the same values answered a different kind on the second invoke for: {}",
+                    drifted.join(", ")
+                ),
+            );
         }
         self.alive(client, "prepare and invoke");
     }
@@ -785,11 +972,24 @@ impl Runner {
     /// One `prepare`, recording `prepare-answers` and `prepare-schema`. Returns whether the target
     /// can be invoked at all: `{"ok":false,"reason":…}` is the contract's answer for a target the
     /// plugin cannot build, so it ends this target's drive and fails nothing.
-    fn prepare(&mut self, client: &PluginClient, target: &TargetDescriptor, values: &[ValueTree]) -> bool {
-        let request = PrepareReq { target_id: target.id.clone(), values: values.to_vec() };
+    fn prepare(
+        &mut self,
+        client: &PluginClient,
+        target: &TargetDescriptor,
+        values: &[ValueTree],
+    ) -> bool {
+        let request = PrepareReq {
+            target_id: target.id.clone(),
+            values: values.to_vec(),
+        };
         let asked = Instant::now();
         self.last_prepare_ms = 0;
-        let prepared = self.raw(client, Method::Prepare, to_params(&request), PREPARE_TIMEOUT);
+        let prepared = self.raw(
+            client,
+            Method::Prepare,
+            to_params(&request),
+            PREPARE_TIMEOUT,
+        );
         self.last_prepare_ms = asked.elapsed().as_millis();
         let mut ok = false;
         match prepared {
@@ -812,7 +1012,10 @@ impl Runner {
                     Ok(PrepareResp::Skip { .. }) => {}
                     Err(error) => self.fail(
                         "prepare-schema",
-                        format!("prepare response is not the shape {} describes: {error}", self.schemas.prepare_resp.path),
+                        format!(
+                            "prepare response is not the shape {} describes: {error}",
+                            self.schemas.prepare_resp.path
+                        ),
                     ),
                 }
             }
@@ -823,7 +1026,13 @@ impl Runner {
     /// Two `invoke` calls with the same values on the same connection: the first answers the
     /// contract rules, the second is what `repeat-drift` compares against, because module state a
     /// plugin leaked into the first call only shows up on the second.
-    fn invoke_twice(&mut self, client: &PluginClient, target: &TargetDescriptor, values: &[ValueTree], collect_coverage: bool) -> Vec<&'static str> {
+    fn invoke_twice(
+        &mut self,
+        client: &PluginClient,
+        target: &TargetDescriptor,
+        values: &[ValueTree],
+        collect_coverage: bool,
+    ) -> Vec<&'static str> {
         let mut kinds: Vec<&'static str> = Vec::new();
         for index in 0..2 {
             let request = InvokeReq {
@@ -848,7 +1057,9 @@ impl Runner {
                 }
                 Ok(raw) => {
                     self.check_outcome(target, &raw, collect_coverage);
-                    let Ok(outcome) = serde_json::from_value::<Outcome>(raw) else { continue };
+                    let Ok(outcome) = serde_json::from_value::<Outcome>(raw) else {
+                        continue;
+                    };
                     self.invocations += 1;
                     kinds.push(outcome.kind());
                     if outcome.duration_ms() < self.check.deadline_ms as f64 {
@@ -856,7 +1067,9 @@ impl Runner {
                     }
                     if let Some(edges) = outcome.coverage() {
                         for edge in edges {
-                            self.digests.entry(*edge).or_insert_with(|| target.name.clone());
+                            self.digests
+                                .entry(*edge)
+                                .or_insert_with(|| target.name.clone());
                         }
                     }
                 }
@@ -866,11 +1079,19 @@ impl Runner {
     }
 
     /// `invoke-schema`, `outcome-duration`, `coverage-declared`.
-    fn check_outcome(&mut self, target: &TargetDescriptor, raw: &serde_json::Value, collect_coverage: bool) {
+    fn check_outcome(
+        &mut self,
+        target: &TargetDescriptor,
+        raw: &serde_json::Value,
+        collect_coverage: bool,
+    ) {
         if let Some(detail) = self.schemas.outcome.mismatch("outcome", raw) {
             self.fail("invoke-schema", detail);
         }
-        let kind = raw.get("kind").and_then(|kind| kind.as_str()).unwrap_or("?");
+        let kind = raw
+            .get("kind")
+            .and_then(|kind| kind.as_str())
+            .unwrap_or("?");
         match raw.get("durationMs") {
             Some(serde_json::Value::Number(ms)) if ms.as_f64().is_some_and(|v| v >= 0.0) => {}
             Some(value) => self.fail(
@@ -899,12 +1120,19 @@ impl Runner {
             self.skip(3);
             return;
         }
-        let raw = match client.request::<serde_json::Value>(Method::CoverageMap, None, COVERAGE_TIMEOUT) {
+        let raw = match client.request::<serde_json::Value>(
+            Method::CoverageMap,
+            None,
+            COVERAGE_TIMEOUT,
+        ) {
             Ok(raw) => raw,
             Err(reason) => {
                 self.fail(
                     "coverage-map-offered",
-                    format!("the handshake declares \"coverage\" but coverageMap did not answer: {}", reason.detail()),
+                    format!(
+                        "the handshake declares \"coverage\" but coverageMap did not answer: {}",
+                        reason.detail()
+                    ),
                 );
                 self.skip(2);
                 return;
@@ -916,7 +1144,10 @@ impl Runner {
         let map = match serde_json::from_value::<CoverageMap>(raw) {
             Ok(map) => map,
             Err(error) => {
-                self.fail("coverage-map-schema", format!("coverageMap answered something unreadable: {error}"));
+                self.fail(
+                    "coverage-map-schema",
+                    format!("coverageMap answered something unreadable: {error}"),
+                );
                 self.skip(1);
                 return;
             }
@@ -934,7 +1165,9 @@ impl Runner {
         if let Some((edge, name)) = self.digests.iter().find(|(edge, _)| !named.contains(edge)) {
             self.fail(
                 "coverage-edges-known",
-                format!("invoke reported edge {edge} for \"{name}\", which coverageMap does not name"),
+                format!(
+                    "invoke reported edge {edge} for \"{name}\", which coverageMap does not name"
+                ),
             );
         }
         self.alive(client, "coverageMap");
@@ -952,19 +1185,30 @@ impl Runner {
         let request = MinimizeReq {
             target_id: "afz:t:0001".to_string(),
             values: vec![ValueTree::number(1.0), ValueTree::string("autofuzz")],
-            fault: FaultSignature { class: "TypeError".to_string(), message: "check-harness".to_string(), frames: Vec::new() },
+            fault: FaultSignature {
+                class: "TypeError".to_string(),
+                message: "check-harness".to_string(),
+                frames: Vec::new(),
+            },
             budget_ms: self.check.deadline_ms,
         };
         let timeout = Duration::from_millis(self.check.deadline_ms) + MINIMIZE_SLACK;
         match self.raw(client, Method::Minimize, to_params(&request), timeout) {
             Ok(raw) => {
-                if let Some(detail) = self.schemas.minimize_resp.mismatch("minimize response", &raw) {
+                if let Some(detail) = self
+                    .schemas
+                    .minimize_resp
+                    .mismatch("minimize response", &raw)
+                {
                     self.fail("minimize-schema", detail);
                 }
             }
             Err(reason) => self.fail(
                 "minimize-schema",
-                format!("the handshake declares \"minimize\" but minimize did not answer: {}", reason.detail()),
+                format!(
+                    "the handshake declares \"minimize\" but minimize did not answer: {}",
+                    reason.detail()
+                ),
             ),
         }
         self.alive(client, "minimize");
@@ -976,7 +1220,12 @@ impl Runner {
     /// artifact a triager runs. Unlike `minimize`, which can shrink any values, rendering
     /// needs a real target: the probe names a discovered one, and a plugin that rendered
     /// honestly could not name a file for a target it never saw.
-    fn reproducer(&mut self, client: &PluginClient, handshake: &Handshake, target: Option<&TargetDescriptor>) {
+    fn reproducer(
+        &mut self,
+        client: &PluginClient,
+        handshake: &Handshake,
+        target: Option<&TargetDescriptor>,
+    ) {
         if !handshake.capabilities.contains(&Capability::Reproducer) {
             self.skip(1);
             return;
@@ -992,13 +1241,20 @@ impl Runner {
         let timeout = Duration::from_millis(self.check.deadline_ms) + MINIMIZE_SLACK;
         match self.raw(client, Method::Reproducer, to_params(&request), timeout) {
             Ok(raw) => {
-                if let Some(detail) = self.schemas.reproducer_resp.mismatch("reproducer response", &raw) {
+                if let Some(detail) = self
+                    .schemas
+                    .reproducer_resp
+                    .mismatch("reproducer response", &raw)
+                {
                     self.fail("reproducer-schema", detail);
                 }
             }
             Err(reason) => self.fail(
                 "reproducer-schema",
-                format!("the handshake declares \"reproducer\" but reproducer did not answer: {}", reason.detail()),
+                format!(
+                    "the handshake declares \"reproducer\" but reproducer did not answer: {}",
+                    reason.detail()
+                ),
             ),
         }
         self.alive(client, "reproducer");
@@ -1018,7 +1274,10 @@ impl Runner {
                 if let Some(detail) = self.schemas.ready_resp.mismatch("ready response", &raw) {
                     self.fail("readiness", detail);
                 } else if raw.get("ready").and_then(|v| v.as_bool()) == Some(false) {
-                    let detail = raw.get("detail").and_then(|v| v.as_str()).unwrap_or("the harness gave no reason");
+                    let detail = raw
+                        .get("detail")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("the harness gave no reason");
                     self.fail(
                         "readiness",
                         format!("the suite started the service and the plugin still answered not ready: {detail}"),
@@ -1027,7 +1286,10 @@ impl Runner {
             }
             Err(reason) => self.fail(
                 "readiness",
-                format!("the handshake declares \"readiness\" but ready did not answer: {}", reason.detail()),
+                format!(
+                    "the handshake declares \"readiness\" but ready did not answer: {}",
+                    reason.detail()
+                ),
             ),
         }
         self.alive(client, "ready");
@@ -1042,38 +1304,68 @@ impl Runner {
         let client = match PluginClient::spawn(&self.check.launch) {
             Ok(client) => client,
             Err(reason) => {
-                self.fail("connection-ready", format!("a second plugin process could not be started: {}", reason.detail()));
+                self.fail(
+                    "connection-ready",
+                    format!(
+                        "a second plugin process could not be started: {}",
+                        reason.detail()
+                    ),
+                );
                 return;
             }
         };
-        let raw = match self.raw(&client, Method::Discover, to_params(&request), DISCOVERY_TIMEOUT) {
+        let raw = match self.raw(
+            &client,
+            Method::Discover,
+            to_params(&request),
+            DISCOVERY_TIMEOUT,
+        ) {
             Ok(raw) => raw,
             Err(reason) => {
-                self.fail("discover-ids-stable", format!("a second plugin process never answered discover: {}", reason.detail()));
+                self.fail(
+                    "discover-ids-stable",
+                    format!(
+                        "a second plugin process never answered discover: {}",
+                        reason.detail()
+                    ),
+                );
                 self.alive(&client, "discover on the second process");
                 return;
             }
         };
         match serde_json::from_value::<Discovery>(raw) {
             Ok(second) => {
-                let first: BTreeSet<&str> = discovery.targets.iter().map(|t| t.id.as_str()).collect();
+                let first: BTreeSet<&str> =
+                    discovery.targets.iter().map(|t| t.id.as_str()).collect();
                 let now: BTreeSet<&str> = second.targets.iter().map(|t| t.id.as_str()).collect();
                 if first != now {
-                    self.fail("discover-ids-stable", "a second plugin process discovered a different target id set");
+                    self.fail(
+                        "discover-ids-stable",
+                        "a second plugin process discovered a different target id set",
+                    );
                 }
             }
-            Err(error) => self.fail("discover-ids-stable", format!("a second plugin process answered discover unreadably: {error}")),
+            Err(error) => self.fail(
+                "discover-ids-stable",
+                format!("a second plugin process answered discover unreadably: {error}"),
+            ),
         }
         self.alive(&client, "discover on the second process");
 
         let Some(target) = driven.first() else { return };
         let mut rng = Rng::seeded(self.check.seed);
         let values = generate_arguments(&target.parameters, &mut rng);
-        let prepare = PrepareReq { target_id: target.id.clone(), values: values.clone() };
+        let prepare = PrepareReq {
+            target_id: target.id.clone(),
+            values: values.clone(),
+        };
         if let Err(reason) = client.prepare(&prepare, PREPARE_TIMEOUT) {
             self.fail(
                 "connection-ready",
-                format!("a connection that only received discover could not prepare: {}", reason.detail()),
+                format!(
+                    "a connection that only received discover could not prepare: {}",
+                    reason.detail()
+                ),
             );
             self.alive(&client, "prepare on the second process");
             return;
@@ -1089,7 +1381,10 @@ impl Runner {
         if let Err(reason) = client.invoke(&invoke, timeout) {
             self.fail(
                 "connection-ready",
-                format!("a connection that only received discover could not invoke: {}", reason.detail()),
+                format!(
+                    "a connection that only received discover could not invoke: {}",
+                    reason.detail()
+                ),
             );
         }
         self.alive(&client, "invoke on the second process");
@@ -1102,13 +1397,18 @@ impl Runner {
         let mut connection = match Raw::open(&self.check.launch) {
             Ok(connection) => connection,
             Err(detail) => {
-                self.fail("unknown-method-id", format!("the framing probe could not start the plugin: {detail}"));
+                self.fail(
+                    "unknown-method-id",
+                    format!("the framing probe could not start the plugin: {detail}"),
+                );
                 self.skip(1);
                 return;
             }
         };
 
-        let unknown = format!("{{\"jsonrpc\":\"2.0\",\"id\":{PROBE_ID},\"method\":\"afz/does-not-exist\"}}\n");
+        let unknown = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":{PROBE_ID},\"method\":\"afz/does-not-exist\"}}\n"
+        );
         match connection.ask(&unknown, PROBE_ID) {
             None => self.fail(
                 "unknown-method-id",
@@ -1152,7 +1452,11 @@ impl Runner {
                 }
             }
         }
-        if connection.ask("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"handshake\"}\n", 1)
+        if connection
+            .ask(
+                "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"handshake\"}\n",
+                1,
+            )
             .is_none()
         {
             self.fail(
@@ -1165,14 +1469,34 @@ impl Runner {
     /// The nonce echo: drive the manifest's probe target once and require the nonce back.
     /// A missing probe symbol is a manifest lie; a probe that answers without the nonce is a
     /// plugin that never reached the service.
-    fn lifecycle_probe(&mut self, client: &PluginClient, discovery: &Discovery, spec: &template::Lifecycle) {
-        let Some(target) = discovery.targets.iter().find(|target| target.name == spec.probe) else {
-            self.fail("lifecycle-nonce", format!("the manifest names \"{}\" as the nonce probe and discovery did not list it", spec.probe));
+    fn lifecycle_probe(
+        &mut self,
+        client: &PluginClient,
+        discovery: &Discovery,
+        spec: &template::Lifecycle,
+    ) {
+        let Some(target) = discovery
+            .targets
+            .iter()
+            .find(|target| target.name == spec.probe)
+        else {
+            self.fail(
+                "lifecycle-nonce",
+                format!(
+                    "the manifest names \"{}\" as the nonce probe and discovery did not list it",
+                    spec.probe
+                ),
+            );
             return;
         };
-        let outcome = self.drive_template_call(client, &target.id, &[], false).map_err(|reason| reason.detail()).and_then(outcome_of);
+        let outcome = self
+            .drive_template_call(client, &target.id, &[], false)
+            .map_err(|reason| reason.detail())
+            .and_then(outcome_of);
         let echoed = match &outcome {
-            Ok(Outcome::Ok(ok)) => ok.value.as_ref().is_some_and(|value| serde_json::to_string(value).is_ok_and(|text| text.contains(&spec.nonce))),
+            Ok(Outcome::Ok(ok)) => ok.value.as_ref().is_some_and(|value| {
+                serde_json::to_string(value).is_ok_and(|text| text.contains(&spec.nonce))
+            }),
             _ => false,
         };
         if !echoed {
@@ -1187,7 +1511,13 @@ impl Runner {
     /// Template mode: judge each property of the embedded template against the plugin's own
     /// rendered fixture. The emitter only named symbols; every verdict here comes from what the
     /// plugin answered over the protocol, so a fixture that lies about what it realizes fails.
-    fn template_pass(&mut self, client: &PluginClient, handshake: &Handshake, discovery: &Discovery, manifest: &template::Manifest) {
+    fn template_pass(
+        &mut self,
+        client: &PluginClient,
+        handshake: &Handshake,
+        discovery: &Discovery,
+        manifest: &template::Manifest,
+    ) {
         let mut results = Vec::new();
         for spec in template::template_v1().properties {
             // `load_manifest` enforces completeness; a hand-built `Manifest` might not. A
@@ -1197,7 +1527,11 @@ impl Runner {
                 None => {
                     let detail = format!("the manifest does not account for \"{}\"", spec.id);
                     self.fail(template_rule(&spec.id), detail.clone());
-                    results.push(template::PropertyResult { id: spec.id, verdict: template::Verdict::Fail, detail });
+                    results.push(template::PropertyResult {
+                        id: spec.id,
+                        verdict: template::Verdict::Fail,
+                        detail,
+                    });
                     continue;
                 }
             };
@@ -1212,20 +1546,39 @@ impl Runner {
                     }
                 }
             };
-            results.push(template::PropertyResult { id: spec.id, verdict, detail });
+            results.push(template::PropertyResult {
+                id: spec.id,
+                verdict,
+                detail,
+            });
         }
-        self.template = Some(template::TemplateReport { version: manifest.template_version, properties: results });
+        self.template = Some(template::TemplateReport {
+            version: manifest.template_version,
+            properties: results,
+        });
     }
 
     /// One property's verdict, in the template's order. `Err` is the message the report shows.
-    fn judge_property(&mut self, client: &PluginClient, handshake: &Handshake, discovery: &Discovery, id: &str, entry: &template::ManifestProperty) -> Result<String, String> {
+    fn judge_property(
+        &mut self,
+        client: &PluginClient,
+        handshake: &Handshake,
+        discovery: &Discovery,
+        id: &str,
+        entry: &template::ManifestProperty,
+    ) -> Result<String, String> {
         let symbol = entry.symbol.clone().unwrap_or_default();
-        let named = || format!("the manifest names \"{symbol}\" for {id}, and discovery did not list it as a fuzzable target");
+        let named = || {
+            format!("the manifest names \"{symbol}\" for {id}, and discovery did not list it as a fuzzable target")
+        };
         let input = entry.input.clone().unwrap_or_default();
         match id {
             "crash-unguarded" => {
                 let target = self.named_target(discovery, &symbol).ok_or_else(named)?;
-                let outcome = self.drive_template_call(client, &target.id, &input, false).map_err(|reason| reason.detail()).and_then(outcome_of)?;
+                let outcome = self
+                    .drive_template_call(client, &target.id, &input, false)
+                    .map_err(|reason| reason.detail())
+                    .and_then(outcome_of)?;
                 let Outcome::Failed(failed) = &outcome else {
                     return Err(format!("\"{symbol}\" answered {} where the template expects failed: the crash fixture did not crash", outcome.kind()));
                 };
@@ -1239,7 +1592,10 @@ impl Runner {
             }
             "guard-refusal" => {
                 let target = self.named_target(discovery, &symbol).ok_or_else(named)?;
-                let outcome = self.drive_template_call(client, &target.id, &input, false).map_err(|reason| reason.detail()).and_then(outcome_of)?;
+                let outcome = self
+                    .drive_template_call(client, &target.id, &input, false)
+                    .map_err(|reason| reason.detail())
+                    .and_then(outcome_of)?;
                 let Outcome::Rejected(rejected) = &outcome else {
                     return Err(format!("\"{symbol}\" answered {} where the template expects rejected: the guard did not refuse the out-of-range input", outcome.kind()));
                 };
@@ -1248,19 +1604,43 @@ impl Runner {
                 }
                 Ok(format!("rejected via {}", rejected.via))
             }
-            "private-symbol" => self.check_skipped_reason(discovery, &symbol, SkipReason::NotPublic, "a private symbol must never be listed as fuzzable"),
-            "unrepresentable-symbol" => self.check_skipped_reason(discovery, &symbol, SkipReason::UnsupportedSignature, "the unrepresentable signature must be reported, not fuzzed blind"),
+            "private-symbol" => self.check_skipped_reason(
+                discovery,
+                &symbol,
+                SkipReason::NotPublic,
+                "a private symbol must never be listed as fuzzable",
+            ),
+            "unrepresentable-symbol" => self.check_skipped_reason(
+                discovery,
+                &symbol,
+                SkipReason::UnsupportedSignature,
+                "the unrepresentable signature must be reported, not fuzzed blind",
+            ),
             "unconstructible-receiver" => {
-                self.check_skipped_reason(discovery, &symbol, SkipReason::UnconstructibleParameter, "the unconstructible receiver must be reported, not fuzzed blind")?;
-                let skipped = discovery.skipped.iter().find(|s| s.name == symbol).expect("check_skipped_reason found it");
+                self.check_skipped_reason(
+                    discovery,
+                    &symbol,
+                    SkipReason::UnconstructibleParameter,
+                    "the unconstructible receiver must be reported, not fuzzed blind",
+                )?;
+                let skipped = discovery
+                    .skipped
+                    .iter()
+                    .find(|s| s.name == symbol)
+                    .expect("check_skipped_reason found it");
                 let want = entry.blocked_by_type.clone().unwrap_or_default();
                 let Some(blocked) = skipped.blocked_by.as_ref() else {
                     return Err(format!("\"{symbol}\" was skipped as unconstructible-parameter with no blockedBy: the task board needs the blocking type's name"));
                 };
                 if blocked.type_ != want {
-                    return Err(format!("\"{symbol}\" is blocked by type \"{}\", but the manifest names \"{want}\"", blocked.type_));
+                    return Err(format!(
+                        "\"{symbol}\" is blocked by type \"{}\", but the manifest names \"{want}\"",
+                        blocked.type_
+                    ));
                 }
-                Ok(format!("skipped unconstructible-parameter, blocked by {want}"))
+                Ok(format!(
+                    "skipped unconstructible-parameter, blocked by {want}"
+                ))
             }
             "method-receiver" => {
                 let target = self.named_target(discovery, &symbol).ok_or_else(named)?;
@@ -1278,20 +1658,41 @@ impl Runner {
                 let Some(inputs) = entry.inputs.as_ref() else {
                     return Err(format!("the manifest realizes coverage-digest-live without two inputs for \"{symbol}\""));
                 };
-                let first = self.drive_template_call(client, &target.id, &inputs[0], true).map_err(|reason| reason.detail()).and_then(outcome_of)?;
-                let second = self.drive_template_call(client, &target.id, &inputs[1], true).map_err(|reason| reason.detail()).and_then(outcome_of)?;
-                let digest = |outcome: &Outcome| outcome.coverage().filter(|edges| !edges.is_empty()).map(|edges| BTreeSet::from_iter(edges.iter().copied()));
+                let first = self
+                    .drive_template_call(client, &target.id, &inputs[0], true)
+                    .map_err(|reason| reason.detail())
+                    .and_then(outcome_of)?;
+                let second = self
+                    .drive_template_call(client, &target.id, &inputs[1], true)
+                    .map_err(|reason| reason.detail())
+                    .and_then(outcome_of)?;
+                let digest = |outcome: &Outcome| {
+                    outcome
+                        .coverage()
+                        .filter(|edges| !edges.is_empty())
+                        .map(|edges| BTreeSet::from_iter(edges.iter().copied()))
+                };
                 let (Some(a), Some(b)) = (digest(&first), digest(&second)) else {
                     return Err(format!("\"{symbol}\" answered with an empty or missing coverage digest; collectCoverage was true and the handshake declares coverage (traps 1, 14)"));
                 };
                 if a == b {
                     return Err(format!("both inputs produced the same {}-edge digest for \"{symbol}\": a probe armed once, or reset before the call, cannot tell two inputs apart (traps 3, 14)", a.len()));
                 }
-                Ok(format!("the two inputs produced different digests ({} and {} edges)", a.len(), b.len()))
+                Ok(format!(
+                    "the two inputs produced different digests ({} and {} edges)",
+                    a.len(),
+                    b.len()
+                ))
             }
             "stdout-purity" => {
                 let target = self.named_target(discovery, &symbol).ok_or_else(named)?;
-                self.drive_template_call(client, &target.id, &input, false).map_err(|reason| format!("\"{symbol}\" could not be driven after its stdout write: {}", reason.detail()))?;
+                self.drive_template_call(client, &target.id, &input, false)
+                    .map_err(|reason| {
+                        format!(
+                            "\"{symbol}\" could not be driven after its stdout write: {}",
+                            reason.detail()
+                        )
+                    })?;
                 match self.raw(client, Method::Handshake, serde_json::Value::Null, HANDSHAKE_TIMEOUT) {
                     Err(reason) => Err(format!("the connection stopped answering after \"{symbol}\" wrote to stdout: {} (trap 9)", reason.detail())),
                     Ok(raw) => match self.schemas.handshake.mismatch("handshake", &raw) {
@@ -1305,10 +1706,26 @@ impl Runner {
                     return Err("the manifest realizes reproducer-script, but the handshake does not declare \"reproducer\"".to_string());
                 }
                 let target = self.named_target(discovery, &symbol).ok_or_else(named)?;
-                let request = ReproducerReq { target_id: target.id.clone(), values: input };
-                let raw = self.raw(client, Method::Reproducer, to_params(&request), Duration::from_millis(self.check.deadline_ms) + MINIMIZE_SLACK).map_err(|reason| format!("reproducer did not answer: {}", reason.detail()))?;
-                let extension = raw.get("extension").and_then(|value| value.as_str()).unwrap_or("");
-                let script = raw.get("script").and_then(|value| value.as_str()).unwrap_or("");
+                let request = ReproducerReq {
+                    target_id: target.id.clone(),
+                    values: input,
+                };
+                let raw = self
+                    .raw(
+                        client,
+                        Method::Reproducer,
+                        to_params(&request),
+                        Duration::from_millis(self.check.deadline_ms) + MINIMIZE_SLACK,
+                    )
+                    .map_err(|reason| format!("reproducer did not answer: {}", reason.detail()))?;
+                let extension = raw
+                    .get("extension")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
+                let script = raw
+                    .get("script")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("");
                 if script.trim().is_empty() {
                     return Err("the reproducer answered an empty script: the finding would arrive with no way to replay it".to_string());
                 }
@@ -1318,7 +1735,10 @@ impl Runner {
                 let Some(origin) = target.origin.file.as_deref() else {
                     return Err(format!("discovery gave \"{symbol}\" no origin file, so the script cannot be checked for naming the fixture"));
                 };
-                let name = std::path::Path::new(origin).file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| origin.to_string());
+                let name = std::path::Path::new(origin)
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| origin.to_string());
                 if !script.contains(&name) {
                     return Err(format!("the {} script never names the fixture file {name}: it cannot reproduce the fault it claims to replay", extension));
                 }
@@ -1341,21 +1761,38 @@ impl Runner {
                     }
                 }
             }
-            other => unreachable!("load_manifest accepts only template v1 property ids, and {other} is not one"),
+            other => unreachable!(
+                "load_manifest accepts only template v1 property ids, and {other} is not one"
+            ),
         }
     }
 
     /// The discovered target the manifest names, by discovery name.
-    fn named_target<'d>(&self, discovery: &'d Discovery, symbol: &str) -> Option<&'d TargetDescriptor> {
-        discovery.targets.iter().find(|target| target.name == symbol)
+    fn named_target<'d>(
+        &self,
+        discovery: &'d Discovery,
+        symbol: &str,
+    ) -> Option<&'d TargetDescriptor> {
+        discovery
+            .targets
+            .iter()
+            .find(|target| target.name == symbol)
     }
 
     /// A skipped entry carrying exactly the reason the template expects, or the message that
     /// says what discovery answered instead - including the silent-drop case, where the symbol
     /// appears in neither list (trap 4).
-    fn check_skipped_reason(&self, discovery: &Discovery, symbol: &str, want: SkipReason, why: &str) -> Result<String, String> {
+    fn check_skipped_reason(
+        &self,
+        discovery: &Discovery,
+        symbol: &str,
+        want: SkipReason,
+        why: &str,
+    ) -> Result<String, String> {
         if discovery.targets.iter().any(|target| target.name == symbol) {
-            return Err(format!("\"{symbol}\" was discovered as a fuzzable target; {why}"));
+            return Err(format!(
+                "\"{symbol}\" was discovered as a fuzzable target; {why}"
+            ));
         }
         match discovery.skipped.iter().find(|skipped| skipped.name == symbol) {
             Some(skipped) if skipped.reason == want => Ok(format!("skipped {}", want.as_str())),
@@ -1366,7 +1803,13 @@ impl Runner {
 
     /// One `invoke` for the template pass. These calls deliberately do not feed the rule
     /// counters: the protocol rules were answered by the main pass on the generated values.
-    fn drive_template_call(&self, client: &PluginClient, target_id: &str, values: &[ValueTree], collect_coverage: bool) -> Call<serde_json::Value> {
+    fn drive_template_call(
+        &self,
+        client: &PluginClient,
+        target_id: &str,
+        values: &[ValueTree],
+        collect_coverage: bool,
+    ) -> Call<serde_json::Value> {
         let request = InvokeReq {
             invocation_id: 0,
             target_id: target_id.to_string(),
@@ -1374,7 +1817,12 @@ impl Runner {
             deadline_ms: self.check.deadline_ms,
             collect_coverage,
         };
-        self.raw(client, Method::Invoke, to_params(&request), Duration::from_millis(self.check.deadline_ms) + KILL_GRACE)
+        self.raw(
+            client,
+            Method::Invoke,
+            to_params(&request),
+            Duration::from_millis(self.check.deadline_ms) + KILL_GRACE,
+        )
     }
 }
 
@@ -1393,13 +1841,16 @@ fn compact(frame: &serde_json::Value) -> String {
 
 /// Parse one driven document as an Outcome; the `String` is the message the template report shows.
 fn outcome_of(raw: serde_json::Value) -> Result<Outcome, String> {
-    serde_json::from_value::<Outcome>(raw).map_err(|error| format!("the plugin answered an unreadable outcome: {error}"))
+    serde_json::from_value::<Outcome>(raw)
+        .map_err(|error| format!("the plugin answered an unreadable outcome: {error}"))
 }
 
 /// The extension policy `scan.rs:valid_extension` applies before writing `repros/`: short and
 /// alphanumeric, so the artifact cannot name a path outside the directory.
 fn valid_extension(extension: &str) -> bool {
-    !extension.is_empty() && extension.len() <= 8 && extension.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    !extension.is_empty()
+        && extension.len() <= 8
+        && extension.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
 /// The template ids as `'static` rule names. `load_manifest` refuses any id outside the
@@ -1417,7 +1868,10 @@ fn template_rule(id: &str) -> &'static str {
         "reproducer-script",
         "deadline-sleep",
     ];
-    IDS.iter().copied().find(|known| *known == id).unwrap_or("template-manifest")
+    IDS.iter()
+        .copied()
+        .find(|known| *known == id)
+        .unwrap_or("template-manifest")
 }
 
 /// Serialize one request's params. Every request type here is a struct, so this never fails.
@@ -1426,7 +1880,10 @@ fn to_params(request: &impl Serialize) -> serde_json::Value {
 }
 
 fn wire_materialization(materialization: Materialization) -> String {
-    serde_json::to_value(materialization).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "?".to_string())
+    serde_json::to_value(materialization)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "?".to_string())
 }
 
 /// One plugin process driven with hand-built lines. `PluginClient` cannot send a method name it
@@ -1454,7 +1911,9 @@ impl Raw {
         if let Some(cwd) = &launch.cwd {
             cmd.current_dir(cwd);
         }
-        let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", launch.display()))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("{}: {e}", launch.display()))?;
         let stdin = child.stdin.take().expect("stdin is piped");
         let stdout = child.stdout.take().expect("stdout is piped");
         let (tx, rx) = mpsc::channel();
@@ -1479,7 +1938,11 @@ impl Raw {
                 }
             })
             .expect("spawn the framing reader");
-        Ok(Raw { child, stdin, lines: rx })
+        Ok(Raw {
+            child,
+            stdin,
+            lines: rx,
+        })
     }
 
     fn write_raw(&mut self, line: &str) {
@@ -1491,9 +1954,17 @@ impl Raw {
     /// a line that is not JSON comes back as a string value so the caller can report it.
     fn next_frame(&mut self) -> Option<serde_json::Value> {
         let until = Instant::now() + HANDSHAKE_TIMEOUT;
-        let Ok(line) = self.lines.recv_timeout(until.saturating_duration_since(Instant::now())) else { return None };
+        let Ok(line) = self
+            .lines
+            .recv_timeout(until.saturating_duration_since(Instant::now()))
+        else {
+            return None;
+        };
         let Ok(line) = line else { return None };
-        Some(serde_json::from_str::<serde_json::Value>(&line).unwrap_or(serde_json::Value::String(line)))
+        Some(
+            serde_json::from_str::<serde_json::Value>(&line)
+                .unwrap_or(serde_json::Value::String(line)),
+        )
     }
 
     /// Send one line and return the first parsed answer whose `id` matches, skipping anything else
@@ -1503,7 +1974,9 @@ impl Raw {
         let until = Instant::now() + HANDSHAKE_TIMEOUT;
         while Instant::now() < until {
             let remaining = until.saturating_duration_since(Instant::now());
-            let Ok(Ok(line)) = self.lines.recv_timeout(remaining) else { return None };
+            let Ok(Ok(line)) = self.lines.recv_timeout(remaining) else {
+                return None;
+            };
             if let Ok(answer) = serde_json::from_str::<serde_json::Value>(&line) {
                 if answer.get("id").and_then(|id| id.as_u64()) == Some(id) {
                     return Some(answer);

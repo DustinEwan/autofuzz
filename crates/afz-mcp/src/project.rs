@@ -21,7 +21,8 @@ pub struct Resolved {
 pub fn resolve(path: Option<&str>, config_path: Option<&str>) -> Result<Resolved, String> {
     // Absolute before it reaches the plugin: the plugin's working directory is the scan
     // project's, not the harness's, and a relative path would resolve against the wrong place.
-    let requested = std::path::absolute(path.unwrap_or(".")).map_err(|e| format!("cannot resolve the scan path: {e}"))?;
+    let requested = std::path::absolute(path.unwrap_or("."))
+        .map_err(|e| format!("cannot resolve the scan path: {e}"))?;
     let config_path = match config_path {
         Some(explicit) => PathBuf::from(explicit),
         None => config::discover(&requested).map_err(|e| match e {
@@ -40,11 +41,16 @@ pub fn resolve(path: Option<&str>, config_path: Option<&str>) -> Result<Resolved
         None => loaded.discovery_scope().map_err(|e| e.to_string())?.root,
     };
     let out_dir = loaded.root.join(loaded.project.output.dir.as_str());
-    Ok(Resolved { loaded, scan_root, out_dir })
+    Ok(Resolved {
+        loaded,
+        scan_root,
+        out_dir,
+    })
 }
 
 /// Whether a directory holds a readable scan result, used by `afz_findings` when it picks
 /// the newest scan under an output directory.
 pub fn has_scan_file(dir: &Path) -> bool {
-    dir.join(afz_engine::report::scanresult::SCAN_FILE).is_file()
+    dir.join(afz_engine::report::scanresult::SCAN_FILE)
+        .is_file()
 }

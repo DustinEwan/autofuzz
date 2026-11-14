@@ -73,4 +73,4 @@ found=$(command -v afz || true)
 if [ -n "$found" ] && [ "$found" != "$INSTALL_DIR/afz" ]; then
   say "$INSTALL_DIR is not early enough on PATH: \`afz\` still resolves to $found"
 fi
-say "next: afz install-harness <git url>  -- see docs/harnesses.md for the harnesses you can install"
+say "next: afz install-harness <git-url>  (for example https://github.com/DustinEwan/autofuzz-harness-js-ts.git)"

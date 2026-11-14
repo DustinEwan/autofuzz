@@ -68,9 +68,16 @@ impl Scheduler {
             return Selection::Mutate { entry_id: id };
         }
         let entries: Vec<&str> = corpus.entries().map(|e| e.id.as_str()).collect();
-        let weights: Vec<u64> = corpus.entries().map(|entry| weight(entry, invocation)).collect();
-        let Some(index) = weighted(rng, &weights) else { return Selection::Fresh };
-        Selection::Mutate { entry_id: entries[index].to_string() }
+        let weights: Vec<u64> = corpus
+            .entries()
+            .map(|entry| weight(entry, invocation))
+            .collect();
+        let Some(index) = weighted(rng, &weights) else {
+            return Selection::Fresh;
+        };
+        Selection::Mutate {
+            entry_id: entries[index].to_string(),
+        }
     }
 
     /// The entry that has waited longest past the visit window, if any. Ties break on id, so a
@@ -96,7 +103,8 @@ impl Scheduler {
 /// fatigue signal: an entry that keeps being drawn earns no waiting shares, while its idle
 /// rivals climb until they are selected.
 fn weight(entry: &crate::corpus::Entry, invocation: u64) -> u64 {
-    1 + u64::from(entry.new_edges) * YIELD_WEIGHT + invocation.saturating_sub(entry.last_used) / WAIT_STEP
+    1 + u64::from(entry.new_edges) * YIELD_WEIGHT
+        + invocation.saturating_sub(entry.last_used) / WAIT_STEP
 }
 
 /// Draw an index with the given weights. Deterministic for a seed, and `None` when every weight
@@ -119,7 +127,10 @@ fn weighted(rng: &mut Rng, weights: &[u64]) -> Option<usize> {
 /// The input the next invocation runs: a fresh value, or a mutation of a corpus entry.
 pub enum Plan {
     Fresh,
-    Mutate { entry_id: String, values: Vec<ValueTree> },
+    Mutate {
+        entry_id: String,
+        values: Vec<ValueTree>,
+    },
 }
 
 impl Selection {
@@ -129,7 +140,10 @@ impl Selection {
         match self {
             Selection::Fresh => Plan::Fresh,
             Selection::Mutate { entry_id } => match corpus.get(&entry_id) {
-                Some(entry) => Plan::Mutate { entry_id, values: entry.values.clone() },
+                Some(entry) => Plan::Mutate {
+                    entry_id,
+                    values: entry.values.clone(),
+                },
                 None => Plan::Fresh,
             },
         }
@@ -139,13 +153,18 @@ impl Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::corpus::{CoverageDigest, Corpus};
+    use crate::corpus::{Corpus, CoverageDigest};
 
     fn corpus_with(edges: &[&[u32]]) -> Corpus {
         let mut corpus = Corpus::new(100);
         for (index, set) in edges.iter().enumerate() {
             let digest: CoverageDigest = set.iter().copied().collect();
-            corpus.record("t", &[ValueTree::number(index as f64)], &digest, index as u64);
+            corpus.record(
+                "t",
+                &[ValueTree::number(index as f64)],
+                &digest,
+                index as u64,
+            );
         }
         corpus
     }
@@ -170,7 +189,10 @@ mod tests {
             .count();
         // The visit guarantee can only convert a mutation into another mutation, so the fresh
         // share sits at its configured rate.
-        assert!((800..1_300).contains(&fresh), "fresh share was {fresh} of 10000");
+        assert!(
+            (800..1_300).contains(&fresh),
+            "fresh share was {fresh} of 10000"
+        );
     }
 
     #[test]
@@ -182,12 +204,18 @@ mod tests {
         let mut visited: Vec<u64> = vec![0; corpus.len()];
         let ids: Vec<String> = corpus.entries().map(|e| e.id.clone()).collect();
         for invocation in 0..(window * 3) {
-            let Selection::Mutate { entry_id } = scheduler.pick(&corpus, &mut rng, invocation) else { continue };
+            let Selection::Mutate { entry_id } = scheduler.pick(&corpus, &mut rng, invocation)
+            else {
+                continue;
+            };
             let at = ids.iter().position(|id| *id == entry_id).unwrap();
             visited[at] += 1;
             corpus.note_use(&entry_id, invocation);
         }
-        assert!(visited.iter().all(|v| *v > 0), "an entry was never visited: {visited:?}");
+        assert!(
+            visited.iter().all(|v| *v > 0),
+            "an entry was never visited: {visited:?}"
+        );
     }
 
     #[test]
@@ -196,7 +224,12 @@ mod tests {
         let mut corpus = corpus_with(&[&[1], &[2, 3, 4, 5, 6]]);
         // The rich entry is the one with five edges. Corpus ids are content hashes, so the order
         // `entries()` yields them in is not a property a test may rely on.
-        let rich = corpus.entries().find(|e| e.edges.len() > 1).unwrap().id.clone();
+        let rich = corpus
+            .entries()
+            .find(|e| e.edges.len() > 1)
+            .unwrap()
+            .id
+            .clone();
         let mut rng = Rng::seeded(3);
         let (mut rich_draws, mut mutated) = (0, 0);
         for invocation in 0..4_000 {
@@ -212,19 +245,31 @@ mod tests {
         }
         // Weight is 1 + 5*4 against 1 + 1*4, so the rich entry should draw most of the
         // mutations; the visit guarantee only caps how far ahead of its rival it can get.
-        assert!(rich_draws * 10 > mutated * 6, "the higher-yield entry drew {rich_draws} of {mutated} mutations");
+        assert!(
+            rich_draws * 10 > mutated * 6,
+            "the higher-yield entry drew {rich_draws} of {mutated} mutations"
+        );
     }
 
     #[test]
     fn an_unvisited_entry_outranks_a_high_yield_one() {
         let mut scheduler = Scheduler::guided();
         let mut corpus = corpus_with(&[&[1, 2, 3, 4, 5], &[9]]);
-        let rich = corpus.entries().find(|e| e.edges.len() > 1).unwrap().id.clone();
+        let rich = corpus
+            .entries()
+            .find(|e| e.edges.len() > 1)
+            .unwrap()
+            .id
+            .clone();
         corpus.note_use(&rich, 10_000);
         let poor = corpus.entries().find(|e| e.id != rich).unwrap().id.clone();
         let mut rng = Rng::seeded(4);
         // Far past the window, the starved entry is promoted even against a 5-edge rival.
-        let picked = scheduler.pick(&corpus, &mut rng, 10_000 + (corpus.len() * VISIT_WINDOW) as u64);
+        let picked = scheduler.pick(
+            &corpus,
+            &mut rng,
+            10_000 + (corpus.len() * VISIT_WINDOW) as u64,
+        );
         assert_eq!(picked, Selection::Mutate { entry_id: poor });
     }
 
@@ -243,9 +288,13 @@ mod tests {
         let mut corpus = Corpus::new(4);
         let digest: CoverageDigest = [1].into_iter().collect();
         corpus.record("t", &[ValueTree::number(1.0)], &digest, 0);
-        let stale = Selection::Mutate { entry_id: "afz:c:gone".into() };
+        let stale = Selection::Mutate {
+            entry_id: "afz:c:gone".into(),
+        };
         assert!(matches!(stale.resolve(&corpus), Plan::Fresh));
-        let live = Selection::Mutate { entry_id: corpus.entries().next().unwrap().id.clone() };
+        let live = Selection::Mutate {
+            entry_id: corpus.entries().next().unwrap().id.clone(),
+        };
         assert!(matches!(live.resolve(&corpus), Plan::Mutate { values, .. } if values.len() == 1));
     }
 
@@ -257,7 +306,10 @@ mod tests {
         for _ in 0..9_000 {
             counts[weighted(&mut rng, &[1, 2, 3]).unwrap()] += 1;
         }
-        assert!(counts[0] < counts[1] && counts[1] < counts[2], "{counts:?} did not follow 1:2:3");
+        assert!(
+            counts[0] < counts[1] && counts[1] < counts[2],
+            "{counts:?} did not follow 1:2:3"
+        );
         assert_eq!(weighted(&mut rng, &[]), None);
         assert_eq!(weighted(&mut rng, &[0, 0]), None);
     }

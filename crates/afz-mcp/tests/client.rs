@@ -7,10 +7,10 @@
 //! No SDK types here on purpose. The tests must assert the wire a real harness sees, not
 //! whatever the Rust SDK happens to accept.
 
+use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use serde_json::Value;
 
 /// Start the built server with `root` as its working directory, which is what a terminal
 /// harness does. The server takes no configuration: every tool call names the directory it
@@ -31,14 +31,21 @@ pub fn spawn(root: &Path) -> Child {
 pub fn ask(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>, request: &Value) -> Value {
     let mut line = serde_json::to_string(request).expect("a request serializes");
     line.push('\n');
-    stdin.write_all(line.as_bytes()).expect("the request is written");
+    stdin
+        .write_all(line.as_bytes())
+        .expect("the request is written");
     stdin.flush().expect("the request is flushed");
     let wanted = request.get("id").cloned();
     loop {
         let mut text = String::new();
         let read = stdout.read_line(&mut text).expect("a line arrives");
-        assert_ne!(read, 0, "the server closed stdout before answering {request}");
-        let Ok(message) = serde_json::from_str::<Value>(text.trim()) else { continue };
+        assert_ne!(
+            read, 0,
+            "the server closed stdout before answering {request}"
+        );
+        let Ok(message) = serde_json::from_str::<Value>(text.trim()) else {
+            continue;
+        };
         if wanted.is_some() && message.get("id") == wanted.as_ref() {
             return message;
         }
@@ -62,18 +69,41 @@ pub fn handshake(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>) {
         }),
     );
     let answer = ask(stdin, stdout, &initialize);
-    let version = answer["result"]["protocolVersion"].as_str().expect("a negotiated protocolVersion");
+    let version = answer["result"]["protocolVersion"]
+        .as_str()
+        .expect("a negotiated protocolVersion");
     assert!(!version.is_empty(), "protocolVersion is {answer}");
     let initialized = serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
-    let line = format!("{}\n", serde_json::to_string(&initialized).expect("a notification serializes"));
-    stdin.write_all(line.as_bytes()).expect("the notification is written");
+    let line = format!(
+        "{}\n",
+        serde_json::to_string(&initialized).expect("a notification serializes")
+    );
+    stdin
+        .write_all(line.as_bytes())
+        .expect("the notification is written");
     stdin.flush().expect("the notification is flushed");
 }
 
 /// One `tools/call`, returning its `result` object. `id` is the caller's, so the test can
 /// keep the wire order straight.
-pub fn call(stdin: &mut ChildStdin, stdout: &mut BufReader<ChildStdout>, id: i64, name: &str, arguments: Value) -> Value {
-    let answer = ask(stdin, stdout, &request(id, "tools/call", serde_json::json!({"name": name, "arguments": arguments})));
-    answer.get("result").cloned().unwrap_or_else(|| panic!("tools/call {name} answered {answer}"))
+pub fn call(
+    stdin: &mut ChildStdin,
+    stdout: &mut BufReader<ChildStdout>,
+    id: i64,
+    name: &str,
+    arguments: Value,
+) -> Value {
+    let answer = ask(
+        stdin,
+        stdout,
+        &request(
+            id,
+            "tools/call",
+            serde_json::json!({"name": name, "arguments": arguments}),
+        ),
+    );
+    answer
+        .get("result")
+        .cloned()
+        .unwrap_or_else(|| panic!("tools/call {name} answered {answer}"))
 }
-

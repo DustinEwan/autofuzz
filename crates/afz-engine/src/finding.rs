@@ -39,7 +39,10 @@ pub fn identity(target_id: &str, fault: &FaultSignature) -> String {
         top.map(|f| f.file.as_str()).unwrap_or(""),
         line
     );
-    format!("{IDENTITY_PREFIX}{}", &digest_hex(&joined)[..IDENTITY_HEX * 2])
+    format!(
+        "{IDENTITY_PREFIX}{}",
+        &digest_hex(&joined)[..IDENTITY_HEX * 2]
+    )
 }
 
 /// The id a finding is written under, derived from its identity so the same bug keeps the same id
@@ -49,7 +52,10 @@ pub fn finding_id(identity: &str) -> String {
 }
 
 fn digest_hex(text: &str) -> String {
-    Sha256::digest(text.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(text.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// The identities a project has already reported, in one small file beside the scan results.
@@ -76,12 +82,22 @@ impl Seen {
     /// re-announce every finding.
     pub fn open(path: &Path) -> io::Result<Seen> {
         if !path.exists() {
-            return Ok(Seen { path: path.to_path_buf(), identities: BTreeSet::new() });
+            return Ok(Seen {
+                path: path.to_path_buf(),
+                identities: BTreeSet::new(),
+            });
         }
         let text = fs::read_to_string(path)?;
-        let file: SeenFile = serde_json::from_str(&text)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", path.display())))?;
-        Ok(Seen { path: path.to_path_buf(), identities: file.identities.into_iter().collect() })
+        let file: SeenFile = serde_json::from_str(&text).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{}: {e}", path.display()),
+            )
+        })?;
+        Ok(Seen {
+            path: path.to_path_buf(),
+            identities: file.identities.into_iter().collect(),
+        })
     }
 
     /// Whether the history holds this identity now: written by an earlier scan, or recorded by this one
@@ -116,7 +132,8 @@ impl Seen {
         };
         let temp = self.path.with_extension("json.tmp");
         let mut handle = fs::File::create(&temp)?;
-        serde_json::to_writer_pretty(&mut handle, &file).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        serde_json::to_writer_pretty(&mut handle, &file)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         handle.flush()?;
         drop(handle);
         fs::rename(&temp, &self.path)

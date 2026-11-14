@@ -27,7 +27,10 @@ fn fakeplugin_path() -> PathBuf {
             return candidate;
         }
         let Some(parent) = dir.parent() else {
-            panic!("build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})", exe.display());
+            panic!(
+                "build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})",
+                exe.display()
+            );
         };
         dir = parent;
     }
@@ -40,12 +43,25 @@ fn every_connection_the_engine_prepares_on_has_discovered() {
     // would answer the `prepare` below with an RPC error and fail the `PrepareResp::Ok` match.
     let launch = Launch::new([fakeplugin_path().display().to_string()])
         .with_env("AFZ_FAKE_SCRIPT", r#"{"requireDiscover":true}"#);
-    let discovery = DiscoverReq { root: ".".to_string(), ..Default::default() };
+    let discovery = DiscoverReq {
+        root: ".".to_string(),
+        ..Default::default()
+    };
     let (client, lost) = spawn_discovered(&launch, &discovery).expect("the fake plugin starts");
-    assert!(lost.is_none(), "the plugin answered its own inventory: {}", lost.unwrap().detail());
+    assert!(
+        lost.is_none(),
+        "the plugin answered its own inventory: {}",
+        lost.unwrap().detail()
+    );
     assert!(
         matches!(
-            client.prepare(&PrepareReq { target_id: "afz:t:0001".into(), values: vec![ValueTree::number(1.0)] }, Duration::from_secs(30)),
+            client.prepare(
+                &PrepareReq {
+                    target_id: "afz:t:0001".into(),
+                    values: vec![ValueTree::number(1.0)]
+                },
+                Duration::from_secs(30)
+            ),
             Ok(PrepareResp::Ok { .. }),
         ),
         "a connection the engine brought up for `prepare` must be able to answer `prepare`",

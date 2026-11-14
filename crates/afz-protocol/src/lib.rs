@@ -16,16 +16,18 @@ pub use methods::{
     CoverageMapResp, DiscoverReq, DiscoverResp, HandshakeResp, InvokeReq, InvokeResp, MinimizeReq,
     MinimizeResp, PrepareReq, PrepareResp, ReadyResp, ReproducerReq, ReproducerResp,
 };
-pub use outcome::{EdgeId, FailedOutcome, FaultFrame, FaultSignature, OkOutcome, Outcome, RejectedOutcome};
+pub use outcome::{
+    EdgeId, FailedOutcome, FaultFrame, FaultSignature, OkOutcome, Outcome, RejectedOutcome,
+};
 pub use rpc::{
     buffered, buffered_writer, parse_request, parse_response, read_line, write_line, ErrorObject,
     Failure, FrameError, JsonRpcVersion, Method, Request, Response, Success, INVALID_REQUEST,
     METHOD_NOT_FOUND, PARSE_ERROR, PLUGIN_ERROR,
 };
 pub use targets::{
-    Blocker, Capability, CoverageEntry, CoverageMap, Discovery, Effects, Handshake, HttpOrigin,
-    Materialization, Origin, Parameter, SkipReason, SkippedTarget, TargetClass, TargetDescriptor,
-    PROTOCOL_VERSION, SUPPORTED_VERSIONS, is_deprecated, schema_dir,
+    is_deprecated, schema_dir, Blocker, Capability, CoverageEntry, CoverageMap, Discovery, Effects,
+    Handshake, HttpOrigin, Materialization, Origin, Parameter, SkipReason, SkippedTarget,
+    TargetClass, TargetDescriptor, PROTOCOL_VERSION, SUPPORTED_VERSIONS,
 };
 pub use types::{
     CollectionKind, CompositeKind, Field, FunctionBehavior, Kind, LengthBounds, NumberBounds,

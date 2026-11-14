@@ -33,7 +33,10 @@ impl Rng {
     /// Seed from a full 64-bit value, for a stream that must not collide with another worker's
     /// 32-bit seed.
     pub fn seeded_u64(seed: u64) -> Rng {
-        Rng { inner: ChaCha8Rng::seed_from_u64(seed), seed }
+        Rng {
+            inner: ChaCha8Rng::seed_from_u64(seed),
+            seed,
+        }
     }
 
     /// The seed this stream was derived from.
@@ -143,7 +146,9 @@ impl Rng {
 /// the mixing lives here rather than in `rand` so a `rand` upgrade cannot change which stream
 /// a given `(seed, worker)` pair produces.
 fn derive(seed: u64, worker: u32) -> u64 {
-    let mut z = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(u64::from(worker).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+    let mut z = seed
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(u64::from(worker).wrapping_mul(0xBF58_476D_1CE4_E5B9));
     z ^= z >> 30;
     z = z.wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z ^= z >> 27;
@@ -168,7 +173,11 @@ mod tests {
     #[test]
     fn a_fork_is_a_pure_function_of_the_seed_and_worker() {
         let parent = Rng::seeded(0x5e3a91c4);
-        assert_ne!(parent.fork(0).next_u64(), parent.fork(1).next_u64(), "two workers share a stream");
+        assert_ne!(
+            parent.fork(0).next_u64(),
+            parent.fork(1).next_u64(),
+            "two workers share a stream"
+        );
         // Forking must not consume draws, or worker 1 would see a different stream depending on
         // how many workers were forked before it.
         let mut before = parent.clone();
@@ -177,8 +186,15 @@ mod tests {
         for worker in 0..8 {
             let _ = parent.fork(worker);
         }
-        assert_eq!(after.next_u64(), first, "a fork disturbed the parent stream");
-        assert_eq!(parent.fork(3).next_u64(), Rng::seeded(0x5e3a91c4).fork(3).next_u64());
+        assert_eq!(
+            after.next_u64(),
+            first,
+            "a fork disturbed the parent stream"
+        );
+        assert_eq!(
+            parent.fork(3).next_u64(),
+            Rng::seeded(0x5e3a91c4).fork(3).next_u64()
+        );
     }
 
     #[test]
@@ -217,7 +233,10 @@ mod tests {
             }
             assert!((0..=100).contains(&rng.int_in(0, 100)));
         }
-        assert!(negative > 100 && positive > 100, "full-span draws: {negative} negative, {positive} positive");
+        assert!(
+            negative > 100 && positive > 100,
+            "full-span draws: {negative} negative, {positive} positive"
+        );
         assert_eq!(rng.int_in(i64::MAX, i64::MIN), i64::MAX);
     }
 

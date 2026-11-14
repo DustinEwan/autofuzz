@@ -22,7 +22,10 @@ pub fn fakeplugin_path() -> PathBuf {
             return candidate;
         }
         let Some(parent) = dir.parent() else {
-            panic!("build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})", exe.display());
+            panic!(
+                "build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})",
+                exe.display()
+            );
         };
         dir = parent;
     }

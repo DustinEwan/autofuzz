@@ -44,11 +44,16 @@ impl FaultMatch {
     pub fn from_outcome(outcome: &Outcome) -> Option<FaultMatch> {
         let fault = outcome.fault()?;
         let frame = fault.top_frame().map(|f| (f.file.clone(), f.line));
-        Some(FaultMatch { class: fault.class.clone(), frame })
+        Some(FaultMatch {
+            class: fault.class.clone(),
+            frame,
+        })
     }
 
     pub fn reproduces(&self, outcome: &Outcome) -> bool {
-        let Some(fault) = outcome.fault() else { return false };
+        let Some(fault) = outcome.fault() else {
+            return false;
+        };
         if fault.class != self.class {
             return false;
         }
@@ -123,7 +128,10 @@ fn runs_of(len: usize) -> Vec<(usize, usize)> {
 /// How many parts a node offers the search. Zero means there is nothing to drop.
 fn part_count(node: &ValueNode) -> usize {
     match node {
-        ValueNode::Array { items } | ValueNode::Set { items } | ValueNode::Tuple { items } | ValueNode::Stream { items, .. } => items.len(),
+        ValueNode::Array { items }
+        | ValueNode::Set { items }
+        | ValueNode::Tuple { items }
+        | ValueNode::Stream { items, .. } => items.len(),
         ValueNode::Map { entries } => entries.len(),
         ValueNode::Object { fields } => fields.len(),
         ValueNode::String { value } => ranges(value).len(),
@@ -136,21 +144,46 @@ fn part_count(node: &ValueNode) -> usize {
 /// so a caller that drops several chunks of one node still holds valid indices.
 fn keep(node: &ValueNode, parts: &[usize]) -> Option<ValueNode> {
     let trees = |src: &[ValueTree]| -> Vec<ValueTree> {
-        src.iter().enumerate().filter(|(at, _)| parts.contains(at)).map(|(_, value)| value.clone()).collect()
+        src.iter()
+            .enumerate()
+            .filter(|(at, _)| parts.contains(at))
+            .map(|(_, value)| value.clone())
+            .collect()
     };
     let pairs = |src: &[(ValueTree, ValueTree)]| -> Vec<(ValueTree, ValueTree)> {
-        src.iter().enumerate().filter(|(at, _)| parts.contains(at)).map(|(_, entry)| entry.clone()).collect()
+        src.iter()
+            .enumerate()
+            .filter(|(at, _)| parts.contains(at))
+            .map(|(_, entry)| entry.clone())
+            .collect()
     };
     let named = |src: &[(String, ValueTree)]| -> Vec<(String, ValueTree)> {
-        src.iter().enumerate().filter(|(at, _)| parts.contains(at)).map(|(_, field)| field.clone()).collect()
+        src.iter()
+            .enumerate()
+            .filter(|(at, _)| parts.contains(at))
+            .map(|(_, field)| field.clone())
+            .collect()
     };
     match node {
-        ValueNode::Array { items } => Some(ValueNode::Array { items: trees(items) }),
-        ValueNode::Set { items } => Some(ValueNode::Set { items: trees(items) }),
-        ValueNode::Tuple { items } => Some(ValueNode::Tuple { items: trees(items) }),
-        ValueNode::Stream { iterable, items } => Some(ValueNode::Stream { iterable: *iterable, items: trees(items) }),
-        ValueNode::Map { entries } => Some(ValueNode::Map { entries: pairs(entries) }),
-        ValueNode::Object { fields } => Some(ValueNode::Object { fields: named(fields) }),
+        ValueNode::Array { items } => Some(ValueNode::Array {
+            items: trees(items),
+        }),
+        ValueNode::Set { items } => Some(ValueNode::Set {
+            items: trees(items),
+        }),
+        ValueNode::Tuple { items } => Some(ValueNode::Tuple {
+            items: trees(items),
+        }),
+        ValueNode::Stream { iterable, items } => Some(ValueNode::Stream {
+            iterable: *iterable,
+            items: trees(items),
+        }),
+        ValueNode::Map { entries } => Some(ValueNode::Map {
+            entries: pairs(entries),
+        }),
+        ValueNode::Object { fields } => Some(ValueNode::Object {
+            fields: named(fields),
+        }),
         ValueNode::String { value } => {
             let chars: Vec<char> = value.chars().collect();
             let lines = ranges(value);
@@ -179,7 +212,9 @@ fn holes(base: &[ValueTree]) -> Vec<Hole> {
     let mut out = Vec::new();
     for (index, tree) in base.iter().enumerate() {
         for path in tree.paths() {
-            let Some(node) = path.get(tree).map(|node| &node.node) else { continue };
+            let Some(node) = path.get(tree).map(|node| &node.node) else {
+                continue;
+            };
             if part_count(node) > 0 {
                 out.push(Hole { index, path });
             }
@@ -189,9 +224,19 @@ fn holes(base: &[ValueTree]) -> Vec<Hole> {
 }
 
 /// `base` with the node at the hole's path rebuilt from `original`, keeping only `parts`.
-fn with_kept(original: &ValueNode, base: &[ValueTree], hole: &Hole, parts: &[usize]) -> Option<Vec<ValueTree>> {
+fn with_kept(
+    original: &ValueNode,
+    base: &[ValueTree],
+    hole: &Hole,
+    parts: &[usize],
+) -> Option<Vec<ValueTree>> {
     let mut trial = base.to_vec();
-    hole.path.replace(&mut trial[hole.index], ValueTree::new(keep(original, parts)?)).then_some(trial)
+    hole.path
+        .replace(
+            &mut trial[hole.index],
+            ValueTree::new(keep(original, parts)?),
+        )
+        .then_some(trial)
 }
 
 /// The parts in `n` near-equal chunks.
@@ -214,7 +259,9 @@ fn scalar_ladder(node: &ValueNode) -> Vec<ValueNode> {
             }
             out
         }
-        ValueNode::BigInt { value } if value != "0" => vec![ValueNode::BigInt { value: "0".to_string() }],
+        ValueNode::BigInt { value } if value != "0" => vec![ValueNode::BigInt {
+            value: "0".to_string(),
+        }],
         ValueNode::Literal { value } => [
             serde_json::Value::Null,
             serde_json::Value::Bool(false),
@@ -227,7 +274,10 @@ fn scalar_ladder(node: &ValueNode) -> Vec<ValueNode> {
         .collect(),
         _ => Vec::new(),
     };
-    candidates.into_iter().filter(|candidate| candidate != node).collect()
+    candidates
+        .into_iter()
+        .filter(|candidate| candidate != node)
+        .collect()
 }
 
 /// The candidate plans of one round, answered in chunks under the attempt and time bounds.
@@ -261,8 +311,15 @@ where
             let chunk = &plans[base..end];
             self.attempts += chunk.len() as u64;
             let outcomes = (self.run)(chunk);
-            debug_assert_eq!(outcomes.len(), chunk.len(), "the runner answers every candidate it was given");
-            if let Some(offset) = outcomes.iter().position(|outcome| target.reproduces(outcome)) {
+            debug_assert_eq!(
+                outcomes.len(),
+                chunk.len(),
+                "the runner answers every candidate it was given"
+            );
+            if let Some(offset) = outcomes
+                .iter()
+                .position(|outcome| target.reproduces(outcome))
+            {
                 return Some(base + offset);
             }
             base = end;
@@ -279,23 +336,44 @@ where
 /// `max_attempts` and `budget` bound the work: a scan should not spend more shrinking one
 /// finding than it spent finding it. The time bound is the one that bites when the fault is a
 /// deadline, because an attempt that reproduces it costs the whole deadline every time.
-pub fn minimize<F>(values: &[ValueTree], max_attempts: u64, budget: Duration, width: usize, run: &mut F) -> Minimized
+pub fn minimize<F>(
+    values: &[ValueTree],
+    max_attempts: u64,
+    budget: Duration,
+    width: usize,
+    run: &mut F,
+) -> Minimized
 where
     F: FnMut(&[Vec<ValueTree>]) -> Vec<Outcome>,
 {
     let bytes_before = total_bytes(values);
     let mut current = values.to_vec();
-    let mut search = Search { run, width: width.max(1), max_attempts, budget, started: Instant::now(), attempts: 0 };
+    let mut search = Search {
+        run,
+        width: width.max(1),
+        max_attempts,
+        budget,
+        started: Instant::now(),
+        attempts: 0,
+    };
 
     let Some(target) = (search.attempts < max_attempts)
         .then(|| {
             search.attempts += 1;
-            (search.run)(&[current.clone()]).first().and_then(FaultMatch::from_outcome)
+            (search.run)(&[current.clone()])
+                .first()
+                .and_then(FaultMatch::from_outcome)
         })
         .flatten()
     else {
         let bytes_after = total_bytes(&current);
-        return Minimized { values: current, attempts: search.attempts, bytes_before, bytes_after, reproduces: false };
+        return Minimized {
+            values: current,
+            attempts: search.attempts,
+            bytes_before,
+            bytes_after,
+            reproduces: false,
+        };
     };
 
     // One round is every smaller input that can be built from the current tree without waiting for
@@ -315,7 +393,11 @@ where
             break;
         }
         let found = holes(&current);
-        let widest = found.iter().map(|hole| parts_at(&current, hole)).max().unwrap_or(0);
+        let widest = found
+            .iter()
+            .map(|hole| parts_at(&current, hole))
+            .max()
+            .unwrap_or(0);
         // A slot that is already `undefined` offers no candidate: dropping that argument is the
         // input it already is, and a candidate identical to its base is accepted by every fault, so
         // the search would re-accept it every round until the attempt bound ended the run. One such
@@ -329,7 +411,13 @@ where
             })
             .collect();
         for hole in &found {
-            let Some(original) = hole.path.get(&current[hole.index]).map(|node| node.node.clone()) else { continue };
+            let Some(original) = hole
+                .path
+                .get(&current[hole.index])
+                .map(|node| node.node.clone())
+            else {
+                continue;
+            };
             let total = part_count(&original);
             if total == 0 {
                 continue;
@@ -347,7 +435,9 @@ where
         }
         for (index, tree) in current.iter().enumerate() {
             for path in tree.paths() {
-                let Some(node) = path.get(tree).map(|node| &node.node) else { continue };
+                let Some(node) = path.get(tree).map(|node| &node.node) else {
+                    continue;
+                };
                 for candidate in scalar_ladder(node) {
                     let mut trial = current.clone();
                     if path.replace(&mut trial[index], ValueTree::new(candidate)) {
@@ -376,7 +466,13 @@ where
         }
     }
 
-    Minimized { bytes_after: total_bytes(&current), values: current, attempts: search.attempts, bytes_before, reproduces: true }
+    Minimized {
+        bytes_after: total_bytes(&current),
+        values: current,
+        attempts: search.attempts,
+        bytes_before,
+        reproduces: true,
+    }
 }
 
 /// The chunk count a round starts at, and what it returns to after a round is accepted. A round is
@@ -387,5 +483,8 @@ const MIN_CHUNKS: usize = 2;
 
 /// How many parts the node at `hole` offers in `base`.
 fn parts_at(base: &[ValueTree], hole: &Hole) -> usize {
-    hole.path.get(&base[hole.index]).map(|node| part_count(&node.node)).unwrap_or(0)
+    hole.path
+        .get(&base[hole.index])
+        .map(|node| part_count(&node.node))
+        .unwrap_or(0)
 }

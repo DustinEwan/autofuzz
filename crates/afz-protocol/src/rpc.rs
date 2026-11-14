@@ -84,7 +84,12 @@ impl Request {
 
     /// A method with no parameters.
     pub fn empty(id: u64, method: Method) -> Self {
-        Request { jsonrpc: JsonRpcVersion::V2, id, method: method.name().to_string(), params: None }
+        Request {
+            jsonrpc: JsonRpcVersion::V2,
+            id,
+            method: method.name().to_string(),
+            params: None,
+        }
     }
 }
 
@@ -145,7 +150,11 @@ impl Response {
         Response::Failure(Failure {
             jsonrpc: JsonRpcVersion::V2,
             id,
-            error: ErrorObject { code, message: message.into(), data: None },
+            error: ErrorObject {
+                code,
+                message: message.into(),
+                data: None,
+            },
         })
     }
 
@@ -182,7 +191,10 @@ pub fn write_line(writer: &mut impl Write, msg: &impl Serialize) -> Result<(), F
 
 /// Read one message. `Ok(None)` means the peer closed the pipe, which the engine treats as
 /// a lost plugin rather than an error.
-pub fn read_line(reader: &mut impl BufRead, buf: &mut String) -> Result<Option<String>, FrameError> {
+pub fn read_line(
+    reader: &mut impl BufRead,
+    buf: &mut String,
+) -> Result<Option<String>, FrameError> {
     buf.clear();
     let n = reader.read_line(buf)?;
     if n == 0 {

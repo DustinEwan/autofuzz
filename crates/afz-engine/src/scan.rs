@@ -14,13 +14,13 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use afz_protocol::{
-    Capability, CoverageMap, DiscoverReq, FaultSignature, Handshake, InvokeReq, Materialization, Outcome, PrepareReq,
-    ReproducerReq, TargetDescriptor, ValueTree,
+    Capability, CoverageMap, DiscoverReq, FaultSignature, Handshake, InvokeReq, Materialization,
+    Outcome, PrepareReq, ReproducerReq, TargetDescriptor, ValueTree,
 };
 
 use crate::config::{ConfigError, LoadedConfig, Strategy};
@@ -35,7 +35,7 @@ use crate::report::scanresult::*;
 use crate::rng::Rng;
 use crate::rpc::client::{spawn_discovered, Launch, LostReason, PluginClient};
 use crate::schedule::{Plan, Scheduler};
-use crate::supervise::{Completed, DISABLE_AFTER, DISCOVERY_TIMEOUT, Job, RunReport, Supervisor};
+use crate::supervise::{Completed, Job, RunReport, Supervisor, DISABLE_AFTER, DISCOVERY_TIMEOUT};
 
 /// Invocations between coverage samples. The verification list samples at this spacing.
 pub const SAMPLE_EVERY: u64 = 5_000;
@@ -60,7 +60,9 @@ const SHRINK_GRACE: Duration = Duration::from_secs(30);
 /// How much wall clock one minimization may use: the smaller of the per-finding allowance and what
 /// is left of the scan's budget plus the write grace. Zero means the finding is reported unshrunk.
 fn shrink_budget(elapsed: Duration, wall_clock: Duration) -> Duration {
-    (wall_clock + SHRINK_GRACE).saturating_sub(elapsed).min(MINIMIZE_BUDGET)
+    (wall_clock + SHRINK_GRACE)
+        .saturating_sub(elapsed)
+        .min(MINIMIZE_BUDGET)
 }
 
 /// How long one minimization call may take over the wire. The plugin enforces the invocation
@@ -82,7 +84,9 @@ const MAX_REPRO_SCRIPT_BYTES: usize = 1 << 20;
 /// Whether a plugin-named extension is a safe file suffix: short and alphanumeric, so the
 /// artifact cannot name a path outside `repros/`.
 fn valid_extension(extension: &str) -> bool {
-    !extension.is_empty() && extension.len() <= 8 && extension.bytes().all(|b| b.is_ascii_alphanumeric())
+    !extension.is_empty()
+        && extension.len() <= 8
+        && extension.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
 /// How long one `prepare` may take: the plugin imports the target module here, so the cost is the
@@ -175,14 +179,22 @@ pub enum ScanError {
     Io(io::Error),
     /// Discovery reported nothing the engine can call. A scan of zero targets is a configuration
     /// mistake more often than it is a fact about the code, so it is reported rather than run.
-    NothingFuzzable { skipped: usize },
+    NothingFuzzable {
+        skipped: usize,
+    },
     /// A `--git` scope left no target. Its own variant, because the advice that belongs with
     /// `NothingFuzzable` - check your `include` - is the wrong advice here.
-    EmptyScope { selector: String, changed: usize, discovered: usize },
+    EmptyScope {
+        selector: String,
+        changed: usize,
+        discovered: usize,
+    },
     /// The harness declares `readiness` and answered `ready` with no. The scan aborts
     /// before any worker spawns, because every invocation would fail the way the probe
     /// did, and the harness's own reason names the fix.
-    NotReady { detail: String },
+    NotReady {
+        detail: String,
+    },
 }
 
 impl fmt::Display for ScanError {
@@ -196,12 +208,19 @@ impl fmt::Display for ScanError {
                 "discovery reported no fuzzable target ({skipped} symbol(s) skipped); \
                  the scan project's `include` may not match the code"
             ),
-            ScanError::EmptyScope { selector, changed, discovered } => write!(
+            ScanError::EmptyScope {
+                selector,
+                changed,
+                discovered,
+            } => write!(
                 f,
                 "git scope \"{selector}\" touches no fuzzable target: {changed} changed file(s), \
                  {discovered} target(s) discovered"
             ),
-            ScanError::NotReady { detail } => write!(f, "the harness reports the target environment is not ready: {detail}"),
+            ScanError::NotReady { detail } => write!(
+                f,
+                "the harness reports the target environment is not ready: {detail}"
+            ),
         }
     }
 }
@@ -247,14 +266,18 @@ pub fn preflight(options: &Options) -> Result<(), ScanError> {
 /// Run one scan and write its result. `on_progress` is called at every [`SAMPLE_EVERY`]
 /// invocations, which is how a caller watches coverage without reading the output directory while
 /// the run is still going.
-pub fn run(options: &Options, on_progress: &mut impl FnMut(&Progress)) -> Result<ScanReport, ScanError> {
+pub fn run(
+    options: &Options,
+    on_progress: &mut impl FnMut(&Progress),
+) -> Result<ScanReport, ScanError> {
     preflight(options)?;
     // The scope decides which tree the scan runs against, so it is resolved before anything is
     // launched. `resolved` lives until the run ends: dropping it removes the materialized tree.
     let resolved = match &options.scope {
-        Some(selector) => {
-            Some(crate::git::resolve(&options.root, &options.out_dir, selector).map_err(|e| ConfigError::msg(e.0))?)
-        }
+        Some(selector) => Some(
+            crate::git::resolve(&options.root, &options.out_dir, selector)
+                .map_err(|e| ConfigError::msg(e.0))?,
+        ),
         None => None,
     };
     let scoped = match &resolved {
@@ -285,15 +308,21 @@ pub fn run(options: &Options, on_progress: &mut impl FnMut(&Progress)) -> Result
         let ready = probe.ready(READY_TIMEOUT)?;
         if !ready.ready {
             return Err(ScanError::NotReady {
-                detail: ready.detail.unwrap_or_else(|| "the harness gave no reason".to_string()),
+                detail: ready
+                    .detail
+                    .unwrap_or_else(|| "the harness gave no reason".to_string()),
             });
         }
     }
     let mut notes = Vec::new();
     if let Some(resolved) = &resolved {
         let discovered = discovery.targets.len();
-        discovery.targets.retain(|target| in_scope(&target.origin, &resolved.changed, &options.root));
-        discovery.skipped.retain(|skipped| skipped_in_scope(skipped, &resolved.changed, &options.root));
+        discovery
+            .targets
+            .retain(|target| in_scope(&target.origin, &resolved.changed, &options.root));
+        discovery
+            .skipped
+            .retain(|skipped| skipped_in_scope(skipped, &resolved.changed, &options.root));
         let kept = discovery.targets.len();
         notes.push(format!(
             "git scope \"{}\": {} changed file(s), {kept} of {discovered} target(s) in scope",
@@ -319,7 +348,10 @@ pub fn run(options: &Options, on_progress: &mut impl FnMut(&Progress)) -> Result
         base: resolved.base.clone(),
         tree: resolved.tree.clone(),
         changed_files: resolved.changed.len() as u64,
-        worktree: resolved.worktree.as_ref().map(|worktree| worktree.path.display().to_string()),
+        worktree: resolved
+            .worktree
+            .as_ref()
+            .map(|worktree| worktree.path.display().to_string()),
     });
     let mut scanner = Scanner::open(options, launch, handshake, discovery, request, probe)?;
     scanner.git_scope = git;
@@ -337,9 +369,19 @@ pub fn run(options: &Options, on_progress: &mut impl FnMut(&Progress)) -> Result
 /// uncommitted would not exist in the tree at all, and `AFZ_CONFIG` would point at the user's file
 /// while `AFZ_ROOT` pointed at the scoped one. The output directory stays the invoked project's,
 /// so results never land in the throwaway tree.
-fn scoped_options(options: &Options, resolved: &crate::git::Resolved) -> Result<Options, ScanError> {
-    let worktree = resolved.worktree.as_ref().expect("only a materialized tree reaches this");
-    let name = options.config.path.file_name().ok_or_else(|| ConfigError::msg("the scan project path names no file"))?;
+fn scoped_options(
+    options: &Options,
+    resolved: &crate::git::Resolved,
+) -> Result<Options, ScanError> {
+    let worktree = resolved
+        .worktree
+        .as_ref()
+        .expect("only a materialized tree reaches this");
+    let name = options
+        .config
+        .path
+        .file_name()
+        .ok_or_else(|| ConfigError::msg("the scan project path names no file"))?;
     let destination = match options.config.path.strip_prefix(&options.root) {
         Ok(relative) => worktree.path.join(relative),
         Err(_) => worktree.path.join(name),
@@ -367,8 +409,16 @@ fn in_scope(origin: &afz_protocol::Origin, changed: &BTreeSet<String>, root: &Pa
 /// A skipped entry carries no origin, only the module its blocker sits in. An entry whose blocker
 /// names no module is a package-level fact that no change set can place, so it is kept: dropping it
 /// would understate `inventory.discovered`.
-fn skipped_in_scope(skipped: &afz_protocol::SkippedTarget, changed: &BTreeSet<String>, root: &Path) -> bool {
-    match skipped.blocked_by.as_ref().and_then(|blocker| blocker.module.as_deref()) {
+fn skipped_in_scope(
+    skipped: &afz_protocol::SkippedTarget,
+    changed: &BTreeSet<String>,
+    root: &Path,
+) -> bool {
+    match skipped
+        .blocked_by
+        .as_ref()
+        .and_then(|blocker| blocker.module.as_deref())
+    {
         Some(module) => touches(module, changed, root),
         None => true,
     }
@@ -382,12 +432,18 @@ fn skipped_in_scope(skipped: &afz_protocol::SkippedTarget, changed: &BTreeSet<St
 /// a path the change set deleted.
 fn touches(path: &str, changed: &BTreeSet<String>, root: &Path) -> bool {
     let absolute = absolute_posix(root, path);
-    changed.iter().any(|file| absolute_posix(root, file) == absolute)
+    changed
+        .iter()
+        .any(|file| absolute_posix(root, file) == absolute)
 }
 
 fn absolute_posix(root: &Path, path: &str) -> String {
     let path = Path::new(path);
-    let joined = if path.is_absolute() { path.to_path_buf() } else { root.join(path) };
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        root.join(path)
+    };
     joined.display().to_string().replace('\\', "/")
 }
 
@@ -492,10 +548,21 @@ impl Minimizer {
                     .zip(self.prepared.iter_mut())
                     .zip(chunk)
                     .map(|((client, prepared), values)| {
-                        scope.spawn(move || run_trial(client, prepared, launch, discovery, target_id, values, deadline))
+                        scope.spawn(move || {
+                            run_trial(
+                                client, prepared, launch, discovery, target_id, values, deadline,
+                            )
+                        })
                     })
                     .collect::<Vec<_>>();
-                threads.into_iter().map(|thread| thread.join().unwrap_or_else(|_| Outcome::plugin_lost(0.0, "the minimizer trial thread panicked"))).collect::<Vec<_>>()
+                threads
+                    .into_iter()
+                    .map(|thread| {
+                        thread.join().unwrap_or_else(|_| {
+                            Outcome::plugin_lost(0.0, "the minimizer trial thread panicked")
+                        })
+                    })
+                    .collect::<Vec<_>>()
             });
             outcomes.extend(answered);
         }
@@ -551,12 +618,17 @@ fn run_trial(
     if client.lost().is_some() {
         match spawn_discovered(launch, discovery) {
             Ok((fresh, _)) => *client = fresh,
-            Err(_) => return Outcome::plugin_lost(0.0, "the minimizer plugin could not be restarted"),
+            Err(_) => {
+                return Outcome::plugin_lost(0.0, "the minimizer plugin could not be restarted")
+            }
         }
         prepared.clear();
     }
     if !prepared.contains(target_id) {
-        let prepare = PrepareReq { target_id: target_id.to_string(), values: values.to_vec() };
+        let prepare = PrepareReq {
+            target_id: target_id.to_string(),
+            values: values.to_vec(),
+        };
         if client.prepare(&prepare, PREPARE_TIMEOUT).is_ok() {
             prepared.insert(target_id.to_string());
         }
@@ -583,7 +655,9 @@ impl Scanner {
         let mut targets = discovery.targets.clone();
         targets.sort_by(|a, b| a.id.cmp(&b.id));
         if targets.is_empty() {
-            return Err(ScanError::NothingFuzzable { skipped: discovery.skipped.len() });
+            return Err(ScanError::NothingFuzzable {
+                skipped: discovery.skipped.len(),
+            });
         }
         let oracles = Oracles::new(&options.config.project.oracles);
         let deadline = oracles
@@ -594,7 +668,13 @@ impl Scanner {
             Strategy::Guided => Scheduler::guided(),
             Strategy::Random => Scheduler::random(),
         };
-        let supervisor = Supervisor::new(launch.clone(), options.workers, deadline, DISABLE_AFTER, discovery_request.clone());
+        let supervisor = Supervisor::new(
+            launch.clone(),
+            options.workers,
+            deadline,
+            DISABLE_AFTER,
+            discovery_request.clone(),
+        );
         let mut scanner = Scanner {
             options: options.clone(),
             handshake,
@@ -658,17 +738,27 @@ impl Scanner {
     /// A finding that comes back is reported again, marked `seenBefore`: a report that hid a bug
     /// still present in the tree would be worse than one that repeats itself.
     fn load_resume(&mut self) -> Result<(), ScanError> {
-        let Some(dir) = self.options.resume.clone() else { return Ok(()) };
+        let Some(dir) = self.options.resume.clone() else {
+            return Ok(());
+        };
         let entries = read_corpus(&dir)?;
         let mut loaded = 0usize;
         for entry in entries {
             let edges: CoverageDigest = entry.edges.into_iter().collect();
-            if matches!(self.corpus.record(&entry.target_id, &entry.values, &edges, 0), Recorded::Retained { .. }) {
+            if matches!(
+                self.corpus
+                    .record(&entry.target_id, &entry.values, &edges, 0),
+                Recorded::Retained { .. }
+            ) {
                 loaded += 1;
             }
         }
         let document = read(&dir.join(SCAN_FILE))?;
-        let suppressed = document.findings.iter().filter(|f| self.seen.record(&f.identity)).count();
+        let suppressed = document
+            .findings
+            .iter()
+            .filter(|f| self.seen.record(&f.identity))
+            .count();
         self.log.push(format!(
             "resumed {}: {loaded} corpus entr(ies) reloaded, {suppressed} identity/ies suppressed",
             dir.display()
@@ -677,7 +767,10 @@ impl Scanner {
     }
 
     /// Plan, run, and learn from batches until a budget limit or the stop flag ends the run.
-    fn loop_until_budget(&mut self, on_progress: &mut impl FnMut(&Progress)) -> Result<(), ScanError> {
+    fn loop_until_budget(
+        &mut self,
+        on_progress: &mut impl FnMut(&Progress),
+    ) -> Result<(), ScanError> {
         let clock = Instant::now();
         loop {
             if self.options.stop.load(Ordering::Relaxed) {
@@ -688,7 +781,10 @@ impl Scanner {
             let elapsed = clock.elapsed();
             if elapsed >= self.options.wall_clock {
                 self.stopped = StoppedReason::Budget;
-                self.log.push(format!("wall clock budget of {} ms reached", self.options.wall_clock.as_millis()));
+                self.log.push(format!(
+                    "wall clock budget of {} ms reached",
+                    self.options.wall_clock.as_millis()
+                ));
                 break;
             }
             if self.planned >= self.options.invocations {
@@ -702,8 +798,10 @@ impl Scanner {
                 self.log.push("no target left to invoke".to_string());
                 break;
             }
-            let values_by_invocation: HashMap<u64, Vec<ValueTree>> =
-                jobs.iter().map(|job| (job.invocation_id, job.values.clone())).collect();
+            let values_by_invocation: HashMap<u64, Vec<ValueTree>> = jobs
+                .iter()
+                .map(|job| (job.invocation_id, job.values.clone()))
+                .collect();
             self.plan_ms += planned_at.elapsed().as_millis();
             let remaining = self.options.wall_clock.saturating_sub(elapsed);
             let ran_at = Instant::now();
@@ -732,34 +830,45 @@ impl Scanner {
                 Plan::Fresh => match self.next_target_index() {
                     Some(index) => {
                         let target_id = self.targets[index].id.clone();
-                        let values = generate_arguments(&self.targets[index].parameters, &mut self.rng);
+                        let values =
+                            generate_arguments(&self.targets[index].parameters, &mut self.rng);
                         (target_id, values)
                     }
                     None => break,
                 },
                 Plan::Mutate { entry_id, values } => {
-                    let Some(entry) = self.corpus.get(&entry_id).cloned() else { continue };
+                    let Some(entry) = self.corpus.get(&entry_id).cloned() else {
+                        continue;
+                    };
                     self.corpus.note_use(&entry_id, invocation);
                     let donor = self.donor(&entry.target_id, &entry_id);
                     let (donor_values, donor_id) = match donor.as_ref() {
                         Some((id, values)) => (Some(values), id.as_str()),
                         None => (None, ""),
                     };
-                    let mutated = self.mutate_arguments(&entry.target_id, &values, donor_values, donor_id);
+                    let mutated =
+                        self.mutate_arguments(&entry.target_id, &values, donor_values, donor_id);
                     (entry.target_id, mutated)
                 }
             };
             if self.disabled.contains(&target_id) {
                 skips += 1;
                 if skips >= MAX_PLAN_SKIPS {
-                    self.log.push(format!("stopped planning after {skips} draws onto disabled targets"));
+                    self.log.push(format!(
+                        "stopped planning after {skips} draws onto disabled targets"
+                    ));
                     break;
                 }
                 continue;
             }
             self.attempted.insert(target_id.clone());
             self.planned += 1;
-            jobs.push(Job { invocation_id: invocation, target_id, values, collect_coverage });
+            jobs.push(Job {
+                invocation_id: invocation,
+                target_id,
+                values,
+                collect_coverage,
+            });
         }
         jobs
     }
@@ -790,11 +899,16 @@ impl Scanner {
     /// the corpus entry a grafted value came from and a triager can open that entry.
     fn donor(&mut self, target_id: &str, except: &str) -> Option<(String, Vec<ValueTree>)> {
         let signature = self.signatures.get(target_id)?.clone();
-        let entries: Vec<(String, String)> =
-            self.corpus.entries().map(|entry| (entry.id.clone(), entry.target_id.clone())).collect();
+        let entries: Vec<(String, String)> = self
+            .corpus
+            .entries()
+            .map(|entry| (entry.id.clone(), entry.target_id.clone()))
+            .collect();
         let pool = donor_pool(&entries, target_id, except, &self.signatures, &signature);
         let id = self.rng.pick(&pool)?.clone();
-        self.corpus.get(&id).map(|entry| (id.clone(), entry.values.clone()))
+        self.corpus
+            .get(&id)
+            .map(|entry| (id.clone(), entry.values.clone()))
     }
 
     /// Mutate one argument of a retained input, leaving the others alone. Mutating every argument
@@ -806,15 +920,25 @@ impl Scanner {
         donor: Option<&Vec<ValueTree>>,
         donor_id: &str,
     ) -> Vec<ValueTree> {
-        let Some(position) = self.targets.iter().position(|t| t.id == target_id) else { return values.to_vec() };
+        let Some(position) = self.targets.iter().position(|t| t.id == target_id) else {
+            return values.to_vec();
+        };
         if values.is_empty() || self.targets[position].parameters.is_empty() {
             return values.to_vec();
         }
         let index = self.rng.below(values.len() as u64) as usize;
-        let Some(parameter) = self.targets[position].parameters.get(index) else { return values.to_vec() };
+        let Some(parameter) = self.targets[position].parameters.get(index) else {
+            return values.to_vec();
+        };
         let donor_value = donor.and_then(|d| d.get(index));
         let mut next = values.to_vec();
-        let mutated = mutate_with_donor(&next[index], &parameter.ty, &mut self.rng, donor_value, donor_id);
+        let mutated = mutate_with_donor(
+            &next[index],
+            &parameter.ty,
+            &mut self.rng,
+            donor_value,
+            donor_id,
+        );
         next[index] = mutated;
         next
     }
@@ -830,24 +954,34 @@ impl Scanner {
         self.restarts += report.restarts;
         for id in &report.disabled {
             if self.disabled.insert(id.clone()) {
-                self.log.push(format!("disabled {} after repeated plugin losses", id));
+                self.log
+                    .push(format!("disabled {} after repeated plugin losses", id));
             }
         }
         for unbuildable in &report.unbuildable {
-            self.log.push(format!("{} cannot be built: {}", unbuildable.target_id, unbuildable.reason.as_str()));
+            self.log.push(format!(
+                "{} cannot be built: {}",
+                unbuildable.target_id,
+                unbuildable.reason.as_str()
+            ));
         }
         for completed in &report.completed {
             if let Some(restart) = &completed.restart {
                 self.log.push(format!(
                     "invocation {} lost worker {}: {}",
-                    completed.invocation_id, restart.worker, restart.reason.detail()
+                    completed.invocation_id,
+                    restart.worker,
+                    restart.reason.detail()
                 ));
             }
             self.ran += 1;
             if matches!(completed.outcome, Outcome::Failed { .. }) {
                 self.failed += 1;
             }
-            let input = values.get(&completed.invocation_id).cloned().unwrap_or_default();
+            let input = values
+                .get(&completed.invocation_id)
+                .cloned()
+                .unwrap_or_default();
             self.learn(completed, &input);
             // Keyed on invocations that ran, not on the id the planner handed out. A scan stopped by
             // the wall clock mid-batch has planned ids it never executed, and a sample carrying one
@@ -878,7 +1012,9 @@ impl Scanner {
             // mid-call never reached the target, and there is nothing to learn from that - and
             // filing the tuple as edges would put ids the coverage map cannot name into
             // `coverageEdges`, which is reported as a fraction of that map.
-            None if !self.handshake.capabilities.contains(&Capability::Coverage) => corpus::outcome_digest(&completed.outcome),
+            None if !self.handshake.capabilities.contains(&Capability::Coverage) => {
+                corpus::outcome_digest(&completed.outcome)
+            }
             None => CoverageDigest::new(),
         };
         if completed.outcome.via() == Some(oracles::DEADLINE_VIA) {
@@ -887,8 +1023,17 @@ impl Scanner {
         if completed.outcome.duration_ms() >= self.deadline.as_millis() as f64 {
             self.deadline_cuts += 1;
         }
-        self.corpus.record(&completed.target_id, values, &edges, completed.invocation_id);
-        for finding in self.oracles.evaluate(&completed.target_id, completed.invocation_id, &completed.outcome) {
+        self.corpus.record(
+            &completed.target_id,
+            values,
+            &edges,
+            completed.invocation_id,
+        );
+        for finding in self.oracles.evaluate(
+            &completed.target_id,
+            completed.invocation_id,
+            &completed.outcome,
+        ) {
             self.record_finding(finding, values);
         }
     }
@@ -921,29 +1066,47 @@ impl Scanner {
         // answers unsafely gets no script; the finding's `inputs/` artifact is replayable
         // either way.
         let repro_attempt = minimized.as_ref().filter(|m| m.reproduces).and_then(|m| {
-            if !self.handshake.capabilities.contains(&Capability::Reproducer) {
+            if !self
+                .handshake
+                .capabilities
+                .contains(&Capability::Reproducer)
+            {
                 return None;
             }
             let client = self.minimizer.pool.first()?;
-            let req = ReproducerReq { target_id: finding.target_id.clone(), values: m.values.clone() };
+            let req = ReproducerReq {
+                target_id: finding.target_id.clone(),
+                values: m.values.clone(),
+            };
             Some(client.reproducer(&req, REPRODUCER_TIMEOUT))
         });
         let repro = match repro_attempt {
             Some(Ok(resp)) => {
-                if resp.script.is_empty() || resp.script.len() > MAX_REPRO_SCRIPT_BYTES || !valid_extension(&resp.extension) {
+                if resp.script.is_empty()
+                    || resp.script.len() > MAX_REPRO_SCRIPT_BYTES
+                    || !valid_extension(&resp.extension)
+                {
                     self.log.push(format!("finding {id} gets no reproducer: the plugin answered an empty or oversized script, or the unsafe extension {:?}", resp.extension));
                     None
                 } else {
-                    Some(ReproFile { artifact: reproducer_artifact_path(&id, &resp.extension), content: resp.script })
+                    Some(ReproFile {
+                        artifact: reproducer_artifact_path(&id, &resp.extension),
+                        content: resp.script,
+                    })
                 }
             }
             Some(Err(reason)) => {
-                self.log.push(format!("finding {id} gets no reproducer: {}", reason.detail()));
+                self.log.push(format!(
+                    "finding {id} gets no reproducer: {}",
+                    reason.detail()
+                ));
                 None
             }
             None => None,
         };
-        let shrunk = minimized.as_ref().filter(|m| m.reproduces && m.bytes_after < m.bytes_before);
+        let shrunk = minimized
+            .as_ref()
+            .filter(|m| m.reproduces && m.bytes_after < m.bytes_before);
         let record = FindingRecord {
             finding_id: id.clone(),
             identity: identity.clone(),
@@ -952,13 +1115,18 @@ impl Scanner {
             severity: finding.severity,
             via: finding.via.clone(),
             fault: self.scan_fault(&fault),
-            input: InputArtifact { encoding: InputEncoding::ValueTreeJson, artifact: input_artifact_path(&id) },
+            input: InputArtifact {
+                encoding: InputEncoding::ValueTreeJson,
+                artifact: input_artifact_path(&id),
+            },
             minimized_input: shrunk.map(|m| MinimizedArtifact {
                 artifact: minimized_artifact_path(&id),
                 bytes_before: m.bytes_before,
                 bytes_after: m.bytes_after,
             }),
-            reproducer: repro.as_ref().map(|r| Artifact { artifact: r.artifact.clone() }),
+            reproducer: repro.as_ref().map(|r| Artifact {
+                artifact: r.artifact.clone(),
+            }),
             first_seen_invocation: finding.invocation_id,
             reproduced: minimized.as_ref().is_some_and(|m| m.reproduces),
             seen_before,
@@ -1021,11 +1189,20 @@ impl Scanner {
                 self.options.wall_clock.as_millis()
             ));
             let bytes = values.iter().map(ValueTree::wire_bytes).sum();
-            return Minimized { values: values.to_vec(), attempts: 0, bytes_before: bytes, bytes_after: bytes, reproduces: false };
+            return Minimized {
+                values: values.to_vec(),
+                attempts: 0,
+                bytes_before: bytes,
+                bytes_after: bytes,
+                reproduces: false,
+            };
         }
         let started_at = Instant::now();
         let width = self.minimizer.cap;
-        let result = minimize::minimize(values, MINIMIZE_ATTEMPTS, left, width, &mut |candidates| self.minimizer.run_batch(target_id, candidates));
+        let result =
+            minimize::minimize(values, MINIMIZE_ATTEMPTS, left, width, &mut |candidates| {
+                self.minimizer.run_batch(target_id, candidates)
+            });
         self.minimizer.release();
         self.log.push(format!(
             "shrunk {target_id}: {} attempts, {} -> {} bytes in {:.1} s",
@@ -1111,7 +1288,10 @@ impl Scanner {
             self.setup_ms,
             self.coverage_ms,
         ));
-        self.log.push(format!("{} invocations answered failed, each retiring the plugin's invoke worker", self.failed));
+        self.log.push(format!(
+            "{} invocations answered failed, each retiring the plugin's invoke worker",
+            self.failed
+        ));
         // A plugin that dies on its own leaves the reason in its stderr, which the engine captures at
         // spawn. Without this the log said only `plugin exited with code 1`, and 119 plugin deaths in
         // one scan carried no explanation at all. Shrink connections replaced mid-minimization are not
@@ -1120,7 +1300,9 @@ impl Scanner {
             .minimizer
             .pool
             .iter()
-            .flat_map(|client| std::mem::take(&mut *client.stderr_lines.lock().expect("stderr lock")))
+            .flat_map(|client| {
+                std::mem::take(&mut *client.stderr_lines.lock().expect("stderr lock"))
+            })
             .collect();
         let worker_stderr = self.supervisor.take_stderr();
         let mut reported: BTreeSet<&str> = BTreeSet::new();
@@ -1149,7 +1331,11 @@ impl Scanner {
             })
             .collect();
         let files = ScanFiles {
-            findings: self.records.iter().map(|(_, files)| files.clone()).collect(),
+            findings: self
+                .records
+                .iter()
+                .map(|(_, files)| files.clone())
+                .collect(),
             corpus: corpus_files,
             coverage: coverage.as_deref(),
             log: Some(&log),
@@ -1163,7 +1349,12 @@ impl Scanner {
             None
         };
         self.seen.save()?;
-        Ok(ScanReport { dir, document, samples: self.samples.clone(), markdown })
+        Ok(ScanReport {
+            dir,
+            document,
+            samples: self.samples.clone(),
+            markdown,
+        })
     }
 
     fn document(&self, started_at: SystemTime, finished_at: SystemTime) -> ScanDocument {
@@ -1185,7 +1376,11 @@ impl Scanner {
             engine: EngineInfo {
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 seed: format!("0x{:08x}", self.options.seed),
-                config_hash: self.options.config.config_hash().unwrap_or_else(|_| "unavailable".to_string()),
+                config_hash: self
+                    .options
+                    .config
+                    .config_hash()
+                    .unwrap_or_else(|_| "unavailable".to_string()),
             },
             target: TargetInfo {
                 root: root.clone(),
@@ -1226,10 +1421,17 @@ impl Scanner {
                 unattempted: self.options.invocations.saturating_sub(self.ran),
                 disabled_targets: self.disabled.iter().cloned().collect(),
             },
-            findings: self.records.iter().map(|(record, _)| record.clone()).collect(),
+            findings: self
+                .records
+                .iter()
+                .map(|(record, _)| record.clone())
+                .collect(),
             artifacts: Artifacts {
                 corpus: format!("{CORPUS_DIR}/"),
-                coverage: self.coverage_map.as_ref().map(|_| "coverage.json".to_string()),
+                coverage: self
+                    .coverage_map
+                    .as_ref()
+                    .map(|_| "coverage.json".to_string()),
                 log: Some("engine.log".to_string()),
             },
         }
@@ -1248,7 +1450,10 @@ fn signature_of(target: &TargetDescriptor) -> String {
 }
 
 fn signature_index(targets: &[TargetDescriptor]) -> HashMap<String, String> {
-    targets.iter().map(|target| (target.id.clone(), signature_of(target))).collect()
+    targets
+        .iter()
+        .map(|target| (target.id.clone(), signature_of(target)))
+        .collect()
 }
 
 /// Which retained entries may donate to `target_id`: another entry for the same target first,
@@ -1280,12 +1485,21 @@ fn donor_pool(
             same_shape.push(id.clone());
         }
     }
-    if same_target.is_empty() { same_shape } else { same_target }
+    if same_target.is_empty() {
+        same_shape
+    } else {
+        same_target
+    }
 }
 
 /// `git:<short sha>` when the scan root is in a repository, `None` when it is not.
 fn git_revision(root: &str) -> Option<String> {
-    let output = Command::new("git").arg("-C").arg(root).args(["rev-parse", "--short", "HEAD"]).output().ok()?;
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()?;
     if !output.status.success() {
         return None;
     }
@@ -1300,7 +1514,9 @@ fn git_revision(root: &str) -> Option<String> {
 /// UTC `YYYY-MM-DDThh:mm:ssZ`, the format Part I's example shows. Written here so the engine
 /// carries no date library for one string.
 fn rfc3339(at: SystemTime) -> String {
-    let Ok(since) = at.duration_since(UNIX_EPOCH) else { return "1970-01-01T00:00:00Z".to_string() };
+    let Ok(since) = at.duration_since(UNIX_EPOCH) else {
+        return "1970-01-01T00:00:00Z".to_string();
+    };
     let secs = since.as_secs();
     let days = (secs / 86_400) as i64;
     let time_of_day = secs % 86_400;
@@ -1332,15 +1548,23 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 mod tests {
     use super::*;
 
-
     #[test]
     fn shrink_work_stops_when_the_scan_budget_is_spent() {
         // A finding found late must not spend its own per-finding allowance after the run is over.
         // The bound is the scan's clock, so the sum across findings cannot overrun it by more than
         // the grace the result write needs.
-        assert_eq!(shrink_budget(Duration::ZERO, Duration::from_secs(600)), MINIMIZE_BUDGET);
-        assert_eq!(shrink_budget(Duration::from_secs(500), Duration::from_secs(600)), Duration::from_secs(130));
-        assert_eq!(shrink_budget(Duration::from_secs(631), Duration::from_secs(600)), Duration::ZERO);
+        assert_eq!(
+            shrink_budget(Duration::ZERO, Duration::from_secs(600)),
+            MINIMIZE_BUDGET
+        );
+        assert_eq!(
+            shrink_budget(Duration::from_secs(500), Duration::from_secs(600)),
+            Duration::from_secs(130)
+        );
+        assert_eq!(
+            shrink_budget(Duration::from_secs(631), Duration::from_secs(600)),
+            Duration::ZERO
+        );
     }
 
     fn signatures() -> HashMap<String, String> {
@@ -1360,7 +1584,10 @@ mod tests {
             ("c-manifest".to_string(), "manifest".to_string()),
             ("c-digest".to_string(), "digest".to_string()),
         ];
-        assert_eq!(donor_pool(&entries, "summary", "c-summary", &signatures(), "REPORT"), vec!["c-manifest".to_string()]);
+        assert_eq!(
+            donor_pool(&entries, "summary", "c-summary", &signatures(), "REPORT"),
+            vec!["c-manifest".to_string()]
+        );
     }
 
     #[test]
@@ -1370,7 +1597,10 @@ mod tests {
             ("c-summary-2".to_string(), "summary".to_string()),
             ("c-manifest".to_string(), "manifest".to_string()),
         ];
-        assert_eq!(donor_pool(&entries, "summary", "c-summary", &signatures(), "REPORT"), vec!["c-summary-2".to_string()]);
+        assert_eq!(
+            donor_pool(&entries, "summary", "c-summary", &signatures(), "REPORT"),
+            vec!["c-summary-2".to_string()]
+        );
     }
 
     #[test]

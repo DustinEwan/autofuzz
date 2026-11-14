@@ -13,7 +13,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use afz_protocol::{CoverageEntry, CoverageMap, DiscoverReq, EdgeId, FaultSignature, InvokeReq, Outcome, ValueTree};
+use afz_protocol::{
+    CoverageEntry, CoverageMap, DiscoverReq, EdgeId, FaultSignature, InvokeReq, Outcome, ValueTree,
+};
 
 use crate::rpc::client::{spawn_discovered, Launch, LostReason, PluginClient};
 use crate::scan::PREPARE_TIMEOUT;
@@ -85,7 +87,10 @@ pub struct Unbuildable {
 pub enum Event {
     Ran(Completed),
     /// `prepare` reported that this target cannot be built, so the invocation never ran.
-    Unbuildable { invocation_id: u64, unbuildable: Unbuildable },
+    Unbuildable {
+        invocation_id: u64,
+        unbuildable: Unbuildable,
+    },
 }
 
 /// What a run produced.
@@ -117,7 +122,12 @@ pub struct Watchdog {
 
 impl Watchdog {
     pub fn new(disable_after: u64) -> Watchdog {
-        Watchdog { disable_after, consecutive: BTreeMap::new(), disabled: BTreeSet::new(), restarts: 0 }
+        Watchdog {
+            disable_after,
+            consecutive: BTreeMap::new(),
+            disabled: BTreeSet::new(),
+            restarts: 0,
+        }
     }
 
     pub fn restarts(&self) -> u64 {
@@ -167,7 +177,13 @@ impl Supervisor {
     /// `discovery` is replayed into every plugin process this supervisor starts. `prepare`
     /// resolves a `targetId` only against an inventory that process discovered itself, so a
     /// restart has to discover again: the new process knows nothing.
-    pub fn new(launch: Launch, workers: usize, deadline: Duration, disable_after: u64, discovery: DiscoverReq) -> Supervisor {
+    pub fn new(
+        launch: Launch,
+        workers: usize,
+        deadline: Duration,
+        disable_after: u64,
+        discovery: DiscoverReq,
+    ) -> Supervisor {
         // `Worker::spawn` blocks on that process's `discover`, so mapping over the indices serially
         // would make a default scan pay `(workers + 1)` discoveries before its first invocation and
         // again on every restart. They overlap instead.
@@ -179,12 +195,22 @@ impl Supervisor {
         let pool = {
             let (launch, discovery) = (&launch, &discovery);
             std::thread::scope(|scope| {
-                let starting: Vec<_> =
-                    (0..workers.max(1)).map(|index| scope.spawn(move || Worker::spawn(index, launch, discovery))).collect();
-                starting.into_iter().map(|thread| thread.join().expect("worker spawn thread")).collect()
+                let starting: Vec<_> = (0..workers.max(1))
+                    .map(|index| scope.spawn(move || Worker::spawn(index, launch, discovery)))
+                    .collect();
+                starting
+                    .into_iter()
+                    .map(|thread| thread.join().expect("worker spawn thread"))
+                    .collect()
             })
         };
-        Supervisor { launch, discovery, workers: pool, deadline, watchdog: Watchdog::new(disable_after) }
+        Supervisor {
+            launch,
+            discovery,
+            workers: pool,
+            deadline,
+            watchdog: Watchdog::new(disable_after),
+        }
     }
 
     /// The blocks every worker has reported, unioned. Only a process that has run an invocation
@@ -200,7 +226,9 @@ impl Supervisor {
                 }
             }
         }
-        (!entries.is_empty()).then(|| CoverageMap { entries: entries.into_values().collect() })
+        (!entries.is_empty()).then(|| CoverageMap {
+            entries: entries.into_values().collect(),
+        })
     }
 
     /// What the plugin processes wrote to stderr, deduplicated across the pool. Twelve workers repeat
@@ -224,7 +252,9 @@ impl Supervisor {
             }
         }
         if suppressed > 0 {
-            out.push(format!("... {suppressed} more distinct plugin stderr lines suppressed"));
+            out.push(format!(
+                "... {suppressed} more distinct plugin stderr lines suppressed"
+            ));
         }
         out
     }
@@ -250,8 +280,11 @@ impl Supervisor {
         let deadline = self.deadline;
         // Each thread borrows one worker for the batch and hands it back afterwards, so the pool
         // outlives the batch. The slot is behind a lock because a thread can panic on a bad job.
-        let slots: Vec<Arc<Mutex<Option<Worker>>>> =
-            self.workers.drain(..).map(|worker| Arc::new(Mutex::new(Some(worker)))).collect();
+        let slots: Vec<Arc<Mutex<Option<Worker>>>> = self
+            .workers
+            .drain(..)
+            .map(|worker| Arc::new(Mutex::new(Some(worker))))
+            .collect();
         let mut threads = Vec::with_capacity(slots.len());
         for (index, slot) in slots.iter().enumerate() {
             let queue = Arc::clone(&queue);
@@ -319,24 +352,54 @@ impl Supervisor {
             })
             .collect();
 
-        self.watchdog = Arc::try_unwrap(watchdog).expect("watchdog still shared").into_inner().expect("watchdog lock");
-        let events = Arc::try_unwrap(results).expect("results still shared").into_inner().expect("results lock");
-        let mut completed: Vec<Completed> = events.iter().filter_map(|e| match e { Event::Ran(c) => Some(c.clone()), _ => None }).collect();
+        self.watchdog = Arc::try_unwrap(watchdog)
+            .expect("watchdog still shared")
+            .into_inner()
+            .expect("watchdog lock");
+        let events = Arc::try_unwrap(results)
+            .expect("results still shared")
+            .into_inner()
+            .expect("results lock");
+        let mut completed: Vec<Completed> = events
+            .iter()
+            .filter_map(|e| match e {
+                Event::Ran(c) => Some(c.clone()),
+                _ => None,
+            })
+            .collect();
         completed.sort_by_key(|c| c.invocation_id);
         let mut unbuildable: Vec<Unbuildable> = events
             .iter()
-            .filter_map(|e| match e { Event::Unbuildable { unbuildable, .. } => Some(unbuildable.clone()), _ => None })
+            .filter_map(|e| match e {
+                Event::Unbuildable { unbuildable, .. } => Some(unbuildable.clone()),
+                _ => None,
+            })
             .collect();
         unbuildable.sort_by(|a, b| a.target_id.cmp(&b.target_id));
         unbuildable.dedup_by(|a, b| a.target_id == b.target_id);
         let mut unattempted: Vec<u64> = events
             .iter()
-            .filter_map(|e| match e { Event::Unbuildable { invocation_id, .. } => Some(*invocation_id), _ => None })
+            .filter_map(|e| match e {
+                Event::Unbuildable { invocation_id, .. } => Some(*invocation_id),
+                _ => None,
+            })
             .collect();
-        unattempted.extend(queue.lock().expect("queue lock").iter().map(|j| j.invocation_id));
+        unattempted.extend(
+            queue
+                .lock()
+                .expect("queue lock")
+                .iter()
+                .map(|j| j.invocation_id),
+        );
         unattempted.sort_unstable();
         let disabled = self.watchdog.disabled();
-        RunReport { completed, unattempted, restarts: self.watchdog.restarts() - restarts_before, disabled, unbuildable }
+        RunReport {
+            completed,
+            unattempted,
+            restarts: self.watchdog.restarts() - restarts_before,
+            disabled,
+            unbuildable,
+        }
     }
 
     /// Pull the next job that is worth running. A job whose target has been disabled is dropped
@@ -404,7 +467,10 @@ impl Worker {
     /// so a process that has only discovered and prepared answers with an empty table.
     pub fn coverage_map(&self, timeout: Duration) -> Option<CoverageMap> {
         let client = self.client.as_ref()?;
-        client.coverage_map(timeout).ok().filter(|map| !map.entries.is_empty())
+        client
+            .coverage_map(timeout)
+            .ok()
+            .filter(|map| !map.entries.is_empty())
     }
 
     /// Lines this plugin process wrote to stderr, taken so the scan reports each one once. A plugin
@@ -416,7 +482,10 @@ impl Worker {
             buffers.push(Arc::clone(&client.stderr_lines));
         }
         self.stderr_history.clear();
-        buffers.into_iter().flat_map(|lines| std::mem::take(&mut *lines.lock().expect("stderr lock"))).collect()
+        buffers
+            .into_iter()
+            .flat_map(|lines| std::mem::take(&mut *lines.lock().expect("stderr lock")))
+            .collect()
     }
 
     /// The process is gone or was never startable; bring up a fresh one and forget what it had
@@ -452,22 +521,39 @@ impl Worker {
                 // deadline killed a plugin on every first call into such a package, and the scan
                 // reported those kills as `processExit` findings.
                 if self.prepared.insert(job.target_id.clone()) {
-                    match client.prepare(&afz_protocol::PrepareReq { target_id: job.target_id.clone(), values: job.values.clone() }, PREPARE_TIMEOUT) {
+                    match client.prepare(
+                        &afz_protocol::PrepareReq {
+                            target_id: job.target_id.clone(),
+                            values: job.values.clone(),
+                        },
+                        PREPARE_TIMEOUT,
+                    ) {
                         Ok(afz_protocol::PrepareResp::Ok { .. }) => {}
                         Ok(afz_protocol::PrepareResp::Skip { reason }) => {
                             self.prepared.remove(&job.target_id);
                             return (
                                 Event::Unbuildable {
                                     invocation_id: job.invocation_id,
-                                    unbuildable: Unbuildable { target_id: job.target_id, reason },
+                                    unbuildable: Unbuildable {
+                                        target_id: job.target_id,
+                                        reason,
+                                    },
                                 },
                                 Watch::Nothing,
                             );
                         }
-                        Err(reason) => return self.classify_loss(job, LostReason::Spawn(format!("prepare: {}", reason.detail()))),
+                        Err(reason) => {
+                            return self.classify_loss(
+                                job,
+                                LostReason::Spawn(format!("prepare: {}", reason.detail())),
+                            )
+                        }
                     }
                 }
-                match client.invoke(&Completed::request_for(&job, deadline), deadline + KILL_GRACE) {
+                match client.invoke(
+                    &Completed::request_for(&job, deadline),
+                    deadline + KILL_GRACE,
+                ) {
                     Ok(outcome) => Attempt::Answered(outcome),
                     Err(reason) => Attempt::Lost(reason),
                 }
@@ -490,7 +576,9 @@ impl Worker {
             Attempt::Lost(reason) => self.classify_loss(job, reason),
             // The process is gone or was never startable. That is a process exit as far as the
             // scan is concerned, and the next invocation gets a fresh process.
-            Attempt::Absent => self.classify_loss(job, LostReason::Spawn("plugin is not running".to_string())),
+            Attempt::Absent => {
+                self.classify_loss(job, LostReason::Spawn("plugin is not running".to_string()))
+            }
         }
     }
 
@@ -502,7 +590,9 @@ impl Worker {
             // The engine waited for the answer until the deadline and none arrived.
             LostReason::NoAnswer => engine_fault("deadline", "Deadline", reason.detail()),
             // The plugin ended itself with a call in flight and left no explanation.
-            LostReason::Exited { .. } => engine_fault("processExit", "ProcessExit", reason.detail()),
+            LostReason::Exited { .. } => {
+                engine_fault("processExit", "ProcessExit", reason.detail())
+            }
             other => engine_fault(other.via(), "PluginLost", other.detail()),
         };
         self.restart();
@@ -512,7 +602,10 @@ impl Worker {
                 invocation_id: job.invocation_id,
                 target_id: target_id.clone(),
                 outcome,
-                restart: Some(Restart { worker: self.index, reason }),
+                restart: Some(Restart {
+                    worker: self.index,
+                    reason,
+                }),
             }),
             Watch::Restarted(target_id),
         )
@@ -550,7 +643,11 @@ fn engine_fault(via: &str, class: &str, detail: String) -> Outcome {
         duration_ms: 0.0,
         coverage: None,
         via: via.to_string(),
-        fault: FaultSignature { class: class.to_string(), message: detail, frames: Vec::new() },
+        fault: FaultSignature {
+            class: class.to_string(),
+            message: detail,
+            frames: Vec::new(),
+        },
     })
 }
 
@@ -581,6 +678,9 @@ mod tests {
         assert_eq!(watchdog.streak("t"), 0);
         assert!(!watchdog.note_restart("t"));
         assert!(!watchdog.note_restart("t"));
-        assert!(!watchdog.is_disabled("t"), "the streak never reached three in a row");
+        assert!(
+            !watchdog.is_disabled("t"),
+            "the streak never reached three in a row"
+        );
     }
 }

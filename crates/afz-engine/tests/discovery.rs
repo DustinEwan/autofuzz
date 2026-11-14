@@ -39,23 +39,47 @@ fn a_blocked_symbol_arrives_in_the_shape_the_engine_reads() {
         config_path: None,
     };
     let client = PluginClient::spawn(&launch()).expect("spawn the js-ts plugin");
-    let discovery = client.discover(&request, Duration::from_secs(120)).expect("discover the blocked test target");
+    let discovery = client
+        .discover(&request, Duration::from_secs(120))
+        .expect("discover the blocked test target");
 
     let fuzzable: Vec<&str> = discovery.targets.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(fuzzable, ["formatAmount"], "only the entry point with no blocked parameter is fuzzable");
+    assert_eq!(
+        fuzzable,
+        ["formatAmount"],
+        "only the entry point with no blocked parameter is fuzzable"
+    );
 
     let mut skipped: Vec<(String, String)> = discovery
         .skipped
         .iter()
-        .map(|s| (s.name.clone(), serde_json::to_value(s.reason).expect("a skip reason is a string").as_str().unwrap_or_default().to_string()))
+        .map(|s| {
+            (
+                s.name.clone(),
+                serde_json::to_value(s.reason)
+                    .expect("a skip reason is a string")
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+        })
         .collect();
     skipped.sort_unstable();
     assert_eq!(
         skipped,
         [
-            ("Db.query".to_string(), "unconstructible-parameter".to_string()),
-            ("balanceOf".to_string(), "unconstructible-parameter".to_string()),
-            ("postEntry".to_string(), "unconstructible-parameter".to_string()),
+            (
+                "Db.query".to_string(),
+                "unconstructible-parameter".to_string()
+            ),
+            (
+                "balanceOf".to_string(),
+                "unconstructible-parameter".to_string()
+            ),
+            (
+                "postEntry".to_string(),
+                "unconstructible-parameter".to_string()
+            ),
         ],
         "every symbol that needs the unbuildable class is reported, none silently dropped"
     );
@@ -65,7 +89,11 @@ fn a_blocked_symbol_arrives_in_the_shape_the_engine_reads() {
     // scan reached.
     let fuzzed_ids: Vec<&str> = discovery.targets.iter().map(|t| t.id.as_str()).collect();
     for entry in &discovery.skipped {
-        assert!(!fuzzed_ids.contains(&entry.target_id.as_str()), "{} is both fuzzable and skipped", entry.target_id);
+        assert!(
+            !fuzzed_ids.contains(&entry.target_id.as_str()),
+            "{} is both fuzzable and skipped",
+            entry.target_id
+        );
     }
 
     let by_name = |name: &str| {
@@ -78,18 +106,37 @@ fn a_blocked_symbol_arrives_in_the_shape_the_engine_reads() {
 
     let balance = by_name("balanceOf");
     assert_eq!(balance.reason, SkipReason::UnconstructibleParameter);
-    let blocker = balance.blocked_by.as_ref().expect("a blocked parameter names its blocker");
+    let blocker = balance
+        .blocked_by
+        .as_ref()
+        .expect("a blocked parameter names its blocker");
     assert_eq!(blocker.type_, "Db");
     assert_eq!(blocker.path, "arguments[0]");
-    let module = blocker.module.as_deref().expect("the blocker names the file that declares Db");
-    assert!(module.ends_with("targets/blocked/src/db.ts"), "module {module} should name the declaring file");
-    assert_eq!(balance.unlocks_targets, Some(1), "postEntry shares the same missing class");
+    let module = blocker
+        .module
+        .as_deref()
+        .expect("the blocker names the file that declares Db");
+    assert!(
+        module.ends_with("targets/blocked/src/db.ts"),
+        "module {module} should name the declaring file"
+    );
+    assert_eq!(
+        balance.unlocks_targets,
+        Some(1),
+        "postEntry shares the same missing class"
+    );
     assert_eq!(by_name("postEntry").unlocks_targets, Some(1));
 
     // A method on the unbuildable class is blocked by its receiver, which no file names.
     let query = by_name("Db.query");
-    let receiver = query.blocked_by.as_ref().expect("the method names its receiver as the blocker");
+    let receiver = query
+        .blocked_by
+        .as_ref()
+        .expect("the method names its receiver as the blocker");
     assert_eq!(receiver.path, "receiver");
     assert_eq!(receiver.type_, "Db");
-    assert!(receiver.module.is_none(), "a receiver blocker has no declaring module to name");
+    assert!(
+        receiver.module.is_none(),
+        "a receiver blocker has no declaring module to name"
+    );
 }

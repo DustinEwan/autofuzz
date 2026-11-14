@@ -22,7 +22,10 @@ fn fakeplugin_path() -> PathBuf {
             return candidate;
         }
         let Some(parent) = dir.parent() else {
-            panic!("build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})", exe.display());
+            panic!(
+                "build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})",
+                exe.display()
+            );
         };
         dir = parent;
     }
@@ -31,22 +34,41 @@ fn fakeplugin_path() -> PathBuf {
 /// The conforming fake handshake plus the `readiness` capability. `ready` is the scripted
 /// answer, or absent to let the fake answer its always-ready default.
 fn declaring_script(ready: Option<&str>) -> String {
-    let override_ = ready.map(|r| format!(r#", "ready":{r}"#)).unwrap_or_default();
+    let override_ = ready
+        .map(|r| format!(r#", "ready":{r}"#))
+        .unwrap_or_default();
     format!(
         r#"{{"handshake":{{"protocolVersion":"{PROTOCOL_VERSION}","name":"afz-fakeplugin","version":"0.0.0","targetClass":"design-time","capabilities":["readiness"],"languages":["fake"]}}{override_}}}"#
     )
 }
 
 fn check(script: &str) -> Check {
-    Check::new(Launch::new([fakeplugin_path().display().to_string()]).with_env("AFZ_FAKE_SCRIPT", script), ".")
+    Check::new(
+        Launch::new([fakeplugin_path().display().to_string()]).with_env("AFZ_FAKE_SCRIPT", script),
+        ".",
+    )
 }
 
 #[test]
 fn a_declared_capability_that_answers_not_ready_is_a_violation() {
-    let report = conformance::run(&check(&declaring_script(Some(r#"{"ready":false,"detail":"no service is listening"}"#))));
-    assert!(report.failed("readiness"), "a plugin answering not ready after the suite started the service must be caught: {:?}", report.violations);
-    let violation = report.violations.iter().find(|v| v.rule == "readiness").expect("the readiness violation");
-    assert!(violation.detail.contains("no service is listening"), "the plugin's own reason must be quoted: {}", violation.detail);
+    let report = conformance::run(&check(&declaring_script(Some(
+        r#"{"ready":false,"detail":"no service is listening"}"#,
+    ))));
+    assert!(
+        report.failed("readiness"),
+        "a plugin answering not ready after the suite started the service must be caught: {:?}",
+        report.violations
+    );
+    let violation = report
+        .violations
+        .iter()
+        .find(|v| v.rule == "readiness")
+        .expect("the readiness violation");
+    assert!(
+        violation.detail.contains("no service is listening"),
+        "the plugin's own reason must be quoted: {}",
+        violation.detail
+    );
 }
 
 #[test]
@@ -54,7 +76,12 @@ fn a_declared_capability_that_answers_ready_passes() {
     // The fake answers its default `{ready: true}`; the whole suite must pass, which also
     // pins that declaring the capability does not disturb any other rule.
     let report = conformance::run(&check(&declaring_script(None)));
-    assert_eq!(report.rules_failed(), Vec::<&'static str>::new(), "the fake declaring readiness must pass every rule: {:?}", report.violations);
+    assert_eq!(
+        report.rules_failed(),
+        Vec::<&'static str>::new(),
+        "the fake declaring readiness must pass every rule: {:?}",
+        report.violations
+    );
 }
 
 #[test]
@@ -62,6 +89,14 @@ fn an_undeclared_capability_is_not_applicable() {
     // The default fake handshake does not declare readiness, so the suite must not call
     // `ready` and must not fail the plugin for it; the rule is counted not-applicable.
     let report = conformance::run(&check(""));
-    assert!(!report.failed("readiness"), "a plugin that never declared readiness must not be failed for it: {:?}", report.violations);
-    assert!(report.not_applicable >= 1, "the readiness rule must be counted not-applicable: {}", report.not_applicable);
+    assert!(
+        !report.failed("readiness"),
+        "a plugin that never declared readiness must not be failed for it: {:?}",
+        report.violations
+    );
+    assert!(
+        report.not_applicable >= 1,
+        "the readiness rule must be counted not-applicable: {}",
+        report.not_applicable
+    );
 }

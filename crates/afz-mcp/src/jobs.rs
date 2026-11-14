@@ -89,7 +89,9 @@ pub type Shared = Arc<Mutex<Registry>>;
 /// Lock the registry, recovering the guard if a previous holder panicked: a poisoned lock
 /// still holds a consistent `Registry`, and dropping in-flight jobs would be worse.
 pub fn lock(shared: &Shared) -> std::sync::MutexGuard<'_, Registry> {
-    shared.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Build the `Options` for one scan: the scan project's defaults, the resolved paths, and
@@ -159,7 +161,8 @@ pub fn start(shared: &Shared, options: Options) -> Result<String, String> {
                 let mut registry = lock(&shared);
                 if let Some(job) = registry.jobs.get_mut(&id) {
                     job.state = JobState::Failed;
-                    job.error = Some("the scan thread panicked; see the server's stderr".to_string());
+                    job.error =
+                        Some("the scan thread panicked; see the server's stderr".to_string());
                 }
                 registry.active = None;
                 return;
@@ -169,11 +172,19 @@ pub fn start(shared: &Shared, options: Options) -> Result<String, String> {
         if let Some(job) = registry.jobs.get_mut(&id) {
             match report {
                 Ok(report) => {
-                    job.scan_id = report.dir.file_name().map(|name| name.to_string_lossy().into_owned());
+                    job.scan_id = report
+                        .dir
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned());
                     job.dir = Some(report.dir.clone());
                     job.git = report.document.git.clone();
-                    job.stopped_reason = Some(stopped_reason(&report.document.execution.stopped_reason).to_string());
-                    job.state = if job.cancel_requested { JobState::Cancelled } else { JobState::Completed };
+                    job.stopped_reason =
+                        Some(stopped_reason(&report.document.execution.stopped_reason).to_string());
+                    job.state = if job.cancel_requested {
+                        JobState::Cancelled
+                    } else {
+                        JobState::Completed
+                    };
                 }
                 Err(e) => {
                     job.state = JobState::Failed;
@@ -194,18 +205,27 @@ pub fn newest(registry: &Registry) -> Option<&Job> {
 /// Resolve a job by id, accepting both the `job-…` handle and the bare engine scan id the
 /// result directory is named after; `None` means the newest job.
 pub fn find<'a>(registry: &'a Registry, id: Option<&str>) -> Option<&'a Job> {
-    let Some(id) = id else { return newest(registry) };
+    let Some(id) = id else {
+        return newest(registry);
+    };
     if let Some(job) = registry.jobs.get(id) {
         return Some(job);
     }
-    registry.jobs.values().find(|job| job.scan_id.as_deref() == Some(id))
+    registry
+        .jobs
+        .values()
+        .find(|job| job.scan_id.as_deref() == Some(id))
 }
 
 /// The same lookup as [`find`], for the caller that must set the stop flag.
 pub fn find_mut<'a>(registry: &'a mut Registry, id: Option<&str>) -> Option<&'a mut Job> {
     let key = match id {
         Some(id) if registry.jobs.contains_key(id) => Some(id.to_string()),
-        Some(id) => registry.jobs.values().find(|job| job.scan_id.as_deref() == Some(id)).map(|job| job.id.clone()),
+        Some(id) => registry
+            .jobs
+            .values()
+            .find(|job| job.scan_id.as_deref() == Some(id))
+            .map(|job| job.id.clone()),
         None => registry.order.last().cloned(),
     };
     key.and_then(|key| registry.jobs.get_mut(&key))

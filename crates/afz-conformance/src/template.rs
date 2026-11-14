@@ -138,13 +138,22 @@ pub struct TemplateReport {
 
 impl TemplateReport {
     pub fn passed(&self) -> usize {
-        self.properties.iter().filter(|p| p.verdict == Verdict::Pass).count()
+        self.properties
+            .iter()
+            .filter(|p| p.verdict == Verdict::Pass)
+            .count()
     }
     pub fn failed(&self) -> usize {
-        self.properties.iter().filter(|p| p.verdict == Verdict::Fail).count()
+        self.properties
+            .iter()
+            .filter(|p| p.verdict == Verdict::Fail)
+            .count()
     }
     pub fn not_applicable(&self) -> usize {
-        self.properties.iter().filter(|p| p.verdict == Verdict::NotApplicable).count()
+        self.properties
+            .iter()
+            .filter(|p| p.verdict == Verdict::NotApplicable)
+            .count()
     }
 }
 
@@ -172,7 +181,8 @@ pub fn is_fixture_shaped(id: &str) -> bool {
 /// (or a manifest id not in the template) is a manifest error, never a silent skip.
 fn required_fields(id: &str) -> &'static [&'static str] {
     match id {
-        "crash-unguarded" | "guard-refusal" | "method-receiver" | "reproducer-script" | "deadline-sleep" => &["symbol", "input"],
+        "crash-unguarded" | "guard-refusal" | "method-receiver" | "reproducer-script"
+        | "deadline-sleep" => &["symbol", "input"],
         "coverage-digest-live" => &["symbol", "inputs"],
         "unconstructible-receiver" => &["symbol", "blockedByType"],
         "private-symbol" | "unrepresentable-symbol" | "stdout-purity" => &["symbol"],
@@ -184,8 +194,10 @@ fn required_fields(id: &str) -> &'static [&'static str] {
 /// accounted for, every realization carrying the fields its property drives with. Errors are
 /// usage errors - the CLI reports them before spawning the plugin.
 pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let manifest: Manifest = serde_json::from_str(&text).map_err(|e| format!("{} is not a conformance manifest: {e}", path.display()))?;
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let manifest: Manifest = serde_json::from_str(&text)
+        .map_err(|e| format!("{} is not a conformance manifest: {e}", path.display()))?;
     let template = template_v1();
     if manifest.template_version != template.version {
         return Err(format!(
@@ -222,7 +234,11 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
             ));
         }
     }
-    if let Some(extra) = manifest.properties.keys().find(|id| !template.properties.iter().any(|p| &p.id == *id)) {
+    if let Some(extra) = manifest
+        .properties
+        .keys()
+        .find(|id| !template.properties.iter().any(|p| &p.id == *id))
+    {
         return Err(format!("{} names \"{extra}\", which is not a property of template v1; template versions are immutable", path.display()));
     }
     Ok(manifest)
@@ -233,8 +249,16 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
 /// is its wall-clock limit. The product drivers (`afz validate-harness`, `afz install-harness`)
 /// share this one runner, so a harness repository's CI assertion on the validator section of a
 /// report sees exactly what an install sees.
-pub fn run_validator(argv: &[PathBuf], dir: &Path, deadline_ms: u64) -> Result<TemplateReport, String> {
-    let joined = argv.iter().map(|argument| argument.display().to_string()).collect::<Vec<_>>().join(" ");
+pub fn run_validator(
+    argv: &[PathBuf],
+    dir: &Path,
+    deadline_ms: u64,
+) -> Result<TemplateReport, String> {
+    let joined = argv
+        .iter()
+        .map(|argument| argument.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut child = Command::new(&argv[0])
         .args(&argv[1..])
         .current_dir(dir)
@@ -263,20 +287,39 @@ pub fn run_validator(argv: &[PathBuf], dir: &Path, deadline_ms: u64) -> Result<T
                 if started.elapsed() > limit {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(format!("fixture-validator: {joined} overran its {deadline_ms} ms limit"));
+                    return Err(format!(
+                        "fixture-validator: {joined} overran its {deadline_ms} ms limit"
+                    ));
                 }
                 std::thread::sleep(Duration::from_millis(10));
             }
-            Err(e) => return Err(format!("fixture-validator: waiting on {joined} failed: {e}")),
+            Err(e) => {
+                return Err(format!(
+                    "fixture-validator: waiting on {joined} failed: {e}"
+                ))
+            }
         }
     };
-    let stdout = out_reader.join().map_err(|_| "fixture-validator: stdout reader panicked")?.unwrap_or_default();
-    let stderr = err_reader.join().map_err(|_| "fixture-validator: stderr reader panicked")?.unwrap_or_default();
+    let stdout = out_reader
+        .join()
+        .map_err(|_| "fixture-validator: stdout reader panicked")?
+        .unwrap_or_default();
+    let stderr = err_reader
+        .join()
+        .map_err(|_| "fixture-validator: stderr reader panicked")?
+        .unwrap_or_default();
     if !status.success() {
-        return Err(format!("fixture-validator: {joined} exited {status}; stderr: {}", tail(&stderr)));
+        return Err(format!(
+            "fixture-validator: {joined} exited {status}; stderr: {}",
+            tail(&stderr)
+        ));
     }
-    serde_json::from_str(&String::from_utf8_lossy(&stdout))
-        .map_err(|e| format!("fixture-validator: {joined} did not print a TemplateReport: {e}; stderr: {}", tail(&stderr)))
+    serde_json::from_str(&String::from_utf8_lossy(&stdout)).map_err(|e| {
+        format!(
+            "fixture-validator: {joined} did not print a TemplateReport: {e}; stderr: {}",
+            tail(&stderr)
+        )
+    })
 }
 
 /// The last 2048 bytes of the validator's stderr, which is where its own failure explanation

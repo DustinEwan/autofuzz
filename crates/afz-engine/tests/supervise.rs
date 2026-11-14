@@ -7,10 +7,10 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use afz_engine::supervise::{Completed, DISABLE_AFTER, Job, RunReport, Supervisor};
 use afz_engine::config::OraclesConfig;
 use afz_engine::oracles::{Oracle, Oracles};
 use afz_engine::rpc::client::Launch;
+use afz_engine::supervise::{Completed, Job, RunReport, Supervisor, DISABLE_AFTER};
 use afz_protocol::{DiscoverReq, SkipReason, ValueTree};
 
 /// The fake plugin is a binary of the `xtask` package, so `CARGO_BIN_EXE_…` does not cover it
@@ -27,18 +27,31 @@ fn fakeplugin_path() -> PathBuf {
             return candidate;
         }
         let Some(parent) = dir.parent() else {
-            panic!("build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})", exe.display());
+            panic!(
+                "build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})",
+                exe.display()
+            );
         };
         dir = parent;
     }
 }
 
 fn supervisor(script: &str, workers: usize, deadline_ms: u64) -> Supervisor {
-    let launch = Launch::new([fakeplugin_path().display().to_string()]).with_env("AFZ_FAKE_SCRIPT", script);
+    let launch =
+        Launch::new([fakeplugin_path().display().to_string()]).with_env("AFZ_FAKE_SCRIPT", script);
     // The fake plugin answers `discover` from a fixed inventory, so the scope here is only
     // what a real plugin would need to resolve a `targetId`.
-    let discovery = DiscoverReq { root: ".".to_string(), ..Default::default() };
-    Supervisor::new(launch, workers, Duration::from_millis(deadline_ms), DISABLE_AFTER, discovery)
+    let discovery = DiscoverReq {
+        root: ".".to_string(),
+        ..Default::default()
+    };
+    Supervisor::new(
+        launch,
+        workers,
+        Duration::from_millis(deadline_ms),
+        DISABLE_AFTER,
+        discovery,
+    )
 }
 
 fn jobs(target: &str, count: u64) -> Vec<Job> {
@@ -90,16 +103,39 @@ fn a_plugin_that_misses_the_deadline_yields_deadline_findings_and_the_run_finish
     let report = supervisor.run(jobs("afz:t:0001", 4), Duration::from_millis(4_000));
     let elapsed = started.elapsed();
 
-    assert_eq!(report.completed.len(), 4, "every invocation still produced a result");
+    assert_eq!(
+        report.completed.len(),
+        4,
+        "every invocation still produced a result"
+    );
     for completed in &report.completed {
-        assert_eq!(completed.outcome.kind(), "failed", "{:?}", completed.outcome);
-        assert_eq!(completed.outcome.via(), Some("deadline"), "expected a deadline finding, got {:?}", completed.outcome);
-        assert!(completed.outcome.coverage().unwrap_or(&[]).is_empty(), "a killed invocation reports no coverage");
-        assert!(completed.restart.is_some(), "a deadline kills and restarts the plugin process");
+        assert_eq!(
+            completed.outcome.kind(),
+            "failed",
+            "{:?}",
+            completed.outcome
+        );
+        assert_eq!(
+            completed.outcome.via(),
+            Some("deadline"),
+            "expected a deadline finding, got {:?}",
+            completed.outcome
+        );
+        assert!(
+            completed.outcome.coverage().unwrap_or(&[]).is_empty(),
+            "a killed invocation reports no coverage"
+        );
+        assert!(
+            completed.restart.is_some(),
+            "a deadline kills and restarts the plugin process"
+        );
     }
     assert_eq!(report.restarts, 4, "one restart per missed deadline");
     // The budget, not the plugin's 5000 ms, bounds the run.
-    assert!(elapsed < Duration::from_millis(4_000 + 1_000), "the run took {elapsed:?}, past its budget plus slack");
+    assert!(
+        elapsed < Duration::from_millis(4_000 + 1_000),
+        "the run took {elapsed:?}, past its budget plus slack"
+    );
 }
 
 #[test]
@@ -111,12 +147,31 @@ fn a_plugin_that_exits_yields_process_exit_findings_and_restarts() {
     assert_eq!(report.completed.len(), 6);
     for completed in &report.completed {
         assert_eq!(completed.outcome.kind(), "failed");
-        assert_eq!(completed.outcome.via(), Some("processExit"), "expected a processExit finding, got {:?}", completed.outcome);
-        let message = completed.outcome.fault().map(|f| f.message.clone()).unwrap_or_default();
-        assert!(message.contains("code 1"), "the exit code should reach the finding: {message}");
+        assert_eq!(
+            completed.outcome.via(),
+            Some("processExit"),
+            "expected a processExit finding, got {:?}",
+            completed.outcome
+        );
+        let message = completed
+            .outcome
+            .fault()
+            .map(|f| f.message.clone())
+            .unwrap_or_default();
+        assert!(
+            message.contains("code 1"),
+            "the exit code should reach the finding: {message}"
+        );
     }
-    assert!(report.restarts >= 6, "each exit must restart the process, saw {}", report.restarts);
-    assert!(report.disabled.is_empty(), "six restarts must not disable a target");
+    assert!(
+        report.restarts >= 6,
+        "each exit must restart the process, saw {}",
+        report.restarts
+    );
+    assert!(
+        report.disabled.is_empty(),
+        "six restarts must not disable a target"
+    );
 }
 
 #[test]
@@ -127,30 +182,67 @@ fn a_run_stops_at_its_wall_clock_and_accounts_for_every_job() {
     let report = supervisor.run(jobs("afz:t:0001", 1_000), Duration::from_millis(1_200));
     let elapsed = started.elapsed();
 
-    assert!(!report.completed.is_empty(), "some invocations should have run");
-    assert!(!report.unattempted.is_empty(), "a 1.2 s budget cannot run 1000 invocations");
+    assert!(
+        !report.completed.is_empty(),
+        "some invocations should have run"
+    );
+    assert!(
+        !report.unattempted.is_empty(),
+        "a 1.2 s budget cannot run 1000 invocations"
+    );
     let attempted: Vec<u64> = report.completed.iter().map(|c| c.invocation_id).collect();
     let accounted: Vec<u64> = report.unattempted.to_vec();
     for id in 1..=1_000 {
-        assert!(attempted.contains(&id) || accounted.contains(&id), "invocation {id} is unaccounted for");
+        assert!(
+            attempted.contains(&id) || accounted.contains(&id),
+            "invocation {id} is unaccounted for"
+        );
     }
-    assert!(elapsed < Duration::from_millis(1_200 + 1_500), "the run overran its budget: {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_millis(1_200 + 1_500),
+        "the run overran its budget: {elapsed:?}"
+    );
 }
 
 #[test]
 fn fifty_consecutive_restarts_disable_that_target_and_leave_the_others_running() {
     let script = r#"[{"exit":1,"for":"afz:t:0003","at":1,"to":100000}]"#;
     let mut supervisor = supervisor(script, 1, 2_000);
-    let report = supervisor.run(mixed(&[("afz:t:0003", DISABLE_AFTER + 12), ("afz:t:0001", 5)]), Duration::from_millis(60_000));
+    let report = supervisor.run(
+        mixed(&[("afz:t:0003", DISABLE_AFTER + 12), ("afz:t:0001", 5)]),
+        Duration::from_millis(60_000),
+    );
 
-    assert_eq!(report.disabled, vec!["afz:t:0003".to_string()], "the bad target must be disabled");
-    assert!(report.restarts >= DISABLE_AFTER, "restarts are counted: {}", report.restarts);
-    let good: Vec<&Completed> = report.completed.iter().filter(|c| c.target_id == "afz:t:0001").collect();
+    assert_eq!(
+        report.disabled,
+        vec!["afz:t:0003".to_string()],
+        "the bad target must be disabled"
+    );
+    assert!(
+        report.restarts >= DISABLE_AFTER,
+        "restarts are counted: {}",
+        report.restarts
+    );
+    let good: Vec<&Completed> = report
+        .completed
+        .iter()
+        .filter(|c| c.target_id == "afz:t:0001")
+        .collect();
     assert_eq!(good.len(), 5, "the healthy target keeps running");
-    assert!(good.iter().all(|c| c.outcome.kind() == "ok"), "healthy invocations still report ok");
+    assert!(
+        good.iter().all(|c| c.outcome.kind() == "ok"),
+        "healthy invocations still report ok"
+    );
     // The jobs left in the queue for the disabled target were never attempted.
-    let bad_attempted = report.completed.iter().filter(|c| c.target_id == "afz:t:0003").count();
-    assert!(bad_attempted <= (DISABLE_AFTER as usize) + 1, "the engine kept invoking a target it had disabled: {bad_attempted}");
+    let bad_attempted = report
+        .completed
+        .iter()
+        .filter(|c| c.target_id == "afz:t:0003")
+        .count();
+    assert!(
+        bad_attempted <= (DISABLE_AFTER as usize) + 1,
+        "the engine kept invoking a target it had disabled: {bad_attempted}"
+    );
 }
 
 #[test]
@@ -159,11 +251,26 @@ fn a_target_the_plugin_refuses_to_build_is_reported_once_and_never_invoked() {
     let mut supervisor = supervisor("[]", 1, 2_000);
     let report = supervisor.run(jobs("afz:t:0006", 4), Duration::from_millis(20_000));
 
-    assert!(report.completed.is_empty(), "an unbuildable target must not be invoked");
-    assert_eq!(report.unbuildable.len(), 1, "one report per target, not per invocation: {:?}", report.unbuildable);
+    assert!(
+        report.completed.is_empty(),
+        "an unbuildable target must not be invoked"
+    );
+    assert_eq!(
+        report.unbuildable.len(),
+        1,
+        "one report per target, not per invocation: {:?}",
+        report.unbuildable
+    );
     assert_eq!(report.unbuildable[0].target_id, "afz:t:0006");
-    assert_eq!(report.unbuildable[0].reason, SkipReason::UnconstructibleParameter);
-    assert_eq!(report.unattempted.len(), 4, "all four invocations are accounted for as unattempted");
+    assert_eq!(
+        report.unbuildable[0].reason,
+        SkipReason::UnconstructibleParameter
+    );
+    assert_eq!(
+        report.unattempted.len(),
+        4,
+        "all four invocations are accounted for as unattempted"
+    );
     assert_eq!(report.restarts, 0, "a refusal is not a crash");
 }
 
@@ -179,7 +286,10 @@ fn parallel_workers_answer_every_invocation_exactly_once() {
     assert_eq!(ids.len(), 40, "an invocation was answered twice");
     assert!(report.completed.iter().all(|c| c.outcome.kind() == "ok"));
     // Out-of-order answers are the point of parallel workers; the report is sorted anyway.
-    assert!(report.completed.windows(2).all(|w| w[0].invocation_id < w[1].invocation_id));
+    assert!(report
+        .completed
+        .windows(2)
+        .all(|w| w[0].invocation_id < w[1].invocation_id));
     assert_eq!(report.restarts, 0, "a healthy plugin is not restarted");
 }
 
@@ -193,8 +303,18 @@ fn a_second_batch_reports_only_its_own_restarts() {
     let first = supervisor.run(jobs("afz:t:0002", 3), Duration::from_millis(20_000));
     let second = supervisor.run(jobs("afz:t:0002", 3), Duration::from_millis(20_000));
 
-    let restarted = |report: &RunReport| report.completed.iter().filter(|c| c.restart.is_some()).count() as u64;
-    assert_eq!(first.restarts, restarted(&first), "the first batch reports its own cost");
+    let restarted = |report: &RunReport| {
+        report
+            .completed
+            .iter()
+            .filter(|c| c.restart.is_some())
+            .count() as u64
+    };
+    assert_eq!(
+        first.restarts,
+        restarted(&first),
+        "the first batch reports its own cost"
+    );
     assert_eq!(
         second.restarts,
         restarted(&second),
@@ -215,14 +335,27 @@ fn a_plugin_that_answers_past_the_deadline_but_inside_the_grace_keeps_its_proces
     let mut supervisor = supervisor(script, 1, 300);
     let report = supervisor.run(jobs("afz:t:0001", 3), Duration::from_millis(20_000));
 
-    assert_eq!(report.restarts, 0, "a late answer must not cost a process: {} restarts", report.restarts);
-    assert_eq!(report.completed.len(), 3, "every invocation is answered by the plugin");
+    assert_eq!(
+        report.restarts, 0,
+        "a late answer must not cost a process: {} restarts",
+        report.restarts
+    );
+    assert_eq!(
+        report.completed.len(),
+        3,
+        "every invocation is answered by the plugin"
+    );
 
     let mut config = OraclesConfig::default();
     config.deadline.ms = Some(300);
     let engine = Oracles::new(&config);
     for completed in &report.completed {
-        assert_eq!(completed.outcome.kind(), "ok", "the plugin answered: {:?}", completed.outcome);
+        assert_eq!(
+            completed.outcome.kind(),
+            "ok",
+            "the plugin answered: {:?}",
+            completed.outcome
+        );
         assert!(
             completed.outcome.duration_ms() >= 300.0,
             "the call must show that it ran past the deadline: {} ms",

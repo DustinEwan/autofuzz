@@ -334,13 +334,20 @@ pub fn reproducer_artifact_path(finding_id: &str, extension: &str) -> String {
 /// two scans started in the same millisecond apart.
 pub fn scan_id(now: SystemTime) -> String {
     const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-    let millis = now.duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let millis = now
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
     let mut stamp = String::with_capacity(8);
     for shift in (0..8).rev() {
         stamp.push(ALPHABET[((millis >> (shift * 5)) & 0x1f) as usize] as char);
     }
     let nonce: u16 = rand::random();
-    format!("{stamp}{}{}", ALPHABET[((nonce >> 5) & 0x1f) as usize] as char, ALPHABET[(nonce & 0x1f) as usize] as char)
+    format!(
+        "{stamp}{}{}",
+        ALPHABET[((nonce >> 5) & 0x1f) as usize] as char,
+        ALPHABET[(nonce & 0x1f) as usize] as char
+    )
 }
 
 /// Write one scan: the document, then the files it names. Returns the scan's directory.
@@ -348,7 +355,11 @@ pub fn scan_id(now: SystemTime) -> String {
 /// The directory is created under `out_dir` named by `document.scanId`. If that name is taken —
 /// two scans in the same millisecond and the same nonce — the writer appends `-2`, `-3` rather
 /// than overwriting a finished scan's output.
-pub fn write(out_dir: &Path, document: &ScanDocument, files: &ScanFiles<'_>) -> io::Result<PathBuf> {
+pub fn write(
+    out_dir: &Path,
+    document: &ScanDocument,
+    files: &ScanFiles<'_>,
+) -> io::Result<PathBuf> {
     std::fs::create_dir_all(out_dir)?;
     let dir = unique_dir(out_dir, &document.scan_id)?;
     std::fs::create_dir_all(dir.join(INPUTS_DIR))?;
@@ -356,9 +367,15 @@ pub fn write(out_dir: &Path, document: &ScanDocument, files: &ScanFiles<'_>) -> 
     std::fs::create_dir_all(dir.join(CORPUS_DIR))?;
 
     for finding in &files.findings {
-        write_json(&dir.join(input_artifact_path(&finding.finding_id)), &finding.input)?;
+        write_json(
+            &dir.join(input_artifact_path(&finding.finding_id)),
+            &finding.input,
+        )?;
         if let Some(minimized) = &finding.minimized {
-            write_json(&dir.join(minimized_artifact_path(&finding.finding_id)), &minimized.values)?;
+            write_json(
+                &dir.join(minimized_artifact_path(&finding.finding_id)),
+                &minimized.values,
+            )?;
         }
         if let Some(repro) = &finding.reproducer {
             std::fs::write(dir.join(&repro.artifact), &repro.content)?;
@@ -366,7 +383,11 @@ pub fn write(out_dir: &Path, document: &ScanDocument, files: &ScanFiles<'_>) -> 
     }
 
     for entry in &files.corpus {
-        write_json(&dir.join(CORPUS_DIR).join(format!("{}.json", artifact_stem(&entry.name))), entry)?;
+        write_json(
+            &dir.join(CORPUS_DIR)
+                .join(format!("{}.json", artifact_stem(&entry.name))),
+            entry,
+        )?;
     }
     if let Some(coverage) = files.coverage {
         std::fs::write(dir.join("coverage.json"), coverage)?;
@@ -384,7 +405,12 @@ pub fn write(out_dir: &Path, document: &ScanDocument, files: &ScanFiles<'_>) -> 
 /// Read a scan result. Renderers go through here and open nothing else.
 pub fn read(path: &Path) -> Result<ScanDocument, io::Error> {
     let text = std::fs::read_to_string(path)?;
-    serde_json::from_str(&text).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", path.display())))
+    serde_json::from_str(&text).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{}: {e}", path.display()),
+        )
+    })
 }
 
 /// The JSON Schema for this document, the same bytes `docs/schema/afz-1/scan-result.json` holds.
@@ -397,7 +423,8 @@ fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let text = serde_json::to_string(value).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let text =
+        serde_json::to_string(value).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let mut handle = std::fs::File::create(path)?;
     handle.write_all(text.as_bytes())?;
     handle.flush()
@@ -423,7 +450,10 @@ fn unique_dir(out_dir: &Path, scan_id: &str) -> io::Result<PathBuf> {
 pub fn read_corpus(scan_dir: &Path) -> io::Result<Vec<CorpusFile>> {
     let dir = scan_dir.join(CORPUS_DIR);
     if !dir.is_dir() {
-        return Err(io::Error::new(io::ErrorKind::NotFound, format!("no {} under {}", CORPUS_DIR, scan_dir.display())));
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no {} under {}", CORPUS_DIR, scan_dir.display()),
+        ));
     }
     let mut names: Vec<PathBuf> = std::fs::read_dir(&dir)?
         .filter_map(|entry| entry.ok())
@@ -434,8 +464,12 @@ pub fn read_corpus(scan_dir: &Path) -> io::Result<Vec<CorpusFile>> {
     let mut loaded = Vec::with_capacity(names.len());
     for path in names {
         let text = std::fs::read_to_string(&path)?;
-        let entry: CorpusFile = serde_json::from_str(&text)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", path.display())))?;
+        let entry: CorpusFile = serde_json::from_str(&text).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{}: {e}", path.display()),
+            )
+        })?;
         loaded.push(entry);
     }
     Ok(loaded)

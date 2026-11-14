@@ -1,7 +1,7 @@
 //! The committed schema must be regenerable from the Rust types, because the Node plugin is
 //! written against these files and a stale file means a silent protocol drift.
 
-use afz_protocol::{PROTOCOL_VERSION, schema_dir};
+use afz_protocol::{schema_dir, PROTOCOL_VERSION};
 use afz_xtask::schema::write_schemas;
 
 fn repo_root() -> std::path::PathBuf {
@@ -13,11 +13,19 @@ fn every_contract_type_has_a_schema() {
     let dir = std::env::temp_dir().join(format!("afz-xtask-schema-{}", std::process::id()));
     let files = write_schemas(&dir).expect("schemas write");
     let set = dir.join(schema_dir(PROTOCOL_VERSION));
-    assert!(files.len() >= 18, "expected every contract type, got {}", files.len());
+    assert!(
+        files.len() >= 18,
+        "expected every contract type, got {}",
+        files.len()
+    );
     for f in &files {
         let text = std::fs::read_to_string(f).unwrap();
         let value: serde_json::Value = serde_json::from_str(&text).expect("schema is json");
-        assert_eq!(value["$schema"].as_str(), Some("https://json-schema.org/draft/2020-12/schema"), "{f}");
+        assert_eq!(
+            value["$schema"].as_str(),
+            Some("https://json-schema.org/draft/2020-12/schema"),
+            "{f}"
+        );
     }
 
     let outcome: serde_json::Value =
@@ -28,28 +36,42 @@ fn every_contract_type_has_a_schema() {
         .iter()
         .filter_map(|v| v["properties"]["kind"]["const"].as_str())
         .collect();
-    assert_eq!(tags, ["ok", "rejected", "failed"], "outcome variants changed shape");
+    assert_eq!(
+        tags,
+        ["ok", "rejected", "failed"],
+        "outcome variants changed shape"
+    );
 
     let type_node: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(set.join("type-node.json")).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(set.join("type-node.json")).unwrap())
+            .unwrap();
     let kinds: Vec<&str> = type_node["oneOf"]
         .as_array()
         .expect("type-node is a tagged union")
         .iter()
         .filter_map(|v| v["properties"]["kind"]["const"].as_str())
         .collect();
-    assert_eq!(kinds.len(), 13, "TypeNode must carry the thirteen wire kinds, got {kinds:?}");
+    assert_eq!(
+        kinds.len(),
+        13,
+        "TypeNode must carry the thirteen wire kinds, got {kinds:?}"
+    );
 
     // `prepare` answers with a JSON boolean, not the string a serde internal tag would write.
     let prepare: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(set.join("prepare-resp.json")).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(set.join("prepare-resp.json")).unwrap())
+            .unwrap();
     let oks: Vec<bool> = prepare["oneOf"]
         .as_array()
         .expect("prepare-resp is a two-shape union")
         .iter()
         .filter_map(|v| v["properties"]["ok"]["const"].as_bool())
         .collect();
-    assert_eq!(oks, [true, false], "prepare-resp must tag on a boolean ok, got {oks:?}");
+    assert_eq!(
+        oks,
+        [true, false],
+        "prepare-resp must tag on a boolean ok, got {oks:?}"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -77,13 +99,25 @@ fn committed_schema_matches_generated_schema() {
     // someone edited docs/schema by hand, or a revision directory was added by hand.
     let committed_set = committed.join(schema_dir(PROTOCOL_VERSION));
     for entry in std::fs::read_dir(&committed_set).expect("committed schema dir") {
-        let name = entry.unwrap().path().file_name().unwrap().to_string_lossy().to_string();
-        if !fresh_names.iter().any(|f| f.ends_with(&format!("{}{name}", std::path::MAIN_SEPARATOR))) {
+        let name = entry
+            .unwrap()
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        if !fresh_names
+            .iter()
+            .any(|f| f.ends_with(&format!("{}{name}", std::path::MAIN_SEPARATOR)))
+        {
             stale.push(format!("{name} (not generated)"));
         }
     }
     std::fs::remove_dir_all(&dir).ok();
-    assert!(stale.is_empty(), "docs/schema is stale, run `cargo run -p afz-xtask -- schema`: {stale:?}");
+    assert!(
+        stale.is_empty(),
+        "docs/schema is stale, run `cargo run -p afz-xtask -- schema`: {stale:?}"
+    );
 }
 
 /// The design fixes the wire format: JSON field names are camelCase. serde's container-level
@@ -98,11 +132,18 @@ fn every_wire_field_name_is_camel_case() {
     for file in &files {
         let text = std::fs::read_to_string(file).unwrap();
         let value: serde_json::Value = serde_json::from_str(&text).expect("schema is json");
-        let name = std::path::Path::new(file).file_name().unwrap().to_string_lossy().to_string();
+        let name = std::path::Path::new(file)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         walk_properties(&value, &name, &mut offenders);
     }
     std::fs::remove_dir_all(&dir).ok();
-    assert!(offenders.is_empty(), "snake_case wire field names: {offenders:?}");
+    assert!(
+        offenders.is_empty(),
+        "snake_case wire field names: {offenders:?}"
+    );
 }
 
 fn walk_properties(node: &serde_json::Value, schema: &str, offenders: &mut Vec<String>) {

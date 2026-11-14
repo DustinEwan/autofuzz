@@ -16,31 +16,54 @@ where
 fn scalar_types() -> Vec<TypeNode> {
     vec![
         TypeNode::null(),
-        TypeNode::Scalar { scalar: ScalarKind::Undefined, bounds: None, length: None },
+        TypeNode::Scalar {
+            scalar: ScalarKind::Undefined,
+            bounds: None,
+            length: None,
+        },
         TypeNode::boolean(),
         TypeNode::Scalar {
             scalar: ScalarKind::Number,
-            bounds: Some(NumberBounds { int: true, finite_only: true, min: Some(0.0), max: Some(255.0) }),
+            bounds: Some(NumberBounds {
+                int: true,
+                finite_only: true,
+                min: Some(0.0),
+                max: Some(255.0),
+            }),
             length: None,
         },
-        TypeNode::Scalar { scalar: ScalarKind::BigInt, bounds: None, length: None },
+        TypeNode::Scalar {
+            scalar: ScalarKind::BigInt,
+            bounds: None,
+            length: None,
+        },
         TypeNode::Scalar {
             scalar: ScalarKind::String,
             bounds: None,
-            length: Some(LengthBounds { min: Some(1), max: Some(64) }),
+            length: Some(LengthBounds {
+                min: Some(1),
+                max: Some(64),
+            }),
         },
     ]
 }
 
 fn composite_types() -> Vec<TypeNode> {
     vec![
-        TypeNode::StringFormat { format: "date-time".into() },
-        TypeNode::Literal { values: vec!["USD".into(), "EUR".into(), 7.into()] },
+        TypeNode::StringFormat {
+            format: "date-time".into(),
+        },
+        TypeNode::Literal {
+            values: vec!["USD".into(), "EUR".into(), 7.into()],
+        },
         TypeNode::Collection {
             collection: CollectionKind::Set,
             element: Box::new(TypeNode::string()),
             key: None,
-            length: Some(LengthBounds { min: None, max: Some(8) }),
+            length: Some(LengthBounds {
+                min: None,
+                max: Some(8),
+            }),
         },
         TypeNode::Collection {
             collection: CollectionKind::Map,
@@ -52,29 +75,48 @@ fn composite_types() -> Vec<TypeNode> {
             name: Some("Money".into()),
             id: Some("Money".into()),
             fields: vec![
-                Field { name: "amount".into(), ty: TypeNode::number(), required: true },
+                Field {
+                    name: "amount".into(),
+                    ty: TypeNode::number(),
+                    required: true,
+                },
                 Field {
                     name: "parent".into(),
                     ty: TypeNode::Ref {
                         name: "Money".into(),
-                        fields: vec![RefField { name: "parent".into(), ty: TypeNode::null() }],
+                        fields: vec![RefField {
+                            name: "parent".into(),
+                            ty: TypeNode::null(),
+                        }],
                     },
                     required: false,
                 },
             ],
         },
-        TypeNode::Tuple { items: vec![TypeNode::string(), TypeNode::boolean()] },
+        TypeNode::Tuple {
+            items: vec![TypeNode::string(), TypeNode::boolean()],
+        },
         TypeNode::Composite {
             composite: CompositeKind::Union,
             discriminant: Some("kind".into()),
-            members: vec![TypeNode::Literal { values: vec!["card".into()] }, TypeNode::null()],
+            members: vec![
+                TypeNode::Literal {
+                    values: vec!["card".into()],
+                },
+                TypeNode::null(),
+            ],
         },
         TypeNode::Composite {
             composite: CompositeKind::Intersection,
             discriminant: None,
             members: vec![TypeNode::boolean(), TypeNode::null()],
         },
-        TypeNode::Buffer { length: Some(LengthBounds { min: Some(0), max: Some(4096) }) },
+        TypeNode::Buffer {
+            length: Some(LengthBounds {
+                min: Some(0),
+                max: Some(4096),
+            }),
+        },
         TypeNode::promise(TypeNode::string()),
         TypeNode::Function {
             behavior: Some(FunctionBehavior::CaptureArguments),
@@ -85,10 +127,16 @@ fn composite_types() -> Vec<TypeNode> {
             element: Box::new(TypeNode::string()),
             max_items: Some(4),
         },
-        TypeNode::Opaque { ty: "Db".into(), module: Some("src/db.ts".into()) },
+        TypeNode::Opaque {
+            ty: "Db".into(),
+            module: Some("src/db.ts".into()),
+        },
         TypeNode::Ref {
             name: "Money".into(),
-            fields: vec![RefField { name: "parent".into(), ty: TypeNode::null() }],
+            fields: vec![RefField {
+                name: "parent".into(),
+                ty: TypeNode::null(),
+            }],
         },
     ]
 }
@@ -131,7 +179,11 @@ fn type_node_kind_tag_is_on_the_wire() {
     assert_eq!(json["kind"], "promise");
     assert_eq!(json["type"]["kind"], "scalar");
     assert_eq!(json["type"]["scalar"], "null");
-    let json = serde_json::to_value(TypeNode::Ref { name: "Money".into(), fields: Vec::new() }).unwrap();
+    let json = serde_json::to_value(TypeNode::Ref {
+        name: "Money".into(),
+        fields: Vec::new(),
+    })
+    .unwrap();
     assert_eq!(json["kind"], "ref");
     assert_eq!(json["name"], "Money");
     // A `ref` with no fields omits the key rather than writing an empty array.
@@ -148,39 +200,65 @@ fn value_tree_round_trips_every_node() {
         ValueTree::number(f64::NAN),
         ValueTree::number(f64::INFINITY),
         ValueTree::number(f64::NEG_INFINITY),
-        ValueTree::new(ValueNode::BigInt { value: "-9223372036854775808".into() }),
+        ValueTree::new(ValueNode::BigInt {
+            value: "-9223372036854775808".into(),
+        }),
         ValueTree::string(""),
         ValueTree::string("1 MiB".to_string()),
-        ValueTree::new(ValueNode::Literal { value: serde_json::json!({"a": [1, null, true]}) }),
-        ValueTree::new(ValueNode::Array { items: vec![ValueTree::number(0.0), ValueTree::null()] }),
-        ValueTree::new(ValueNode::Set { items: vec![ValueTree::string("a")] }),
+        ValueTree::new(ValueNode::Literal {
+            value: serde_json::json!({"a": [1, null, true]}),
+        }),
+        ValueTree::new(ValueNode::Array {
+            items: vec![ValueTree::number(0.0), ValueTree::null()],
+        }),
+        ValueTree::new(ValueNode::Set {
+            items: vec![ValueTree::string("a")],
+        }),
         ValueTree::new(ValueNode::Map {
             entries: vec![(ValueTree::string("k"), ValueTree::number(-1.0))],
         }),
         ValueTree::new(ValueNode::Object {
-            fields: vec![("v".into(), ValueTree::number(10.0)), ("to".into(), ValueTree::string("ZZZ"))],
+            fields: vec![
+                ("v".into(), ValueTree::number(10.0)),
+                ("to".into(), ValueTree::string("ZZZ")),
+            ],
         }),
-        ValueTree::new(ValueNode::Tuple { items: vec![ValueTree::bool(false)] }),
-        ValueTree::new(ValueNode::Buffer { bytes: vec![0, 1, 2, 255] }),
-        ValueTree::new(ValueNode::Function { behavior: FunctionBehavior::Throw, returns: None }),
+        ValueTree::new(ValueNode::Tuple {
+            items: vec![ValueTree::bool(false)],
+        }),
+        ValueTree::new(ValueNode::Buffer {
+            bytes: vec![0, 1, 2, 255],
+        }),
+        ValueTree::new(ValueNode::Function {
+            behavior: FunctionBehavior::Throw,
+            returns: None,
+        }),
         ValueTree::new(ValueNode::Function {
             behavior: FunctionBehavior::ReturnFirst,
             returns: Some(Box::new(ValueTree::number(0.0))),
         }),
-        ValueTree::new(ValueNode::Stream { iterable: false, items: vec![ValueTree::number(1.0)] }),
+        ValueTree::new(ValueNode::Stream {
+            iterable: false,
+            items: vec![ValueTree::number(1.0)],
+        }),
         ValueTree::new(ValueNode::Opaque { ty: "Db".into() }),
     ];
     for v in &values {
         round_trip(v);
     }
-    round_trip(&CallInput { arguments: values.clone(), receiver: Some(ValueTree::null()) });
+    round_trip(&CallInput {
+        arguments: values.clone(),
+        receiver: Some(ValueTree::null()),
+    });
     round_trip(&CallInput::default());
 }
 
 #[test]
 fn provenance_rides_flat_beside_the_node_tag() {
     // The plugin reads one flat object per node: its `node` tag, its fields, and provenance.
-    let tree = ValueTree::boundary(ValueNode::String { value: String::new() });
+    let tree = ValueTree::boundary(ValueNode::String {
+        value: String::new(),
+    });
     let json = serde_json::to_value(&tree).unwrap();
     assert_eq!(json["node"], "string");
     assert_eq!(json["value"], "");
@@ -194,7 +272,10 @@ fn provenance_rides_flat_beside_the_node_tag() {
 
     let mutated = ValueTree::with_provenance(
         ValueNode::number(1.0),
-        Provenance::Mutated { op: "boundary".into(), from: "afz:t:44be".into() },
+        Provenance::Mutated {
+            op: "boundary".into(),
+            from: "afz:t:44be".into(),
+        },
     );
     let json = serde_json::to_value(&mutated).unwrap();
     assert_eq!(json["provenance"]["mutated"]["op"], "boundary");
@@ -207,7 +288,9 @@ fn special_numbers_survive_json() {
     for v in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let tree = ValueTree::number(v);
         let back = round_trip(&tree);
-        let ValueNode::Number { value } = back.node else { panic!("expected number") };
+        let ValueNode::Number { value } = back.node else {
+            panic!("expected number")
+        };
         match v {
             x if x.is_nan() => assert!(value.as_f64().is_nan()),
             x if x == f64::INFINITY => assert_eq!(value.as_f64(), f64::INFINITY),
@@ -220,8 +303,18 @@ fn special_numbers_survive_json() {
 fn node_paths_address_every_descendant() {
     let tree = ValueTree::new(ValueNode::Object {
         fields: vec![
-            ("items".into(), ValueTree::new(ValueNode::Array { items: vec![ValueTree::number(7.0)] })),
-            ("map".into(), ValueTree::new(ValueNode::Map { entries: vec![(ValueTree::string("k"), ValueTree::string("v"))] })),
+            (
+                "items".into(),
+                ValueTree::new(ValueNode::Array {
+                    items: vec![ValueTree::number(7.0)],
+                }),
+            ),
+            (
+                "map".into(),
+                ValueTree::new(ValueNode::Map {
+                    entries: vec![(ValueTree::string("k"), ValueTree::string("v"))],
+                }),
+            ),
         ],
     });
     let paths = tree.paths();
@@ -229,30 +322,66 @@ fn node_paths_address_every_descendant() {
     assert_eq!(paths.len(), 6, "paths were {paths:?}");
     assert_eq!(paths[0], NodePath::root());
 
-    let target = NodePath { steps: vec![Step::Field("items".into()), Step::Index(0)] };
+    let target = NodePath {
+        steps: vec![Step::Field("items".into()), Step::Index(0)],
+    };
     let found = target.get(&tree).expect("the path exists");
-    assert_eq!(found.node, ValueNode::Number { value: NumberValue::Finite(7.0) });
+    assert_eq!(
+        found.node,
+        ValueNode::Number {
+            value: NumberValue::Finite(7.0)
+        }
+    );
 
     let mut replaced = tree.clone();
     assert!(target.replace(&mut replaced, ValueTree::boundary(ValueNode::number(8.0))));
     let found = target.get(&replaced).expect("still there");
-    assert_eq!(found.node, ValueNode::Number { value: NumberValue::Finite(8.0) });
+    assert_eq!(
+        found.node,
+        ValueNode::Number {
+            value: NumberValue::Finite(8.0)
+        }
+    );
     assert_eq!(found.provenance, Provenance::Boundary);
     // The untouched sibling keeps its value, so a mutation cannot leak across fields.
-    assert_eq!(NodePath { steps: vec![Step::Field("map".into())] }.get(&replaced).unwrap().node,
-               NodePath { steps: vec![Step::Field("map".into())] }.get(&tree).unwrap().node);
+    assert_eq!(
+        NodePath {
+            steps: vec![Step::Field("map".into())]
+        }
+        .get(&replaced)
+        .unwrap()
+        .node,
+        NodePath {
+            steps: vec![Step::Field("map".into())]
+        }
+        .get(&tree)
+        .unwrap()
+        .node
+    );
 
     // A path through a missing index or a wrong kind resolves to nothing rather than panicking.
-    assert!(NodePath { steps: vec![Step::Field("items".into()), Step::Index(9)] }.get(&tree).is_none());
-    assert!(!NodePath { steps: vec![Step::Index(0)] }.replace(&mut replaced, ValueTree::null()));
+    assert!(NodePath {
+        steps: vec![Step::Field("items".into()), Step::Index(9)]
+    }
+    .get(&tree)
+    .is_none());
+    assert!(!NodePath {
+        steps: vec![Step::Index(0)]
+    }
+    .replace(&mut replaced, ValueTree::null()));
 }
 
 #[test]
 fn provenance_round_trips() {
     round_trip(&Provenance::Generated);
     round_trip(&Provenance::Boundary);
-    round_trip(&Provenance::Mutated { op: "resize".into(), from: "afz:t:44be".into() });
-    round_trip(&Provenance::Transplanted { from_entry: "c-7".into() });
+    round_trip(&Provenance::Mutated {
+        op: "resize".into(),
+        from: "afz:t:44be".into(),
+    });
+    round_trip(&Provenance::Transplanted {
+        from_entry: "c-7".into(),
+    });
     round_trip(&Provenance::Minimized { step: 3 });
     round_trip(&Provenance::User);
 }
@@ -309,15 +438,28 @@ fn outcome_kind_tag_and_helpers() {
         duration_ms: 1.0,
         coverage: None,
         via: "engine-error-outside-declared-channel".into(),
-        fault: FaultSignature { class: "TypeError".into(), message: "m".into(), frames: vec![frame()] },
+        fault: FaultSignature {
+            class: "TypeError".into(),
+            message: "m".into(),
+            frames: vec![frame()],
+        },
     });
-    assert_eq!(with_frame.fault().unwrap().top_frame().unwrap().file, "src/config.ts");
+    assert_eq!(
+        with_frame.fault().unwrap().top_frame().unwrap().file,
+        "src/config.ts"
+    );
     assert_eq!(Outcome::Ok(OkOutcome::default()).via(), None);
 }
 
 #[test]
 fn fault_frame_omits_absent_optionals() {
-    let json = serde_json::to_value(FaultFrame { file: "a.ts".into(), line: 3, column: None, fn_name: None }).unwrap();
+    let json = serde_json::to_value(FaultFrame {
+        file: "a.ts".into(),
+        line: 3,
+        column: None,
+        fn_name: None,
+    })
+    .unwrap();
     assert_eq!(json, serde_json::json!({"file": "a.ts", "line": 3}));
 }
 
@@ -352,11 +494,22 @@ fn handshake_and_capabilities_round_trip() {
         let json = serde_json::to_value(cap).unwrap();
         let back: Capability = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(back, cap);
-        assert!(json.as_str().unwrap().chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_alphabetic()),
-            "capability names are single lowercase words: {json}");
+        assert!(
+            json.as_str()
+                .unwrap()
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_alphabetic()),
+            "capability names are single lowercase words: {json}"
+        );
     }
-    assert_eq!(serde_json::to_value(TargetClass::DesignTime).unwrap(), "design-time");
-    assert_eq!(serde_json::to_value(TargetClass::Runtime).unwrap(), "runtime");
+    assert_eq!(
+        serde_json::to_value(TargetClass::DesignTime).unwrap(),
+        "design-time"
+    );
+    assert_eq!(
+        serde_json::to_value(TargetClass::Runtime).unwrap(),
+        "runtime"
+    );
 }
 
 fn descriptor() -> TargetDescriptor {
@@ -371,10 +524,16 @@ fn descriptor() -> TargetDescriptor {
         },
         name: "convert".into(),
         parameters: vec![
-            Parameter { name: "amount".into(), ty: TypeNode::number(), required: true },
+            Parameter {
+                name: "amount".into(),
+                ty: TypeNode::number(),
+                required: true,
+            },
             Parameter {
                 name: "to".into(),
-                ty: TypeNode::Literal { values: vec!["USD".into(), "EUR".into()] },
+                ty: TypeNode::Literal {
+                    values: vec!["USD".into(), "EUR".into()],
+                },
                 required: true,
             },
         ],
@@ -405,13 +564,19 @@ fn target_descriptor_round_trips() {
         id: "afz:t:9c1f".into(),
         target_class: TargetClass::Runtime,
         origin: Origin {
-            http: Some(HttpOrigin { method: "POST".into(), path: "/v1/tokens".into() }),
+            http: Some(HttpOrigin {
+                method: "POST".into(),
+                path: "/v1/tokens".into(),
+            }),
             ..Default::default()
         },
         name: "POST /v1/tokens".into(),
         parameters: vec![Parameter {
             name: "body".into(),
-            ty: TypeNode::Opaque { ty: "Db".into(), module: Some("src/db.ts".into()) },
+            ty: TypeNode::Opaque {
+                ty: "Db".into(),
+                module: Some("src/db.ts".into()),
+            },
             required: true,
         }],
         returns: None,
@@ -424,7 +589,11 @@ fn target_descriptor_round_trips() {
     assert!(!runtime.is_fuzzable());
     round_trip(&runtime);
 
-    for m in [Materialization::Constructible, Materialization::FixtureRequired, Materialization::Opaque] {
+    for m in [
+        Materialization::Constructible,
+        Materialization::FixtureRequired,
+        Materialization::Opaque,
+    ] {
         assert!(serde_json::to_value(m).unwrap().as_str().is_some());
         round_trip(&m);
     }
@@ -483,7 +652,12 @@ fn discovery_and_coverage_map_round_trip() {
     round_trip(&Discovery::default());
 
     let map = CoverageMap {
-        entries: vec![CoverageEntry { edge: 41, url: "src/currency.ts".into(), start: 120, end: 188 }],
+        entries: vec![CoverageEntry {
+            edge: 41,
+            url: "src/currency.ts".into(),
+            start: 120,
+            end: 188,
+        }],
     };
     round_trip(&map);
     round_trip(&CoverageMap::default());
@@ -497,12 +671,23 @@ fn method_payloads_round_trip() {
         exclude: Some(vec!["**/*.test.ts".into()]),
         config_path: Some("/src/example/autofuzz.json".into()),
     });
-    round_trip(&DiscoverReq { root: ".".into(), ..Default::default() });
-    round_trip(&PrepareReq { target_id: "afz:t:44be".into(), values: vec![ValueTree::number(10.0)] });
-    round_trip(&PrepareResp::Ok {
-        materialized: MaterializedCall { handle: "h-1".into(), summary: "Money(10, USD)".into() },
+    round_trip(&DiscoverReq {
+        root: ".".into(),
+        ..Default::default()
     });
-    round_trip(&PrepareResp::Skip { reason: SkipReason::UnconstructibleParameter });
+    round_trip(&PrepareReq {
+        target_id: "afz:t:44be".into(),
+        values: vec![ValueTree::number(10.0)],
+    });
+    round_trip(&PrepareResp::Ok {
+        materialized: MaterializedCall {
+            handle: "h-1".into(),
+            summary: "Money(10, USD)".into(),
+        },
+    });
+    round_trip(&PrepareResp::Skip {
+        reason: SkipReason::UnconstructibleParameter,
+    });
     round_trip(&InvokeReq {
         invocation_id: 91207,
         target_id: "afz:t:44be".into(),
@@ -513,28 +698,42 @@ fn method_payloads_round_trip() {
     round_trip(&MinimizeReq {
         target_id: "afz:t:44be".into(),
         values: vec![ValueTree::null()],
-        fault: FaultSignature { class: "TypeError".into(), message: "m".into(), frames: vec![frame()] },
+        fault: FaultSignature {
+            class: "TypeError".into(),
+            message: "m".into(),
+            frames: vec![frame()],
+        },
         budget_ms: 5000,
     });
-    round_trip(&MinimizeResp { values: vec![ValueTree::null()], steps: 12 });
+    round_trip(&MinimizeResp {
+        values: vec![ValueTree::null()],
+        steps: 12,
+    });
 }
 
 #[test]
 fn prepare_resp_tags_on_ok_boolean() {
-    let json = serde_json::to_value(PrepareResp::Skip { reason: SkipReason::Excluded }).unwrap();
+    let json = serde_json::to_value(PrepareResp::Skip {
+        reason: SkipReason::Excluded,
+    })
+    .unwrap();
     assert_eq!(json["ok"], false);
     assert_eq!(json["reason"], "excluded");
 }
 
 #[test]
 fn rpc_frames_round_trip() {
-    let req = Request::new(7, Method::Invoke, InvokeReq {
-        invocation_id: 7,
-        target_id: "afz:t:44be".into(),
-        values: Vec::new(),
-        deadline_ms: 2000,
-        collect_coverage: false,
-    });
+    let req = Request::new(
+        7,
+        Method::Invoke,
+        InvokeReq {
+            invocation_id: 7,
+            target_id: "afz:t:44be".into(),
+            values: Vec::new(),
+            deadline_ms: 2000,
+            collect_coverage: false,
+        },
+    );
     round_trip(&req);
     let json = serde_json::to_value(&req).unwrap();
     assert_eq!(json["jsonrpc"], "2.0");
@@ -554,7 +753,9 @@ fn rpc_frames_round_trip() {
     let line = serde_json::to_string(&err).unwrap();
     let back = parse_response(&line).unwrap();
     assert_eq!(back, err);
-    let Response::Failure(f) = back else { panic!("expected failure") };
+    let Response::Failure(f) = back else {
+        panic!("expected failure")
+    };
     assert_eq!(f.error.code, PLUGIN_ERROR);
     assert!(f.error.data.is_none());
 }
@@ -570,7 +771,11 @@ fn method_names_are_the_six_wire_methods() {
         Method::CoverageMap,
     ] {
         let name = m.name();
-        assert_eq!(Method::from_wire(name), Some(m), "{name} does not round-trip");
+        assert_eq!(
+            Method::from_wire(name),
+            Some(m),
+            "{name} does not round-trip"
+        );
     }
     assert_eq!(Method::from_wire("coverageMap"), Some(Method::CoverageMap));
     assert_eq!(Method::from_wire("shutdown"), None);
@@ -580,17 +785,27 @@ fn method_names_are_the_six_wire_methods() {
 fn framing_reads_and_writes_one_message_per_line() {
     let mut out = Vec::new();
     write_line(&mut out, &Request::empty(1, Method::Handshake)).unwrap();
-    write_line(&mut out, &Response::ok(1, Handshake {
-        protocol_version: PROTOCOL_VERSION.into(),
-        name: "fake".into(),
-        version: "0".into(),
-        target_class: TargetClass::DesignTime,
-        capabilities: vec![],
-        languages: vec![],
-        discover_requires_execution: false,
-    }))
+    write_line(
+        &mut out,
+        &Response::ok(
+            1,
+            Handshake {
+                protocol_version: PROTOCOL_VERSION.into(),
+                name: "fake".into(),
+                version: "0".into(),
+                target_class: TargetClass::DesignTime,
+                capabilities: vec![],
+                languages: vec![],
+                discover_requires_execution: false,
+            },
+        ),
+    )
     .unwrap();
-    assert_eq!(out.iter().filter(|b| **b == b'\n').count(), 2, "exactly two lines");
+    assert_eq!(
+        out.iter().filter(|b| **b == b'\n').count(),
+        2,
+        "exactly two lines"
+    );
 
     let mut reader = buffered(out.as_slice());
     let mut buf = String::new();
@@ -599,7 +814,9 @@ fn framing_reads_and_writes_one_message_per_line() {
     assert_eq!(req.method, "handshake");
     let line = read_line(&mut reader, &mut buf).unwrap().unwrap();
     assert_eq!(parse_response(&line).unwrap().id(), 1);
-    assert!(read_line(&mut reader, &mut buf).unwrap().is_none(), "EOF is a closed pipe, not an error");
+    assert!(
+        read_line(&mut reader, &mut buf).unwrap().is_none(),
+        "EOF is a closed pipe, not an error"
+    );
     assert!(parse_response("{ not json").is_err());
 }
-

@@ -71,14 +71,25 @@ impl Script {
     /// then answers every invocation with `ok`. Both shapes are accepted, so a test can write
     /// the short form `[{"exit":1}]` instead of `{"directives":[{"exit":1}]}`.
     pub fn from_env() -> Script {
-        let text = std::env::var("AFZ_FAKE_SCRIPT")
-            .ok()
-            .or_else(|| std::env::var("AFZ_FAKE_SCRIPT_FILE").ok().and_then(|p| std::fs::read_to_string(p).ok()));
-        let Some(text) = text else { return Script::default() };
+        let text = std::env::var("AFZ_FAKE_SCRIPT").ok().or_else(|| {
+            std::env::var("AFZ_FAKE_SCRIPT_FILE")
+                .ok()
+                .and_then(|p| std::fs::read_to_string(p).ok())
+        });
+        let Some(text) = text else {
+            return Script::default();
+        };
         match serde_json::from_str::<Script>(&text) {
             Ok(script) => script,
             Err(struct_err) => match serde_json::from_str::<Vec<Directive>>(&text) {
-                Ok(directives) => Script { directives, discovery: None, handshake: None, require_discover: None, swallow_parse_error: None, ready: None },
+                Ok(directives) => Script {
+                    directives,
+                    discovery: None,
+                    handshake: None,
+                    require_discover: None,
+                    swallow_parse_error: None,
+                    ready: None,
+                },
                 Err(_) => {
                     eprintln!("{PLUGIN_NAME}: ignoring malformed script: {struct_err}");
                     Script::default()
@@ -128,7 +139,10 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
             Ok(req) => req,
             Err(_) => {
                 if !script.swallow_parse_error.unwrap_or(false) {
-                    let _ = write_line(&mut write, &Response::err(0, PARSE_ERROR, "malformed request"));
+                    let _ = write_line(
+                        &mut write,
+                        &Response::err(0, PARSE_ERROR, "malformed request"),
+                    );
                 }
                 continue;
             }
@@ -136,15 +150,25 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
         let Some(method) = Method::from_wire(&req.method) else {
             let _ = write_line(
                 &mut write,
-                &Response::err(req.id, METHOD_NOT_FOUND, format!("unknown method {}", req.method)),
+                &Response::err(
+                    req.id,
+                    METHOD_NOT_FOUND,
+                    format!("unknown method {}", req.method),
+                ),
             );
             continue;
         };
 
         let gated = script.require_discover.unwrap_or(false) && !discovered;
-        let refused = Response::err(req.id, INVALID_REQUEST, "discover has not run on this connection");
+        let refused = Response::err(
+            req.id,
+            INVALID_REQUEST,
+            "discover has not run on this connection",
+        );
         let resp = match method {
-            Method::Handshake => Response::ok(req.id, script.handshake.clone().unwrap_or_else(handshake)),
+            Method::Handshake => {
+                Response::ok(req.id, script.handshake.clone().unwrap_or_else(handshake))
+            }
             Method::Discover => {
                 discovered = true;
                 Response::ok(req.id, script.discovery.clone().unwrap_or_else(inventory))
@@ -161,7 +185,10 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
             Method::Reproducer => Response::ok(req.id, reproducer_resp()),
             Method::Ready => Response::ok(
                 req.id,
-                script.ready.clone().unwrap_or(ReadyResp { ready: true, detail: None }),
+                script.ready.clone().unwrap_or(ReadyResp {
+                    ready: true,
+                    detail: None,
+                }),
             ),
         };
         if write_line(&mut write, &resp).is_err() {
@@ -176,17 +203,35 @@ fn handshake() -> Handshake {
         name: PLUGIN_NAME.to_string(),
         version: PLUGIN_VERSION.to_string(),
         target_class: TargetClass::DesignTime,
-        capabilities: vec![Capability::Coverage, Capability::Stateful, Capability::Minimize, Capability::Reproducer, Capability::Concurrent],
+        capabilities: vec![
+            Capability::Coverage,
+            Capability::Stateful,
+            Capability::Minimize,
+            Capability::Reproducer,
+            Capability::Concurrent,
+        ],
         languages: vec!["fake".to_string()],
         discover_requires_execution: false,
     }
 }
 
 fn param(name: &str, ty: TypeNode) -> Parameter {
-    Parameter { name: name.to_string(), ty, required: true }
+    Parameter {
+        name: name.to_string(),
+        ty,
+        required: true,
+    }
 }
 
-fn target(id: &str, name: &str, file: &str, line: u32, parameters: Vec<Parameter>, materialization: Materialization, guard_sites: Vec<u32>) -> TargetDescriptor {
+fn target(
+    id: &str,
+    name: &str,
+    file: &str,
+    line: u32,
+    parameters: Vec<Parameter>,
+    materialization: Materialization,
+    guard_sites: Vec<u32>,
+) -> TargetDescriptor {
     TargetDescriptor {
         id: id.to_string(),
         target_class: TargetClass::DesignTime,
@@ -211,10 +256,16 @@ pub fn inventory() -> Discovery {
         name: Some("Money".to_string()),
         id: None,
         fields: vec![
-            Field { name: "v".into(), ty: TypeNode::number(), required: true },
+            Field {
+                name: "v".into(),
+                ty: TypeNode::number(),
+                required: true,
+            },
             Field {
                 name: "to".into(),
-                ty: TypeNode::Literal { values: vec!["USD".into(), "EUR".into(), "ZZZ".into()] },
+                ty: TypeNode::Literal {
+                    values: vec!["USD".into(), "EUR".into(), "ZZZ".into()],
+                },
                 required: true,
             },
         ],
@@ -235,7 +286,10 @@ pub fn inventory() -> Discovery {
                 "guarded",
                 "src/fake.ts",
                 11,
-                vec![param("amount", TypeNode::number()), param("to", TypeNode::string())],
+                vec![
+                    param("amount", TypeNode::number()),
+                    param("to", TypeNode::string()),
+                ],
                 Materialization::Constructible,
                 vec![5],
             ),
@@ -244,7 +298,10 @@ pub fn inventory() -> Discovery {
                 "bulk",
                 "src/fake.ts",
                 24,
-                vec![param("items", TypeNode::array(money)), param("rate", TypeNode::number())],
+                vec![
+                    param("items", TypeNode::array(money)),
+                    param("rate", TypeNode::number()),
+                ],
                 Materialization::Constructible,
                 Vec::new(),
             ),
@@ -262,7 +319,13 @@ pub fn inventory() -> Discovery {
                 "needsClock",
                 "src/fake.ts",
                 55,
-                vec![param("clock", TypeNode::Opaque { ty: "Clock".into(), module: Some("src/clock.ts".into()) })],
+                vec![param(
+                    "clock",
+                    TypeNode::Opaque {
+                        ty: "Clock".into(),
+                        module: Some("src/clock.ts".into()),
+                    },
+                )],
                 Materialization::FixtureRequired,
                 Vec::new(),
             ),
@@ -271,7 +334,13 @@ pub fn inventory() -> Discovery {
                 "needsDb",
                 "src/repo.ts",
                 8,
-                vec![param("db", TypeNode::Opaque { ty: "Db".into(), module: Some("src/db.ts".into()) })],
+                vec![param(
+                    "db",
+                    TypeNode::Opaque {
+                        ty: "Db".into(),
+                        module: Some("src/db.ts".into()),
+                    },
+                )],
                 Materialization::Opaque,
                 Vec::new(),
             ),
@@ -353,10 +422,15 @@ pub fn inventory() -> Discovery {
 }
 
 fn prepare_resp(req: &Request) -> PrepareResp {
-    let req: PrepareReq = serde_json::from_value(req.params.clone().unwrap_or_default())
-        .unwrap_or(PrepareReq { target_id: String::new(), values: Vec::new() });
+    let req: PrepareReq =
+        serde_json::from_value(req.params.clone().unwrap_or_default()).unwrap_or(PrepareReq {
+            target_id: String::new(),
+            values: Vec::new(),
+        });
     if req.target_id == "afz:t:0006" {
-        return PrepareResp::Skip { reason: SkipReason::UnconstructibleParameter };
+        return PrepareResp::Skip {
+            reason: SkipReason::UnconstructibleParameter,
+        };
     }
     PrepareResp::Ok {
         materialized: MaterializedCall {
@@ -388,7 +462,11 @@ fn minimize_resp(req: &Request) -> MinimizeResp {
         .unwrap_or(MinimizeReq {
             target_id: String::new(),
             values: Vec::new(),
-            fault: FaultSignature { class: String::new(), message: String::new(), frames: Vec::new() },
+            fault: FaultSignature {
+                class: String::new(),
+                message: String::new(),
+                frames: Vec::new(),
+            },
             budget_ms: 0,
         });
     // Shrink to the first argument only, which is enough for the engine's acceptance tests.
@@ -401,12 +479,15 @@ fn minimize_resp(req: &Request) -> MinimizeResp {
 fn reproducer_resp() -> ReproducerResp {
     ReproducerResp {
         extension: "txt".to_string(),
-        script: "afz fake reproducer: replay the finding's inputs/afz-f-*.json through the plugin.\n".to_string(),
+        script:
+            "afz fake reproducer: replay the finding's inputs/afz-f-*.json through the plugin.\n"
+                .to_string(),
     }
 }
 
 fn invoke_resp(id: u64, req: &Request, script: &Script, index: u64) -> Response {
-    let Ok(req) = serde_json::from_value::<InvokeReq>(req.params.clone().unwrap_or_default()) else {
+    let Ok(req) = serde_json::from_value::<InvokeReq>(req.params.clone().unwrap_or_default())
+    else {
         return Response::err(id, INVALID_REQUEST, "malformed invoke params");
     };
     let Some(d) = script.directive_for(index, &req.target_id) else {

@@ -21,7 +21,10 @@ fn fakeplugin_path() -> PathBuf {
             return candidate;
         }
         let Some(parent) = dir.parent() else {
-            panic!("build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})", exe.display());
+            panic!(
+                "build the fake plugin: `cargo build --workspace` (no afz-fakeplugin above {})",
+                exe.display()
+            );
         };
         dir = parent;
     }
@@ -56,7 +59,8 @@ fn an_invocation_that_never_reached_the_target_adds_no_coverage_edge() {
     // Each plugin process answers its first invocation with the fake's default digest - one edge, the
     // same id in every process - and answers its second by exiting, which the engine restarts.
     let root = project("coverage-ids", r#"[{"exit":1,"at":2}]"#);
-    let loaded = afz_engine::config::load(&root.join("autofuzz.json")).expect("the scan project validates");
+    let loaded =
+        afz_engine::config::load(&root.join("autofuzz.json")).expect("the scan project validates");
     let mut options = Options::new(loaded, root.clone());
     options.invocations = 5;
     options.workers = 1;
@@ -68,8 +72,20 @@ fn an_invocation_that_never_reached_the_target_adds_no_coverage_edge() {
     std::fs::remove_dir_all(&root).ok();
 
     let execution = &report.document.execution;
-    assert!(execution.restarts >= 1, "the script has to kill a worker: {execution:?}");
-    assert_eq!(execution.coverage_edges, 1, "the answered invocations report one edge between them: {execution:?}");
-    assert_eq!(execution.corpus_size, 1, "an invocation that never reached the target teaches nothing: {execution:?}");
-    assert!(execution.coverage_ratio <= 1.0, "coverage cannot exceed the map it is measured over: {execution:?}");
+    assert!(
+        execution.restarts >= 1,
+        "the script has to kill a worker: {execution:?}"
+    );
+    assert_eq!(
+        execution.coverage_edges, 1,
+        "the answered invocations report one edge between them: {execution:?}"
+    );
+    assert_eq!(
+        execution.corpus_size, 1,
+        "an invocation that never reached the target teaches nothing: {execution:?}"
+    );
+    assert!(
+        execution.coverage_ratio <= 1.0,
+        "coverage cannot exceed the map it is measured over: {execution:?}"
+    );
 }

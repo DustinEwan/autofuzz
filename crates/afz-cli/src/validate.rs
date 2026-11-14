@@ -30,13 +30,21 @@ pub struct Target {
 }
 
 /// `afz validate-harness [harness]`.
-pub fn run(harness: Option<&str>, targets: Option<usize>, deadline: Option<u64>, json: bool) -> Result<(), String> {
+pub fn run(
+    harness: Option<&str>,
+    targets: Option<usize>,
+    deadline: Option<u64>,
+    json: bool,
+) -> Result<(), String> {
     let target = resolve(harness, json)?;
     let out = std::env::temp_dir().join(format!("afz-conformance-{}", std::process::id()));
     let deadline = deadline.or(target.conformance.deadline_ms).unwrap_or(1000);
     let report = drive(&target, &out, targets.unwrap_or(8), deadline)?;
     if json {
-        println!("{}", serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?
+        );
     } else {
         print!("{}", render(&report));
     }
@@ -54,12 +62,21 @@ pub fn run(harness: Option<&str>, targets: Option<usize>, deadline: Option<u64>,
 pub fn resolve(harness: Option<&str>, json: bool) -> Result<Target, String> {
     let arg = harness.unwrap_or(".");
     if let Some(record) = harnesses::lookup(arg) {
-        let conformance = record.conformance.clone().ok_or_else(|| no_emitter(&record.name))?;
-        return Ok(Target { argv: record.argv, root: record.root, conformance });
+        let conformance = record
+            .conformance
+            .clone()
+            .ok_or_else(|| no_emitter(&record.name))?;
+        return Ok(Target {
+            argv: record.argv,
+            root: record.root,
+            conformance,
+        });
     }
     let dir = std::path::absolute(PathBuf::from(arg)).map_err(|e| format!("{arg}: {e}"))?;
     if !dir.join("afz-harness.json").is_file() {
-        return Err(format!("no installed harness \"{arg}\" and no afz-harness.json in {arg}"));
+        return Err(format!(
+            "no installed harness \"{arg}\" and no afz-harness.json in {arg}. Run this command inside a harness checkout, or pass an installed harness name."
+        ));
     }
     let manifest = harnesses::read_manifest(&dir)?;
     // `build` and never `install`: an author's inner loop costs one compile and never a
@@ -70,24 +87,37 @@ pub fn resolve(harness: Option<&str>, json: bool) -> Result<Target, String> {
     }
     // Name the unbuilt plugin here rather than letting it die inside `PluginClient::spawn`
     // with an OS error: at least one command element must name a file that now exists.
-    if !manifest.command.iter().any(|argument| !argument.starts_with('-') && dir.join(argument).exists()) {
+    if !manifest
+        .command
+        .iter()
+        .any(|argument| !argument.starts_with('-') && dir.join(argument).exists())
+    {
         return Err(format!(
-            "afz-harness.json \"command\" names no existing file under {}: run the build steps in afz-harness.json and try again",
+            "afz-harness.json \"command\" names no existing file under {}. Run the build steps in afz-harness.json and try again.",
             dir.display()
         ));
     }
-    let conformance = manifest.conformance.as_ref().ok_or_else(|| no_emitter(&manifest.name))?;
-    let emitter = harnesses::resolve_argv(&dir, &conformance.emitter).into_iter().map(PathBuf::from).collect();
+    let conformance = manifest
+        .conformance
+        .as_ref()
+        .ok_or_else(|| no_emitter(&manifest.name))?;
+    let emitter = harnesses::resolve_argv(&dir, &conformance.emitter)
+        .into_iter()
+        .map(PathBuf::from)
+        .collect();
     Ok(Target {
         argv: harnesses::resolve_argv(&dir, &manifest.command),
         root: dir,
-        conformance: InstalledConformance { emitter, deadline_ms: conformance.deadline_ms },
+        conformance: InstalledConformance {
+            emitter,
+            deadline_ms: conformance.deadline_ms,
+        },
     })
 }
 
 fn no_emitter(name: &str) -> String {
     format!(
-        "harness \"{name}\" declares no conformance emitter: the conformance project ships with the harness, so add \"conformance\": {{\"emitter\": […], …}} to its afz-harness.json"
+        "harness \"{name}\" declares no conformance emitter. Add \"conformance\": {{\"emitter\": [...]}} to its afz-harness.json."
     )
 }
 
@@ -95,24 +125,41 @@ fn no_emitter(name: &str) -> String {
 /// a `--json` run must leave stdout for the report alone, so a build tool's progress (npm
 /// prints its banner on stdout) is re-pointed at stderr there. stderr is always inherited.
 /// `install` uses this for both its stages; `resolve` uses it for `build` alone.
-pub(crate) fn run_stage(stage: &str, name: &str, dir: &Path, argv: &[String], json: bool) -> Result<(), String> {
+pub(crate) fn run_stage(
+    stage: &str,
+    name: &str,
+    dir: &Path,
+    argv: &[String],
+    json: bool,
+) -> Result<(), String> {
     let Some((program, args)) = argv.split_first() else {
         return Err(format!("{stage} argv for harness \"{name}\" is empty"));
     };
     let status = Command::new(program)
         .args(args)
         .current_dir(dir)
-        .stdout(if json { Stdio::from(std::io::stderr()) } else { Stdio::inherit() })
+        .stdout(if json {
+            Stdio::from(std::io::stderr())
+        } else {
+            Stdio::inherit()
+        })
         .status()
         .map_err(|e| format!("{stage} failed for harness \"{name}\": {program}: {e}"))?;
     if !status.success() {
-        return Err(format!("{stage} failed for harness \"{name}\": {program} exited {status}"));
+        return Err(format!(
+            "{stage} failed for harness \"{name}\": {program} exited {status}"
+        ));
     }
     Ok(())
 }
 
 /// Render the conformance project with the harness's emitter and drive the suite over it.
-pub fn drive(target: &Target, out: &Path, targets: usize, deadline_ms: u64) -> Result<afz_conformance::Report, String> {
+pub fn drive(
+    target: &Target,
+    out: &Path,
+    targets: usize,
+    deadline_ms: u64,
+) -> Result<afz_conformance::Report, String> {
     std::fs::create_dir_all(out).map_err(|e| format!("cannot create {}: {e}", out.display()))?;
     let report = drive_inner(target, out, targets, deadline_ms);
     // The staged project belongs to this run: nothing outside this function reads it, and a
@@ -121,7 +168,12 @@ pub fn drive(target: &Target, out: &Path, targets: usize, deadline_ms: u64) -> R
     report
 }
 
-fn drive_inner(target: &Target, out: &Path, targets: usize, deadline_ms: u64) -> Result<afz_conformance::Report, String> {
+fn drive_inner(
+    target: &Target,
+    out: &Path,
+    targets: usize,
+    deadline_ms: u64,
+) -> Result<afz_conformance::Report, String> {
     // 1. The emitter renders the whole project. It prints the directory it rendered; the
     //    driver ignores that and uses `out`, because the driver chose it. The line is
     //    captured, not inherited: `--json` promises stdout carries the report alone.
@@ -134,7 +186,12 @@ fn drive_inner(target: &Target, out: &Path, targets: usize, deadline_ms: u64) ->
         .arg(out)
         .current_dir(&target.root)
         .output()
-        .map_err(|e| format!("the emitter {} did not start: {e}", join_paths(&target.conformance.emitter)))?;
+        .map_err(|e| {
+            format!(
+                "the emitter {} did not start: {e}",
+                join_paths(&target.conformance.emitter)
+            )
+        })?;
     if !output.status.success() {
         return Err(format!(
             "the emitter {} exited {}; stderr: {}",
@@ -148,9 +205,10 @@ fn drive_inner(target: &Target, out: &Path, targets: usize, deadline_ms: u64) ->
     //    which demands a `command` or an already-installed harness name, and a project being
     //    validated in order to decide whether to install a harness has neither.
     let config_path = out.join(afz_engine::config::CONFIG_FILE_NAME);
-    let text = std::fs::read_to_string(&config_path).map_err(|e| format!("cannot read {}: {e}", config_path.display()))?;
-    let project: ScanProject =
-        serde_json::from_str(&text).map_err(|e| format!("{} is not a scan project: {e}", config_path.display()))?;
+    let text = std::fs::read_to_string(&config_path)
+        .map_err(|e| format!("cannot read {}: {e}", config_path.display()))?;
+    let project: ScanProject = serde_json::from_str(&text)
+        .map_err(|e| format!("{} is not a scan project: {e}", config_path.display()))?;
     let scope = project.discovery_scope(out).map_err(|e| e.to_string())?;
 
     // 3. The check: the plugin under test is the one the target names, never a registry
@@ -175,8 +233,15 @@ fn drive_inner(target: &Target, out: &Path, targets: usize, deadline_ms: u64) ->
         // 3b. The project's own fixture validator runs before the plugin starts: a template
         //     section whose ground truth could not be produced is not a pass.
         if !manifest.validator.is_empty() {
-            let argv = harnesses::resolve_argv(out, &manifest.validator).into_iter().map(PathBuf::from).collect::<Vec<_>>();
-            check.validator = Some(afz_conformance::template::run_validator(&argv, out, deadline_ms)?);
+            let argv = harnesses::resolve_argv(out, &manifest.validator)
+                .into_iter()
+                .map(PathBuf::from)
+                .collect::<Vec<_>>();
+            check.validator = Some(afz_conformance::template::run_validator(
+                &argv,
+                out,
+                deadline_ms,
+            )?);
         }
         check.template = Some(manifest);
     }
@@ -187,5 +252,8 @@ fn drive_inner(target: &Target, out: &Path, targets: usize, deadline_ms: u64) ->
 
 /// The argv as the error messages name it.
 fn join_paths(argv: &[PathBuf]) -> String {
-    argv.iter().map(|argument| argument.display().to_string()).collect::<Vec<_>>().join(" ")
+    argv.iter()
+        .map(|argument| argument.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" ")
 }

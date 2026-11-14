@@ -59,7 +59,12 @@ pub struct Corpus {
 
 impl Corpus {
     pub fn new(cap: u64) -> Corpus {
-        Corpus { cap, entries: BTreeMap::new(), covered: BTreeSet::new(), refused: 0 }
+        Corpus {
+            cap,
+            entries: BTreeMap::new(),
+            covered: BTreeSet::new(),
+            refused: 0,
+        }
     }
 
     pub fn cap(&self) -> u64 {
@@ -103,7 +108,13 @@ impl Corpus {
 
     /// Record one invocation. Retention follows the design: keep the input when its edge set
     /// contains an edge id the corpus has not produced.
-    pub fn record(&mut self, target_id: &str, values: &[ValueTree], edges: &CoverageDigest, invocation: u64) -> Recorded {
+    pub fn record(
+        &mut self,
+        target_id: &str,
+        values: &[ValueTree],
+        edges: &CoverageDigest,
+        invocation: u64,
+    ) -> Recorded {
         let id = entry_id(target_id, values);
         let new_edges: Vec<EdgeId> = edges.difference(&self.covered).copied().collect();
         if let Some(entry) = self.entries.get_mut(&id) {
@@ -117,7 +128,10 @@ impl Corpus {
                 Recorded::NotNovel
             } else {
                 entry.new_edges += new_edges.len() as u32;
-                Recorded::Retained { id, new_edges: new_edges.len() as u32 }
+                Recorded::Retained {
+                    id,
+                    new_edges: new_edges.len() as u32,
+                }
             };
         }
         if new_edges.is_empty() {
@@ -140,7 +154,10 @@ impl Corpus {
                 last_used: invocation,
             },
         );
-        Recorded::Retained { id, new_edges: new_edges.len() as u32 }
+        Recorded::Retained {
+            id,
+            new_edges: new_edges.len() as u32,
+        }
     }
 
     /// Count a selection against an entry.
@@ -159,12 +176,19 @@ impl Corpus {
     /// design protects: the cap may then be reached exactly, but no coverage is ever thrown away
     /// to make room.
     fn make_room(&mut self) -> bool {
-        let Some(victim) = self.cullable().into_iter().next() else { return false };
-        let Some(entry) = self.entries.remove(&victim) else { return false };
+        let Some(victim) = self.cullable().into_iter().next() else {
+            return false;
+        };
+        let Some(entry) = self.entries.remove(&victim) else {
+            return false;
+        };
         // The union only shrinks when an edge has no other holder, which the cull rule forbids,
         // so `covered` stays as it is.
         debug_assert!(
-            entry.edges.iter().all(|e| self.entries.values().any(|other| other.edges.contains(e))),
+            entry
+                .edges
+                .iter()
+                .all(|e| self.entries.values().any(|other| other.edges.contains(e))),
             "a sole-edge holder was culled"
         );
         true
@@ -189,9 +213,11 @@ impl Corpus {
         if !self.sole_edges(entry).is_empty() {
             return false;
         }
-        self.entries
-            .values()
-            .any(|other| other.id != entry.id && other.last_used >= entry.last_used && other.edges.is_superset(&entry.edges))
+        self.entries.values().any(|other| {
+            other.id != entry.id
+                && other.last_used >= entry.last_used
+                && other.edges.is_superset(&entry.edges)
+        })
     }
 
     /// Edges only this entry covers. Such an entry is never culled.
@@ -214,7 +240,12 @@ impl Corpus {
     pub fn uncovered_edges(&self) -> Vec<EdgeId> {
         self.covered
             .iter()
-            .filter(|edge| !self.entries.values().any(|entry| entry.edges.contains(edge)))
+            .filter(|edge| {
+                !self
+                    .entries
+                    .values()
+                    .any(|entry| entry.edges.contains(edge))
+            })
             .copied()
             .collect()
     }
@@ -253,7 +284,10 @@ pub fn entry_id(target_id: &str, values: &[ValueTree]) -> String {
 pub fn outcome_digest(outcome: &Outcome) -> CoverageDigest {
     let mut digest = CoverageDigest::new();
     digest.insert(component(&status_class(outcome)));
-    digest.insert(component(&format!("latency:{}", latency_bucket(outcome.duration_ms()))));
+    digest.insert(component(&format!(
+        "latency:{}",
+        latency_bucket(outcome.duration_ms())
+    )));
     if let Some(shape) = response_shape(outcome) {
         digest.insert(component(&shape));
     }
@@ -274,7 +308,10 @@ fn status_class(outcome: &Outcome) -> String {
 /// shape for the same input reached a different branch.
 fn response_shape(outcome: &Outcome) -> Option<String> {
     match outcome {
-        Outcome::Ok(ok) => ok.value.as_ref().map(|v| format!("shape:{:?}", v.node.kind())),
+        Outcome::Ok(ok) => ok
+            .value
+            .as_ref()
+            .map(|v| format!("shape:{:?}", v.node.kind())),
         _ => None,
     }
 }
@@ -308,7 +345,12 @@ mod tests {
     use afz_protocol::{FaultSignature, ValueNode};
 
     fn outcome_ok(ms: f64) -> Outcome {
-        Outcome::Ok(afz_protocol::OkOutcome { duration_ms: ms, memory_bytes: None, coverage: None, value: None })
+        Outcome::Ok(afz_protocol::OkOutcome {
+            duration_ms: ms,
+            memory_bytes: None,
+            coverage: None,
+            value: None,
+        })
     }
 
     #[test]
@@ -317,20 +359,35 @@ mod tests {
         let values = vec![ValueTree::number(1.0)];
         let mut first = CoverageDigest::new();
         first.insert(1);
-        assert!(matches!(corpus.record("t", &values, &first, 0), Recorded::Retained { new_edges: 1, .. }));
-        assert!(matches!(corpus.record("t", &values, &first, 1), Recorded::NotNovel), "the same input twice is not novelty");
+        assert!(matches!(
+            corpus.record("t", &values, &first, 0),
+            Recorded::Retained { new_edges: 1, .. }
+        ));
+        assert!(
+            matches!(corpus.record("t", &values, &first, 1), Recorded::NotNovel),
+            "the same input twice is not novelty"
+        );
 
         let mut same_edge = CoverageDigest::new();
         same_edge.insert(1);
         let other = vec![ValueTree::number(2.0)];
-        assert_eq!(corpus.record("t", &other, &same_edge, 2), Recorded::NotNovel);
+        assert_eq!(
+            corpus.record("t", &other, &same_edge, 2),
+            Recorded::NotNovel
+        );
 
         let novel: CoverageDigest = [1, 2].into_iter().collect();
         let mut grown = novel.clone();
-        assert!(matches!(corpus.record("t", &other, &novel, 3), Recorded::Retained { new_edges: 1, .. }));
+        assert!(matches!(
+            corpus.record("t", &other, &novel, 3),
+            Recorded::Retained { new_edges: 1, .. }
+        ));
         assert_eq!(corpus.covered_count(), 2);
         grown.insert(3);
-        assert!(matches!(corpus.record("t", &other, &grown, 4), Recorded::Retained { .. }));
+        assert!(matches!(
+            corpus.record("t", &other, &grown, 4),
+            Recorded::Retained { .. }
+        ));
     }
 
     #[test]
@@ -338,10 +395,19 @@ mod tests {
         let mut corpus = Corpus::new(10);
         let values = vec![ValueTree::number(1.0)];
         let edges: CoverageDigest = [7].into_iter().collect();
-        assert!(matches!(corpus.record("a", &values, &edges, 0), Recorded::Retained { .. }));
-        assert!(matches!(corpus.record("b", &values, &edges, 1), Recorded::NotNovel));
+        assert!(matches!(
+            corpus.record("a", &values, &edges, 0),
+            Recorded::Retained { .. }
+        ));
+        assert!(matches!(
+            corpus.record("b", &values, &edges, 1),
+            Recorded::NotNovel
+        ));
         let other: CoverageDigest = [8].into_iter().collect();
-        assert!(matches!(corpus.record("b", &values, &other, 2), Recorded::Retained { .. }));
+        assert!(matches!(
+            corpus.record("b", &values, &other, 2),
+            Recorded::Retained { .. }
+        ));
     }
 
     #[test]
@@ -367,16 +433,33 @@ mod tests {
         // The third input forces a cull. The narrow entry is dominated by the wide one and was
         // used earlier, so it goes and no edge is lost.
         let third: CoverageDigest = [3].into_iter().collect();
-        assert!(matches!(corpus.record("t", &[ValueTree::number(3.0)], &third, 2), Recorded::Retained { .. }));
+        assert!(matches!(
+            corpus.record("t", &[ValueTree::number(3.0)], &third, 2),
+            Recorded::Retained { .. }
+        ));
         assert_eq!(corpus.len(), 2);
-        assert!(corpus.uncovered_edges().is_empty(), "an edge lost its only holder");
-        assert!(corpus.covered.contains(&1) && corpus.covered.contains(&2) && corpus.covered.contains(&3));
+        assert!(
+            corpus.uncovered_edges().is_empty(),
+            "an edge lost its only holder"
+        );
+        assert!(
+            corpus.covered.contains(&1)
+                && corpus.covered.contains(&2)
+                && corpus.covered.contains(&3)
+        );
     }
 
     #[test]
     fn an_outcome_digest_separates_the_tuple_the_design_names() {
-        assert_eq!(outcome_digest(&outcome_ok(12.0)), outcome_digest(&outcome_ok(13.0)), "12 ms and 13 ms are one bucket");
-        assert_ne!(outcome_digest(&outcome_ok(1.0)), outcome_digest(&outcome_ok(5_000.0)));
+        assert_eq!(
+            outcome_digest(&outcome_ok(12.0)),
+            outcome_digest(&outcome_ok(13.0)),
+            "12 ms and 13 ms are one bucket"
+        );
+        assert_ne!(
+            outcome_digest(&outcome_ok(1.0)),
+            outcome_digest(&outcome_ok(5_000.0))
+        );
         let rejected = Outcome::Rejected(afz_protocol::RejectedOutcome {
             duration_ms: 5.0,
             coverage: None,
@@ -388,7 +471,11 @@ mod tests {
             duration_ms: 5.0,
             coverage: None,
             via: "throws:unguarded".into(),
-            fault: FaultSignature { class: "TypeError".into(), message: "m".into(), frames: vec![] },
+            fault: FaultSignature {
+                class: "TypeError".into(),
+                message: "m".into(),
+                frames: vec![],
+            },
         });
         assert_ne!(outcome_digest(&rejected), outcome_digest(&failed));
         let with_value = Outcome::Ok(afz_protocol::OkOutcome {
@@ -397,7 +484,11 @@ mod tests {
             coverage: None,
             value: Some(ValueTree::new(ValueNode::Boolean { value: true })),
         });
-        assert_ne!(outcome_digest(&outcome_ok(5.0)), outcome_digest(&with_value), "a different return shape is a different path");
+        assert_ne!(
+            outcome_digest(&outcome_ok(5.0)),
+            outcome_digest(&with_value),
+            "a different return shape is a different path"
+        );
     }
 
     #[test]

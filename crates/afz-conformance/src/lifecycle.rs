@@ -32,8 +32,12 @@ const HEALTH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// The port the suite hands to the package: bind port 0, read the assigned number, release
 /// the listener. See the module comment for why the race is accepted.
 pub fn allocate_port() -> Result<u16, String> {
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("could not allocate a loopback port: {e}"))?;
-    let port = listener.local_addr().map_err(|e| format!("allocated port is unreadable: {e}"))?.port();
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|e| format!("could not allocate a loopback port: {e}"))?;
+    let port = listener
+        .local_addr()
+        .map_err(|e| format!("allocated port is unreadable: {e}"))?
+        .port();
     drop(listener);
     Ok(port)
 }
@@ -41,20 +45,28 @@ pub fn allocate_port() -> Result<u16, String> {
 /// Replace `{{port}}` in every argv token, so `["java", "-jar", "app.jar", "--port={{port}}"]`
 /// and `["node", "server.js", "{{port}}"]` both work.
 pub fn substitute(argv: &[String], port: u16) -> Vec<String> {
-    argv.iter().map(|argument| argument.replace("{{port}}", &port.to_string())).collect()
+    argv.iter()
+        .map(|argument| argument.replace("{{port}}", &port.to_string()))
+        .collect()
 }
 
 /// `http://host:port/path` with the path defaulting to `/`. TLS and unix sockets are out of
 /// scope for a loopback health URL; the error says so rather than guessing.
 fn split_http_url(url: &str) -> Result<(String, u16, String), String> {
-    let rest = url.strip_prefix("http://").ok_or_else(|| format!("{url}: the health URL must be http:// on loopback"))?;
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| format!("{url}: the health URL must be http:// on loopback"))?;
     let (authority, path) = match rest.find('/') {
         Some(at) => (&rest[..at], rest[at..].to_string()),
         None => (rest, "/".to_string()),
     };
-    let colon = authority.rfind(':').ok_or_else(|| format!("{url}: the health URL must carry a port"))?;
+    let colon = authority
+        .rfind(':')
+        .ok_or_else(|| format!("{url}: the health URL must carry a port"))?;
     let host = authority[..colon].to_string();
-    let port = authority[colon + 1..].parse().map_err(|_| format!("{url}: the health URL port is not a number"))?;
+    let port = authority[colon + 1..]
+        .parse()
+        .map_err(|_| format!("{url}: the health URL port is not a number"))?;
     Ok((host, port, path))
 }
 
@@ -68,10 +80,19 @@ pub fn health_ready(url: &str) -> Result<(), String> {
         .map_err(|e| format!("{url}: cannot resolve: {e}"))?
         .next()
         .ok_or_else(|| format!("{url}: no address"))?;
-    let mut stream = TcpStream::connect_timeout(&address, HEALTH_PROBE_TIMEOUT).map_err(|e| format!("{url}: {e}"))?;
-    stream.set_read_timeout(Some(HEALTH_PROBE_TIMEOUT)).map_err(|e| e.to_string())?;
-    stream.set_write_timeout(Some(HEALTH_PROBE_TIMEOUT)).map_err(|e| e.to_string())?;
-    write!(stream, "GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n").map_err(|e| format!("{url}: {e}"))?;
+    let mut stream = TcpStream::connect_timeout(&address, HEALTH_PROBE_TIMEOUT)
+        .map_err(|e| format!("{url}: {e}"))?;
+    stream
+        .set_read_timeout(Some(HEALTH_PROBE_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    stream
+        .set_write_timeout(Some(HEALTH_PROBE_TIMEOUT))
+        .map_err(|e| e.to_string())?;
+    write!(
+        stream,
+        "GET {path} HTTP/1.0\r\nHost: {host}\r\nConnection: close\r\n\r\n"
+    )
+    .map_err(|e| format!("{url}: {e}"))?;
     let mut head = [0u8; 64];
     let read = stream.read(&mut head).map_err(|e| format!("{url}: {e}"))?;
     let text = String::from_utf8_lossy(&head[..read]);
@@ -79,7 +100,12 @@ pub fn health_ready(url: &str) -> Result<(), String> {
         .strip_prefix("HTTP/")
         .and_then(|rest| rest.split_whitespace().nth(1))
         .and_then(|code| code.parse().ok())
-        .ok_or_else(|| format!("{url}: answered without an HTTP status line: {:?}", text.trim()))?;
+        .ok_or_else(|| {
+            format!(
+                "{url}: answered without an HTTP status line: {:?}",
+                text.trim()
+            )
+        })?;
     match status {
         200..=499 => Ok(()),
         other => Err(format!("{url}: answered {other}; the service is not ready")),
@@ -99,7 +125,10 @@ pub fn wait_for_health(url: &str, budget: Duration) -> Result<(), String> {
         }
         std::thread::sleep(HEALTH_POLL);
     }
-    Err(format!("{url}: never answered within {} s; last: {last}", budget.as_secs()))
+    Err(format!(
+        "{url}: never answered within {} s; last: {last}",
+        budget.as_secs()
+    ))
 }
 
 /// The running service. Teardown is explicit (`Service::stop`), and dropping without stopping
@@ -129,11 +158,31 @@ impl Service {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| format!("the package's service could not start: {} failed: {e} (in {})", argv.join(" "), root.display()))?;
-        let service = Service { child, lifecycle: lifecycle.clone(), port, root: root.to_path_buf() };
+            .map_err(|e| {
+                format!(
+                    "the package's service could not start: {} failed: {e} (in {})",
+                    argv.join(" "),
+                    root.display()
+                )
+            })?;
+        let service = Service {
+            child,
+            lifecycle: lifecycle.clone(),
+            port,
+            root: root.to_path_buf(),
+        };
         let health = substitute(std::slice::from_ref(&lifecycle.health), port).remove(0);
-        let budget = lifecycle.health_timeout_secs.map(Duration::from_secs).unwrap_or(HEALTH_TIMEOUT);
-        wait_for_health(&health, budget).map_err(|detail| format!("the package's service never became ready: {detail} (launched: {} in {})", argv.join(" "), root.display()))?;
+        let budget = lifecycle
+            .health_timeout_secs
+            .map(Duration::from_secs)
+            .unwrap_or(HEALTH_TIMEOUT);
+        wait_for_health(&health, budget).map_err(|detail| {
+            format!(
+                "the package's service never became ready: {detail} (launched: {} in {})",
+                argv.join(" "),
+                root.display()
+            )
+        })?;
         Ok(service)
     }
 
@@ -142,9 +191,26 @@ impl Service {
         let argv = substitute(&self.lifecycle.teardown, self.port);
         let mut result = Ok(());
         if let Some(program) = argv.first() {
-            match Command::new(program).args(argv.iter().skip(1)).current_dir(&self.root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status() {
-                Ok(status) if !status.success() => result = Err(format!("the package's teardown {} exited {status}", argv.join(" "))),
-                Err(e) => result = Err(format!("the package's teardown {} could not run: {e}", argv.join(" "))),
+            match Command::new(program)
+                .args(argv.iter().skip(1))
+                .current_dir(&self.root)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+            {
+                Ok(status) if !status.success() => {
+                    result = Err(format!(
+                        "the package's teardown {} exited {status}",
+                        argv.join(" ")
+                    ))
+                }
+                Err(e) => {
+                    result = Err(format!(
+                        "the package's teardown {} could not run: {e}",
+                        argv.join(" ")
+                    ))
+                }
                 _ => {}
             }
         }
