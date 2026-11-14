@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use afz_engine::config::{self, Block, LoadedConfig};
+use afz_engine::config::{self, LoadedConfig};
 use afz_engine::rpc::client::{Launch, PluginClient};
 use afz_protocol::*;
 
@@ -19,7 +19,7 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
     // `probe-plugin` with no scan project keeps exercising the fake plugin, which is what
     // `cargo run -p afz-cli -- probe-plugin` is for.
     let launch = match (argv.is_empty(), scope.config.as_ref()) {
-        (true, Some(loaded)) => loaded.launch_for(Block::Codebase).map_err(|e| e.to_string())?,
+        (true, Some(loaded)) => loaded.launch().map_err(|e| e.to_string())?,
         _ => launch_for(argv)?,
     };
 
@@ -39,6 +39,11 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
         )
         .map_err(|r| r.detail())?;
     let coverage = client.coverage_map(std::time::Duration::from_secs(30)).ok();
+    let ready = if handshake.capabilities.contains(&Capability::Readiness) {
+        Some(client.ready(std::time::Duration::from_secs(5)).map_err(|r| r.detail())?)
+    } else {
+        None
+    };
 
     if json {
         println!(
@@ -47,15 +52,16 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
                 "handshake": handshake,
                 "discovery": discovery,
                 "coverageMap": coverage,
+                "ready": ready,
             }))
             .map_err(|e| e.to_string())?
         );
-        return Ok(());
+        return not_ready(ready.as_ref()).map_or(Ok(()), Err);
     }
 
     println!("plugin      {} {} ({})", handshake.name, handshake.version, launch.display());
     println!("protocol    {}", handshake.protocol_version);
-    println!("class       {}", wire_target_class(handshake.target_class));
+    println!("class       {}", handshake.target_class.as_str());
     println!("languages   {}", handshake.languages.join(", "));
     println!(
         "capability  {}",
@@ -114,6 +120,17 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
         Some(map) => println!("\ncoverage    {} edges mapped", map.entries.len()),
         None => println!("\ncoverage    coverageMap not offered"),
     }
+    if let Some(ready) = &ready {
+        println!(
+            "readiness   {}",
+            match (&ready.detail, ready.ready) {
+                (Some(d), true) => format!("ready — {d}"),
+                (Some(d), false) => format!("NOT READY — {d}"),
+                (None, true) => "ready".to_string(),
+                (None, false) => "NOT READY".to_string(),
+            }
+        );
+    }
     let fuzzable = discovery.targets.iter().filter(|t| t.is_fuzzable()).count();
     println!(
         "\n{} discovered, {} fuzzable, {} skipped",
@@ -121,7 +138,7 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
         fuzzable,
         discovery.skipped.len()
     );
-    Ok(())
+    not_ready(ready.as_ref()).map_or(Ok(()), Err)
 }
 
 /// Reject a plugin that speaks a different protocol revision, rather than misreading it.
@@ -133,6 +150,17 @@ pub(crate) fn check_protocol(handshake: &Handshake) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// The abort line for a not-ready answer, shared by the human and JSON paths so the
+/// printed document and the exit code tell the same story.
+fn not_ready(ready: Option<&ReadyResp>) -> Option<String> {
+    ready.filter(|r| !r.ready).map(|r| {
+        format!(
+            "the harness reports the target environment is not ready: {}",
+            r.detail.as_deref().unwrap_or("the harness gave no reason")
+        )
+    })
 }
 
 /// Resolve the plugin argv given on the command line, or fall back to the repository's fake
@@ -174,13 +202,6 @@ fn scope_for(root: &Path) -> Result<Scope, String> {
         });
     }
     Ok(Scope { root: root.to_path_buf(), include: None, exclude: None, config: None })
-}
-
-fn wire_target_class(class: TargetClass) -> &'static str {
-    match class {
-        TargetClass::DesignTime => "design-time",
-        TargetClass::Runtime => "runtime",
-    }
 }
 
 fn wire_kind(kind: Kind) -> &'static str {

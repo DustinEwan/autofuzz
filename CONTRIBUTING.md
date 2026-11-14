@@ -11,7 +11,7 @@ belongs on.
 |`crates/afz-cli/`|The `afz` binary.|
 |`crates/afz-mcp/`|The `afz-mcp` binary: an MCP server on stdio that drives the engine in process.|
 |`crates/afz-engine/src/harnesses.rs`|The install registry: the `afz-harness.json` manifest, the installed record, and the lookup every `command`-less scan project resolves through.|
-|`crates/afz-conformance/`|The conformance suite for plugins: 23 wire rules, template v1, the fixture-validator comparison, and the runtime lifecycle. `afz validate-harness`, `afz install-harness`, and `xtask check-harness` share it.|
+|`crates/afz-conformance/`|The conformance suite for plugins: 24 wire rules, template v1, the fixture-validator comparison, and the runtime lifecycle. `afz validate-harness`, `afz install-harness`, and `xtask check-harness` share it.|
 |`crates/xtask/`|A fake plugin for protocol tests and negative controls, the JSON Schema generator, and the in-repo `check-harness` entry point.|
 |`crates/afz-engine/tests/targets/`|Target trees the engine's own tests drive a plugin through: `blocked`, `minimize`, `oracles`.|
 |`docs/schema/`|Generated JSON Schema for every protocol type and for the scan result.|
@@ -28,11 +28,13 @@ cargo test --workspace
 ```
 
 The harness suites run in their own repositories (`autofuzz-harness-js-ts`,
-`autofuzz-harness-python`, `autofuzz-harness-wasm`), and the engine's own tests need the `js-ts` and
-`python` harnesses installed first (`afz install-harness <git url>`); the template gates read those
-records. `.github/workflows/ci.yml` runs the same commands on every push to `main` and on every
-pull request, after installing all three harnesses - that install is itself the conformance gate for
-the shipped plugins. The clippy step passes `-D warnings`, so a new warning fails the build instead
+`autofuzz-harness-python`, `autofuzz-harness-wasm`, `autofuzz-harness-starter`,
+`autofuzz-harness-openapi`), and the engine's own tests need the `js-ts` and `python`
+harnesses installed first (`afz install-harness <git url>`); the five template gates read
+the install records of all five shipped harnesses. `.github/workflows/ci.yml` runs the same
+commands on every push to `main` and on every pull request, after installing all five
+harnesses - that install is itself the conformance gate for the shipped plugins. The clippy
+step passes `-D warnings`, so a new warning fails the build instead
 of scrolling past. That applies to every target, tests included.
 
 ## Generated schemas

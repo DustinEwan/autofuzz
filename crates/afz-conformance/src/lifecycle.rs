@@ -15,6 +15,7 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -108,26 +109,31 @@ pub struct Service {
     child: Child,
     lifecycle: Lifecycle,
     port: u16,
+    root: PathBuf,
 }
 
 impl Service {
     /// Start the package's service and wait for its health URL. Every error names the
     /// package's own launch argv, because the failure is the package's, not the suite's.
-    pub fn start(lifecycle: &Lifecycle) -> Result<Service, String> {
+    /// `root` is the scan project's directory: the launch and teardown argv resolve their
+    /// relative paths and read their config files there, exactly as they would when a
+    /// human runs the same command from inside the package.
+    pub fn start(lifecycle: &Lifecycle, root: &Path) -> Result<Service, String> {
         let port = allocate_port()?;
         let argv = substitute(&lifecycle.launch, port);
         let program = argv.first().ok_or("lifecycle.launch is empty")?;
         let child = Command::new(program)
             .args(argv.iter().skip(1))
+            .current_dir(root)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| format!("the package's service could not start: {} failed: {e}", argv.join(" ")))?;
-        let service = Service { child, lifecycle: lifecycle.clone(), port };
+            .map_err(|e| format!("the package's service could not start: {} failed: {e} (in {})", argv.join(" "), root.display()))?;
+        let service = Service { child, lifecycle: lifecycle.clone(), port, root: root.to_path_buf() };
         let health = substitute(std::slice::from_ref(&lifecycle.health), port).remove(0);
         let budget = lifecycle.health_timeout_secs.map(Duration::from_secs).unwrap_or(HEALTH_TIMEOUT);
-        wait_for_health(&health, budget).map_err(|detail| format!("the package's service never became ready: {detail} (launched: {})", argv.join(" ")))?;
+        wait_for_health(&health, budget).map_err(|detail| format!("the package's service never became ready: {detail} (launched: {} in {})", argv.join(" "), root.display()))?;
         Ok(service)
     }
 
@@ -136,7 +142,7 @@ impl Service {
         let argv = substitute(&self.lifecycle.teardown, self.port);
         let mut result = Ok(());
         if let Some(program) = argv.first() {
-            match Command::new(program).args(argv.iter().skip(1)).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status() {
+            match Command::new(program).args(argv.iter().skip(1)).current_dir(&self.root).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status() {
                 Ok(status) if !status.success() => result = Err(format!("the package's teardown {} exited {status}", argv.join(" "))),
                 Err(e) => result = Err(format!("the package's teardown {} could not run: {e}", argv.join(" "))),
                 _ => {}

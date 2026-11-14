@@ -155,7 +155,7 @@ fn drive_inner(target: &Target, out: &Path, targets: usize, deadline_ms: u64) ->
 
     // 3. The check: the plugin under test is the one the target names, never a registry
     //    record. `AFZ_ROOT` and `AFZ_CONFIG` point at the staged project exactly as
-    //    `launch_for` points them at a real scan root, because a plugin reads its module or
+    //    `LoadedConfig::launch` points them at a real scan root, because a plugin reads its module or
     //    its harness settings from them before any request arrives.
     let launch = Launch::new(target.argv.clone())
         .with_cwd(target.root.display().to_string())

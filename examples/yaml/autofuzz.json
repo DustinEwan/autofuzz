@@ -1,7 +1,7 @@
 {
   "project": "yaml",
-  "codebase": {
-    "harness": "js-ts",
+  "harness": {
+    "name": "js-ts",
     "include": [
       "src/**/*.ts"
     ],

@@ -192,3 +192,19 @@ pub type HandshakeResp = Handshake;
 
 /// `coverageMap` request has no parameters.
 pub type CoverageMapResp = CoverageMap;
+
+/// `ready` response; the `ready` request has no parameters. Whether the environment the
+/// targets need is up. The engine calls `ready` once, after discovery and before any
+/// worker spawns, only when the handshake
+/// declares `readiness`. Readiness proves reachability and dialogue, never health: a
+/// service that answers 500 is ready, and a scan against it is meaningful.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadyResp {
+    pub ready: bool,
+    /// Why not, in the plugin's own words: the engine puts it verbatim in the abort
+    /// line, so it should name the endpoint or file that failed the probe.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+

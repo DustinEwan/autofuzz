@@ -6,9 +6,12 @@ still cannot do. Each lives in its own repository:
 - [`autofuzz-harness-js-ts`](https://github.com/DustinEwan/autofuzz-harness-js-ts) - TypeScript and JavaScript
 - [`autofuzz-harness-python`](https://github.com/DustinEwan/autofuzz-harness-python) - Python
 - [`autofuzz-harness-wasm`](https://github.com/DustinEwan/autofuzz-harness-wasm) - WebAssembly
+- [`autofuzz-harness-starter`](https://github.com/DustinEwan/autofuzz-harness-starter) - the scaffold you delete into your own plugin
+- [`autofuzz-harness-openapi`](https://github.com/DustinEwan/autofuzz-harness-openapi) - OpenAPI 3 services over HTTP
 
 If you are writing your own plugin instead, start with
-[`harness-authoring.md`](harness-authoring.md); this page is about the three harnesses shipped for
+[`harness-authoring.md`](harness-authoring.md) and the starter repository, which is a conforming
+plugin small enough to read in one sitting; this page is about the five harnesses shipped for
 autofuzz.
 
 The check is the same command a third-party author runs and a user installs with:
@@ -16,7 +19,7 @@ The check is the same command a third-party author runs and a user installs with
 anything, and `afz validate-harness` runs that suite again on demand — with no argument inside a
 harness checkout, or with an installed name anywhere else.
 
-The check has two layers. The first is the 23 wire rules, and every plugin must pass them. The second
+The check has two layers. The first is the 24 wire rules, and every plugin must pass them. The second
 is the [conformance template](harness-authoring.md#12-the-conformance-template-versions-and-the-runtime-lifecycle),
 which holds ten semantic properties. Seven of those ten are otherwise decided by data the plugin
 produced itself — its own skip lists, outcome frames, and coverage digests — so each conformance
@@ -29,20 +32,24 @@ violation of the run.
 |`js-ts`|`autofuzz-harness-js-ts`|`conformance/emit.mjs`|`node --experimental-strip-types conformance/validate.mjs`: 6 pass, 1 not applicable (`private-symbol`)|9 pass, 1 not applicable (`private-symbol`)|`the_js_ts_harness_passes_template_v1`, in the engine's `rust` job; install drives the wire rules|
 |`python`|`autofuzz-harness-python`|`conformance/emit.py`|`python3 conformance/validate.py`: 7 pass, 0 not applicable|10 pass, 0 not applicable|`the_python_harness_passes_template_v1`, in the engine's `rust` job; install drives the wire rules|
 |`wasm`|`autofuzz-harness-wasm`|`src/bin/emit.rs` (`afz-wasm-emit`)|`afz-wasm-check`: 4 pass, 3 not applicable (`guard-refusal`, `private-symbol`, `method-receiver`)|4 pass, 6 not applicable (`guard-refusal`, `private-symbol`, `method-receiver`, `stdout-purity`, `reproducer-script`, `deadline-sleep`)|`the_wasm_harness_passes_template_v1`, in the engine's `rust` job; install drives the wire rules|
+|`starter`|`autofuzz-harness-starter`|`conformance/emit.mjs`|`node conformance/validate.mjs`: 5 pass, 2 not applicable (`method-receiver`, `coverage-digest-live`)|8 pass, 2 not applicable (`method-receiver`, `coverage-digest-live`)|`the_starter_harness_passes_template_v1`, in the engine's `rust` job; install drives the wire rules|
+|`openapi`|`autofuzz-harness-openapi`|`conformance/emit.mjs`|`node conformance/validate.mjs`: 5 pass, 2 not applicable (`crash-unguarded`, `coverage-digest-live`)|7 pass, 3 not applicable (`crash-unguarded`, `coverage-digest-live`, `stdout-purity`)|`the_openapi_harness_passes_template_v1`, in the engine's `rust` job; install drives the wire rules and the service lifecycle|
 |fake plugin|`crates/xtask/src/fake.rs`|none, because it is the negative-control target|none|every rule is violated on demand by a directive|the `a_*` / `an_*` controls|
 
-Install is the wire-rules gate for all three: each harness repository's own CI runs
+Install is the wire-rules gate for all five: each harness repository's own CI runs
 `afz install-harness "$GITHUB_WORKSPACE"` and asserts the report, and the engine's `rust` CI job
-installs all three from their published URLs, so a shipped harness that stops conforming fails both
+installs all five from their published URLs, so a shipped harness that stops conforming fails both
 its own pull request and the engine's build.
 
 The expected results live in the gate tests themselves, so the numbers above are not a claim you have
 to re-measure. `the_python_harness_passes_template_v1` asserts exactly `(10, 0, 0)` and a
 fixture-side `(7, 0, 0)`. `the_js_ts_harness_passes_template_v1` asserts that `private-symbol` is the
 only not-applicable property on both sides and that the other nine pass.
-`the_wasm_harness_passes_template_v1` asserts the four realizations and the six named absences. All
-assertions are exact, so a new gap in either harness fails CI. To unblock CI, someone has to write
-the reason for the gap into the test.
+`the_wasm_harness_passes_template_v1` asserts the four realizations and the six named absences.
+`the_starter_harness_passes_template_v1` asserts eight passes and the two scaffold absences, and
+`the_openapi_harness_passes_template_v1` asserts seven passes and the three runtime absences, on
+both sides. All assertions are exact, so a new gap in any harness fails CI. To unblock CI, someone
+has to write the reason for the gap into the test.
 
 The harness repositories' CI runs Node 24 and Python 3.14. The `python` plugin's own floor is Python
 3.12, so CI does not test the oldest version that the plugin supports.
@@ -105,11 +112,15 @@ anywhere:
 afz validate-harness python
 ```
 
-The rendered project carries no `lifecycle` block, because all three shipped harnesses speak stdio
-and start no service of their own.
+Four of the five rendered projects carry no `lifecycle` block, because those harnesses speak stdio
+and start no service of their own. The `openapi` project ships one: its manifest launches
+`node service/server.mjs --port {{port}}` inside the rendered project, and the suite runs that
+lifecycle before the first handshake.
 
 If your harness talks to a REST service, add that block. Guide section 12 describes it. The suite
-allocates a port and substitutes it for the `{{port}}` placeholder in each argv that your manifest
-gives. It starts the service, waits for its health URL, drives one probe target that must echo a
-nonce back, and stops it. When that fails, the report prints the argv of your package, so you know
-which command the suite started.
+allocates a port, substitutes it for the `{{port}}` placeholder in the launch and teardown argv it
+starts from the project directory, and exports the same number as `AFZ_PORT` in the plugin's
+environment, so `harness.options` strings like a `baseUrl` can carry `{{port}}` too. It starts the
+service, waits for its health URL, drives one probe target that must echo a nonce back, and stops
+it. When that fails, the report prints the argv of your package and the directory the process
+failed to start in, so you know which command the suite ran.

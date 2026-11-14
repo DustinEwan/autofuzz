@@ -4,7 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use afz_engine::config::{self, Block, LoadedConfig};
+use afz_engine::config::{self, LoadedConfig};
 use afz_engine::rpc::client::Launch;
 
 const USAGE: &str = "usage: afz-xtask <schema [dir]|fakeplugin|check-harness [--path <dir>] [--command <argv…>] [--targets <n>] [--deadline <ms>] [--json]>";
@@ -100,7 +100,7 @@ fn check_harness(argv: &[String]) -> Result<afz_conformance::Report, String> {
     let scope = Scope::for_path(path.as_deref())?;
     let launch = match (&command, scope.config.as_ref()) {
         (Some(argv), _) => Launch::new(argv.clone()),
-        (None, Some(loaded)) => loaded.launch_for(Block::Codebase).map_err(|e| e.to_string())?,
+        (None, Some(loaded)) => loaded.launch().map_err(|e| e.to_string())?,
         (None, None) => fakeplugin_launch()?,
     };
     let mut check = afz_conformance::Check::new(launch, scope.root.display().to_string());

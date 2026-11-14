@@ -9,7 +9,7 @@ scope, and what a scan leaves on disk. For how a scan works inside, read
 
 |Command|What it does|
 |---|---|
-|`afz probe-plugin`|Starts a plugin, completes the handshake, and prints the inventory it discovers. Costs no invocations.|
+|`afz probe-plugin`|Starts a plugin, completes the handshake, prints the inventory it discovers, and asks a readiness-declaring plugin whether its environment is up. Costs no invocations.|
 |`afz scan`|Runs a coverage-guided scan and writes the scan result.|
 |`afz validate-harness`|Drives a harness plugin through the conformance suite and reports rule by rule.|
 |`afz install-harness`|Clones a harness repository, builds and validates its plugin, and records it for scans.|
@@ -27,6 +27,11 @@ With no `--command` and no scan project above the directory you point at, `probe
 the fake plugin that the protocol tests drive. That plugin sits beside `afz` only in a workspace you
 built yourself with `cargo build --workspace`; a binary you installed with `install.sh` has none beside
 it, so pass `--command` or point `--path` at a scan project.
+
+A plugin that declares the `readiness` capability is also sent `ready`. The table gains a
+`readiness` line, the JSON gains a `ready` field, and a not-ready answer makes the command
+exit non-zero with the plugin's own reason — the difference between "the service is down"
+and "the plugin is broken", before a scan spends its budget.
 
 ### `afz scan`
 
@@ -92,12 +97,12 @@ hard to try, and where to write the result.
 ```jsonc
 {
   "project": "billing-service",
-  "codebase": {
-    "harness": "js-ts",
+  "harness": {
+    "name": "js-ts",
     // `command` omitted: the installed `js-ts` plugin resolves from the registry.
     "include": ["src/**/*.ts"],
     "exclude": ["**/*.test.ts"],
-    "rejectClasses": ["ValidationError"]      // error classes you declare as this API's refusal channel
+    "options": { "rejectClasses": ["ValidationError"] }   // the harness's own configuration; the engine reads nothing here
   },
   "oracles": { "deadline": { "ms": 2000 } },
   "budget": {
@@ -112,19 +117,19 @@ hard to try, and where to write the result.
 ```
 
 Every block is optional, and an unknown key is an error rather than a typo you never notice. A scan does
-need one target block, because that is where the plugin and the file set come from. Today that block is
-`codebase`. The `runtime` block is reserved: a scan project whose only block is `runtime` passes
-validation, and a scan of it stops with `runtime targets are not implemented`.
+need a `harness` block, because that is where the plugin, and the file set it walks, come from. The
+engine reads nothing inside `harness.options`: the plugin named by `harness.name` reads that object
+itself, from the file `discover.configPath` names in the discovery request.
 
 Four keys are worth more than a comment:
 
-- `codebase.harness` always names the harness. `command` is optional when `afz install-harness`
+- `harness.name` always names the harness. `command` is optional when `afz install-harness`
   recorded that name, and the engine never guesses a runtime otherwise: an uninstalled name is an
   error, not a `PATH` search. `command` is how you name a plugin nobody installed; the engine runs it
   with the scan root as the working directory, and a relative path in it is resolved from where you
   run `afz`, so an absolute path is the safer habit.
-- `codebase.rejectClasses` changes how a call is classified for your code only. Both shipped plugins
-  read it, and each has its own default idea of what a refusal looks like.
+- `harness.options.rejectClasses` changes how a call is classified for your code only. Both shipped
+  code-level plugins read it, and each has its own default idea of what a refusal looks like.
 - `output.renderers` accepts `json` and `markdown`, which are the two renderers that exist today. The
   list controls only whether `report.md` is rendered: `scan.json` is written whatever the list holds.
 - A scan always excludes its own output directory from discovery. Without that rule, a second scan of the
@@ -201,10 +206,12 @@ nothing else:
 afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git
 afz install-harness https://github.com/DustinEwan/autofuzz-harness-python.git
 afz install-harness https://github.com/DustinEwan/autofuzz-harness-wasm.git
+afz install-harness https://github.com/DustinEwan/autofuzz-harness-starter.git
+afz install-harness https://github.com/DustinEwan/autofuzz-harness-openapi.git
 ```
 
 ```jsonc
-"codebase": { "harness": "js-ts" }
+"harness": { "name": "js-ts" }
 ```
 
 The install builds the plugin and validates it against the conformance suite before it records the
@@ -215,7 +222,7 @@ what each name resolves to.
 for instance — and it wins over the record:
 
 ```jsonc
-"codebase": { "harness": "js-ts", "command": ["node", "/home/me/harness-js/dist/server.js"] }
+"harness": { "name": "js-ts", "command": ["node", "/home/me/harness-js/dist/server.js"] }
 ```
 
 For wasm, the scan project names neither a command nor a module: the plugin takes the module as the
@@ -251,6 +258,6 @@ different project by calling a tool again, which is how it already uses a shell.
 This server drives the engine in process, so it runs one scan at a time: it rejects a second `afz_scan`
 while one is running, instead of queueing it.
 
-Keep one caution in mind. The `codebase.command` in a scan project is code that the engine runs, so point
+Keep one caution in mind. The `harness.command` in a scan project is code that the engine runs, so point
 `afz-mcp` only at scan trees you already trust. `afz scan` runs that same command, so the trust question is
 the same one either way.

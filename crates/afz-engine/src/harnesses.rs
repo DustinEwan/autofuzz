@@ -1,8 +1,8 @@
 //! The installed-harness registry: one directory per harness, written by `afz install-harness`.
 //!
-//! A scan project may name a harness (`codebase.harness`) without a `command`; the launch then
+//! A scan project may name a harness (`harness.name`) without a `command`; the launch then
 //! comes from the record this module owns. The engine never invents a runtime and never guesses
-//! a plugin path: an uninstalled name is still an error, and `codebase.command` stays the way
+//! a plugin path: an uninstalled name is still an error, and `harness.command` stays the way
 //! to run a plugin nobody installed.
 
 use std::path::{Path, PathBuf};
@@ -132,7 +132,7 @@ pub fn record(harness: &InstalledHarness) -> Result<PathBuf, String> {
 }
 
 /// A `Launch` carrying the recorded argv, with no cwd and no environment: the caller sets
-/// both, exactly as `LoadedConfig::launch_for` does.
+/// both, exactly as `LoadedConfig::launch` does.
 pub fn launch(name: &str) -> Option<Launch> {
     lookup(name).map(|harness| Launch::new(harness.argv))
 }

@@ -152,8 +152,8 @@ fn project(name: &str, script: &str) -> PathBuf {
     let root = scratch(name);
     let config = serde_json::json!({
         "project": name,
-        "codebase": {
-            "harness": "afz-fakeplugin",
+        "harness": {
+            "name": "afz-fakeplugin",
             "command": [fakeplugin_path().display().to_string()],
             "env": { "AFZ_FAKE_SCRIPT": script },
         },

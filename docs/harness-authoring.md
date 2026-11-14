@@ -20,8 +20,8 @@ nothing that it can read from the plugin's answer, minimizes, and writes the sca
 - builds the receiver and arguments for one call (`prepare`);
 - runs one call and reduces it to one `Outcome` (`invoke`);
 - optionally maps coverage edge ids to source ranges (`coverageMap`), shrinks an input in target
-  terms (`minimize`), and renders a standalone replay script for a confirmed finding
-  (`reproducer`).
+  terms (`minimize`), renders a standalone replay script for a confirmed finding
+  (`reproducer`), and proves the environment its targets live in is up (`ready`).
 
 What `rejected` and `failed` mean for a given language is your plugin's call. The engine never inspects a
 JavaScript exception, a Rust `Result`, a Go `error`, or an HTTP status class.
@@ -82,6 +82,7 @@ matches on the string. These seven are the whole contract (`crates/afz-protocol/
 |`minimize`|`targetId`, `values[]`, `fault`, `budgetMs`|`values[]`, `steps`|
 |`reproducer`|`targetId`, `values[]`|`extension`, `script`|
 |`coverageMap`|**omitted entirely**|`entries[]` of `{edge, url, start, end}`|
+|`ready`|**omitted entirely**|`{"ready":true}` or `{"ready":false,"detail":"<what is down>"}`|
 
 `include` and `exclude` are instructions for the plugin, not for the engine: the plugin matches
 them itself, against paths relative to `root` with `/` separators, and an empty or absent
@@ -105,7 +106,7 @@ Literals you must match:
 - `jsonrpc` is the literal `"2.0"`.
 - `id` is a `u64` assigned per plugin process, starting at 1 (`PluginClient::spawn` sets
   `next_id: AtomicU64::new(1)`). Echo it back on error frames too.
-- `params` is **omitted**, not `null`, for `handshake` and `coverageMap` (`Request::empty`). Do not
+- `params` is **omitted**, not `null`, for `handshake`, `coverageMap`, and `ready` (`Request::empty`). Do not
   require it. `src/main.rs` in `autofuzz-harness-wasm` reads a missing `params` as an empty object for the same
   reason.
 - Error codes: `-32700` parse error, `-32600` invalid request, `-32601` method not found, `-32000`
@@ -149,8 +150,8 @@ The engine starts plugin processes at three places, and they do not all receive 
 
 |Connection|Spawned by|Receives|
 |---|---|---|
-|probe|`scan::run`|`handshake`, `discover`|
-|one per worker|`Supervisor::new` → `Worker::start`|`discover` only, then `prepare`, `invoke`, `coverageMap`. **Never `handshake`.**|
+|probe|`scan::run`|`handshake`, `discover`, and `ready` when the handshake declares `readiness`|
+|one per worker|`Supervisor::new` → `Worker::start`|`discover` only, then `prepare`, `invoke`, `coverageMap`. **Never `handshake` or `ready`.**|
 |minimizer pool|`Minimizer::grow`, `run_trial`|`discover` only, then `prepare`, `invoke`|
 
 Consequences you must design for:
@@ -183,6 +184,7 @@ The timeouts that the engine applies, and what they bound:
 |`minimize` trial|deadline + 10 s|`scan::MINIMIZE_SLACK`|
 |`reproducer`|10 s|`scan::REPRODUCER_TIMEOUT`|
 |`coverageMap`|10 s|`scan::COVERAGE_TIMEOUT`|
+|`ready`|5 s|`scan::READY_TIMEOUT`|
 
 `prepare` is never held to the invocation deadline. Preparing imports the target's module graph,
 which is the harness's work and not the target's; holding it to the deadline killed a plugin on
@@ -191,8 +193,8 @@ every first call into a package with a deep graph, and the scan reported those k
 
 ## 6. Capabilities: what the engine reads today
 
-A capability is a promise that your handshake makes, and the engine acts on only two of the six. Knowing which
-two keeps you from building a method nobody calls, and from claiming one you do not answer.
+A capability is a promise that your handshake makes, and the engine acts on only three of the seven. Knowing which
+three keeps you from building a method nobody calls, and from claiming one you do not answer.
 
 `coverage` changes how the engine schedules: it turns `collectCoverage` on for every job and turns the
 `coverageMap` walk on.
@@ -206,6 +208,14 @@ ship with only the minimized input JSON.
 A finding that an earlier scan already reported ships without a script too: the engine does not
 shrink or render what a previous run wrote up. A rerun over a warm `seen.json` therefore prints
 `reproducer not emitted` for every finding — that is suppression working, not a broken plugin.
+
+`readiness` gates the scan itself. The engine calls `ready` once on the probe connection,
+after `discover` and before any worker spawns, and a `{"ready":false}` answer stops the scan
+with the plugin's own `detail` as the first line (`scan::run`). Readiness proves
+reachability and dialogue, never health: a service that answers 500 on every route is
+ready, because the scan can talk to it and the 500s are findings. Only a transport-level
+failure — refused connection, timeout, DNS error — is not-ready. If your targets live in
+the tree discovery already read, leave the capability out: there is nothing to prove.
 
 `stateful`, `sideEffects`, `concurrent`, and `minimize` are recorded in `scan.json` under
 `target.harness.capabilities` and change nothing in the engine today.
@@ -373,7 +383,7 @@ result is wrong and nothing reports it.
 
 14. **Returning `sys.monitoring.DISABLE` from the LINE callback.** Measured on Python 3.14.4: a
     callback that returned `DISABLE` reported the first call's 4 lines and then reported nothing
-    for those same lines on every later call — trap 1's mistake in a second runtime. The 23 wire
+    for those same lines on every later call — trap 1's mistake in a second runtime. The 24 wire
     rules will not catch it: they check that the map lists each digest, not that the digests grew, so a
     silently empty digest passes all of them. The template rule `coverage-digest-live` does catch
     it, because two inputs that both digest to nothing are the same digest. Arm once and return
@@ -391,23 +401,23 @@ result is wrong and nothing reports it.
 
 ## 10. Registering the harness
 
-No Rust registration is needed. `codebase.command` in `autofuzz.json` gives the argv:
+No Rust registration is needed. `harness.command` in `autofuzz.json` gives the argv:
 
 ```jsonc
 {
-  "codebase": {
-    "harness": "mylang",
+  "harness": {
+    "name": "mylang",
     "command": ["/abs/path/to/my-plugin", "--stdio"]
   }
 }
 ```
 
 No harness name is special. A name installed with `afz install-harness` needs no `command`:
-`LoadedConfig::launch_for` (`crates/afz-engine/src/config.rs:295`) consults `harnesses::lookup` -
+`LoadedConfig::launch` (`crates/afz-engine/src/config.rs`) consults `harnesses::lookup` -
 the registry that `install-harness` writes - only when `command` is absent, and a name with neither
 fails at load with `` `command` is required for harness "{name}": the engine does not guess a
-runtime; install one with `afz install-harness <git-url>` `` (checked again by `validate` at
-`config.rs:421`). `probe-plugin --command` still wins over both. The engine once had a built-in argv
+runtime; install one with `afz install-harness <git-url>` `` (`ScanProject::validate` applies the
+same rule before the first spawn). `probe-plugin --command` still wins over both. The engine once had a built-in argv
 for `js-ts`, and older text in this repository still says so; that path is gone, and an uninstalled
 `js-ts` needs a `command` like every other harness.
 
@@ -419,7 +429,7 @@ Two resolution details:
   absolute; `install-harness` resolved it against the harness root when it recorded it.
 - The plugin's working directory is the directory holding `autofuzz.json`, and the engine injects
   `AFZ_ROOT` and `AFZ_CONFIG` pointing at that directory and at the file. The parent environment is
-  inherited. The `discover` request's `root` is `codebase.root` resolved against that directory, so
+  inherited. The `discover` request's `root` is `harness.root` resolved against that directory, so
   it is not always the same directory that the plugin starts in.
 
 ## 11. Testing a harness
@@ -451,7 +461,7 @@ whether it runs. `test/repro_test.py` in `autofuzz-harness-python` and
 ships two small programs. The emitter renders a scan project — fixture tree, `autofuzz.json`, and
 an `afz-conformance-manifest.json` that identifies the symbol that proves each template property —
 into a directory it is given (`conformance/emit.mjs`, `conformance/emit.py`, `src/bin/emit.rs` in
-the three shipped repositories). It needs its host runtime and nothing else: no dependency
+the five shipped repositories). It needs its host runtime and nothing else: no dependency
 install, no compiled plugin, no other repository. The fixture validator — `conformance/validate.mjs`,
 `conformance/validate.py`, `src/bin/check.rs` — reports on the rendered fixture with the plugin out
 of the path, and the suite requires the two judgments to agree (section 12). The suite — not the
@@ -593,6 +603,13 @@ runs. `teardown` runs when the suite is done, and every failure quotes the packa
 `lifecycle-service` when the service never came up or teardown failed, `lifecycle-nonce` when the
 `probe` target's answer does not echo the manifest's `nonce`. That last rule is what proves the
 plugin is talking to the service that this suite started, and not to a table that it read from disk.
+
+The suite hands the plugin the same port it handed the service: every plugin connection the suite
+spawns carries `AFZ_PORT` set to the allocated port, and only when the manifest has a `lifecycle`
+block. A harness may write `{{port}}` anywhere in its own `harness.options` strings; the harness
+substitutes it from `AFZ_PORT`, and refuses with a message naming both `{{port}}` and `AFZ_PORT`
+when the placeholder is present and the variable is unset. The engine substitutes nothing into
+`harness.options`.
 
 ## 13. Where the numbers came from
 

@@ -32,14 +32,14 @@ back to novelty over the outcome that the call returned.
 
 | | Status |
 |---|---|
-| Design-time targets: functions, methods, exported symbols | Built, three harnesses |
-| Harness plugins `js-ts`, `python`, `wasm` | Built. `js-ts` and `python` are gated in CI; the `wasm` gate is ignored, see [`harnesses.md`](harnesses.md) |
+| Design-time targets: functions, methods, exported symbols | Built, four harnesses |
+| Harness plugins `js-ts`, `python`, `wasm`, `starter`, `openapi` | Built. Each is gated twice: install drives the wire rules in CI, and `crates/xtask/tests/conformance.rs` asserts each template golden |
 | Coverage-guided loop, corpus, scheduler | Built |
 | Oracles `failed`, `rejected`, `deadline`, `memoryGrowth`, `processExit` | Built |
 | Scan result document, `json` and `markdown` renderers | Built |
 | Git change-set scoping (`--git`) | Built |
 | MCP server on stdio | Built |
-| Runtime targets (HTTP routes, RPC methods, CLI commands) | Not built. The `runtime` block validates and a scan of it stops |
+| Runtime targets (HTTP routes, RPC methods, CLI commands) | Engine-side: built. The engine launches any plugin whatever class it drives; `autofuzz-harness-openapi` fuzzes OpenAPI 3 documents against a live service |
 | Fixture format for `fixture-required` parameters | Not built. Those targets are reported as skipped |
 | `differential` oracle, property-assertion oracles | Not built. Naming one is a configuration error |
 | SARIF renderer | Not built |
@@ -47,8 +47,9 @@ back to novelty over the outcome that the call returned.
 ## Two target classes
 
 Design-time and runtime targets differ in discovery, invocation, feedback, and risk. They share the loop,
-the finding model, and the scan result. Only the first column exists today; the second is the design that
-the reserved `runtime` block will follow.
+the finding model, and the scan result. The plugin declares its class in the handshake, the engine records
+it in the scan result, and no engine decision branches on it: what a plugin can drive is the plugin's
+business.
 
 | | Design-time target | Runtime target |
 |---|---|---|
@@ -74,13 +75,14 @@ same transport model as LSP and DAP. Three reasons:
 In-process plugins are not supported. A single fault in a plugin would take the scan down with it, and the
 stdio cost disappears next to the cost of one target invocation.
 
-The engine never guesses how to start a plugin. `codebase.command` gives the argv, for every harness, and
-`ScanProject::validate` rejects a scan project without it. The plugin runs with the scan root as its
-working directory, and the engine passes `AFZ_ROOT` and `AFZ_CONFIG` in its environment.
+The engine never guesses how to start a plugin. `harness.command` gives the argv, for every harness, and
+`ScanProject::validate` rejects a harness name that has neither a `command` nor an `afz install-harness`
+record. The plugin runs with the scan root as its working directory, and the engine passes `AFZ_ROOT` and
+`AFZ_CONFIG` in its environment.
 
-## The seven methods
+## The eight methods
 
-All seven are on the wire, and a plugin must answer every one of them. `crates/afz-protocol/src/rpc.rs`
+All eight are on the wire, and a plugin must answer every one of them. `crates/afz-protocol/src/rpc.rs`
 defines them, and `docs/schema/` is the authority for every field, because it is generated from the Rust
 types that the engine compiles against.
 
@@ -127,6 +129,10 @@ export interface HarnessPlugin {
 
   /** Map coverage edge ids to the source ranges they stand for. */
   coverageMap(): Promise<CoverageMap>;
+
+  /** Prove the environment the targets live in is up before workers spawn. Asked only
+      when the handshake declares `readiness`. */
+  ready(): Promise<{ ready: boolean; detail?: string }>;
 }
 ```
 
@@ -139,8 +145,9 @@ export interface HarnessPlugin {
 | `minimize` | A smaller input that still reproduces the fault class | not sent today, see below |
 | `reproducer` | A standalone script and its file extension | 10 s |
 | `coverageMap` | The edge ids and the source ranges they stand for | 10 s |
+| `ready` | Whether the environment the targets need is up, and the reason if it is not | 5 s |
 
-`minimize`, `reproducer`, and `coverageMap` are optional in one precise sense. A plugin that cannot do the
+`minimize`, `reproducer`, `coverageMap`, and `ready` are optional in one precise sense. A plugin that cannot do the
 work leaves the capability out of its handshake, and answers the method with a `-32601` or `-32600` error
 frame. Both shipped plugins take that route for `minimize`.
 
@@ -155,8 +162,8 @@ the same isolation and the same deadline that it applies to invocations.
 
 ## Capabilities
 
-A plugin declares what it can do at handshake, and the engine adapts instead of assuming. Two of the six
-names change engine behavior today, and the table says which.
+A plugin declares what it can do at handshake, and the engine adapts instead of assuming. Three of the
+seven names change engine behavior today, and the table says which.
 
 | Capability | Meaning | Does the engine read it today? |
 |---|---|---|
@@ -164,8 +171,9 @@ names change engine behavior today, and the table says which.
 | `reproducer` | The plugin can render a standalone replay script in the target language | Yes. Without it a finding carries no script, and the minimized input in `inputs/` is the only replayable artifact |
 | `stateful` | The plugin can build receiver state | No. Absent behavior is a property of the plugin's own discovery, not an engine gate |
 | `minimize` | The plugin can shrink an input in target terms | No. The engine minimizes through `invoke` |
-| `sideEffects` | Invocations may change external state | No. The engine has no side-effect policy yet, because design-time targets have none |
+| `sideEffects` | Invocations may change external state | No. The engine sends whatever the plugin discovered; the side-effect policy lives in the plugin that sends the requests |
 | `concurrent` | The plugin tolerates parallel instances | No. The engine starts one process per worker for every harness |
+| `readiness` | The plugin can prove the environment its targets live in is up | Yes. The engine calls `ready` after discovery, and a not-ready answer aborts the scan before any worker spawns |
 
 A plugin author who reads this table and then reads `harness-authoring.md` gets the honest version: declare
 what you answer, and do not declare what you do not.
@@ -179,7 +187,7 @@ from `docs/schema/target-descriptor.json`.
 |---|---|
 | `id` | Stable content hash of module path, symbol, and signature |
 | `targetClass` | `design-time` or `runtime` |
-| `origin` | `file` and `line` for source, `module` for a compiled artifact, `http` reserved for a runtime target |
+| `origin` | `file` and `line` for source, `module` for a compiled artifact, `http` for an operation in an API document |
 | `name` | `parseConfig`, `UserRepo.findById`, `POST /v1/tokens` |
 | `parameters` | Each with `name`, `type`, `required` |
 | `returns` | A `TypeNode`, when the callable has a declared return type |
@@ -265,8 +273,8 @@ rule per language. Two of these rows are implemented; the rest show how the same
 
 | Language or boundary | `rejected` | `failed` | Implemented |
 |---|---|---|---|
-| TypeScript / JavaScript | `throw` at a source location the target wrote, which discovery records as a guard site, or an error class the scan project lists in `codebase.rejectClasses` | engine-raised `TypeError`, `RangeError`, or `URIError` at any other location; worker exit; unhandled rejection | yes |
-| Python | a raise at a guard site, or an exception class in `codebase.rejectClasses` | `TypeError`, `AttributeError`, `IndexError`, and any raise outside the declared set | yes |
+| TypeScript / JavaScript | `throw` at a source location the target wrote, which discovery records as a guard site, or an error class the scan project lists in `harness.options.rejectClasses` | engine-raised `TypeError`, `RangeError`, or `URIError` at any other location; worker exit; unhandled rejection | yes |
+| Python | a raise at a guard site, or an exception class in `harness.options.rejectClasses` | `TypeError`, `AttributeError`, `IndexError`, and any raise outside the declared set | yes |
 | Rust | `Err(e)` returned from `Result`, `None` returned from `Option` | `panic!`, `unwrap` on an `Err`, index out of bounds, divide by zero, `unreachable!`, `assert!`, `SIGSEGV`, `SIGABRT` | no plugin answers this yet |
 | Go | a returned non-nil `error` | `panic`, write to a nil map, index out of range, race detector report | no |
 | Java / Kotlin | an exception type in the method's `throws` clause | unchecked `RuntimeException` or `Error`, JVM assertion, out-of-memory | no |
@@ -447,14 +455,16 @@ These are the choices that a design review can override, and each one gives the 
    isolation. Overridden only if plugin startup cost proves dominant, in which case an in-process variant is
    added behind the same contract.
 2. **Coverage is a declared capability, not an engine requirement.** Chosen because HTTP runtime targets
-   usually cannot provide it. Overridden only if runtime targets are dropped from the product, which would
-   also drop the reason `coverage` is optional.
+   usually cannot provide it. Overridden only if every harness proves able to supply per-call edges, which
+   would also drop the reason `coverage` is optional.
 3. **`discover` never executes target code unless the plugin declares otherwise.** Chosen because importing a
    user module runs user code inside our process.
 4. **Unreachable entry points are reported, not silently dropped.** Chosen so coverage claims stay honest.
    Overridden if the product requires a single "API coverage" number without the breakdown.
-5. **Runtime targets send only non-mutating methods to declared hosts by default.** Chosen because a fuzzer
-   that deletes user data ends the product. Not built yet, so nothing overrides it yet.
+5. **Runtime targets send only non-mutating methods unless the scan project names the operation.** Chosen
+   because a fuzzer that deletes user data ends the product. The policy lives in the plugin that sends the
+   requests: `autofuzz-harness-openapi` refuses a mutating method unless `harness.options.allowMutating`
+   names it.
 6. **The scan result is one immutable JSON document plus content-addressed artifacts, with
    `finding.identity` stable across scans.** Chosen so triage and pull-request tooling can match findings
    across scans by identity.
@@ -465,29 +475,13 @@ These are the choices that a design review can override, and each one gives the 
 
 ## Reserved surface: what is not built
 
-This section exists so that the rest of the document can be read literally. Everything here is designed and
-has an entry in the configuration schema, and none of it is implemented.
-
-### Runtime targets
-
-The `runtime` block parses and validates. A scan project whose only block is `runtime` passes validation,
-and `afz scan` stops in preflight with `runtime targets are not implemented`
-(`crates/afz-engine/src/scan.rs:228`). The keys are already shaped for the design: `baseUrl`, `openapi`,
-`allowMutating`, `destructive`, `maxConcurrent`, `requestsPerSecond`, `harness`, and `command`.
-`validate` already requires `baseUrl`, because nothing may be sent to a host the user did not list there.
-
-The side-effect policy that this block will carry:
-
-- Invoke only non-mutating methods by default: `GET`, `HEAD`, `OPTIONS`, and RPC methods marked read-only.
-- Require the method to appear in `allowMutating` before anything mutating is sent, and mark methods that
-  delete or spend money in `destructive`.
-- Refuse any request whose host the user did not list in `baseUrl`, before send.
-- Cap concurrency and rate per target.
+This section exists so that the rest of the document can be read literally. Everything here is designed,
+and none of it is implemented.
 
 ### Fixtures
 
-`codebase.fixtures.module` parses and is reserved. No fixture format, loader, or validator exists, so
-`fixture-required` targets stay in the skipped list.
+No fixture format, loader, or validator exists, so `fixture-required` targets stay in the skipped list. A
+harness that can build fixtures for its own targets carries that configuration in `harness.options`.
 
 ### Oracles and renderers
 

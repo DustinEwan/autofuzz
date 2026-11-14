@@ -1,4 +1,4 @@
-//! JSON-RPC 2.0 framing: one message per line on stdio, request `id` as `u64`, six methods.
+//! JSON-RPC 2.0 framing: one message per line on stdio, request `id` as `u64`, eight methods.
 //!
 //! The framing helpers are shared by the engine client and by plugins written in Rust, so
 //! a plugin author does not reimplement line-delimited framing.
@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// The seven methods a harness plugin may answer.
+/// The eight methods a harness plugin may answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum Method {
@@ -20,6 +20,7 @@ pub enum Method {
     Minimize,
     Reproducer,
     CoverageMap,
+    Ready,
 }
 
 impl Method {
@@ -32,6 +33,7 @@ impl Method {
             Method::Minimize => "minimize",
             Method::Reproducer => "reproducer",
             Method::CoverageMap => "coverageMap",
+            Method::Ready => "ready",
         }
     }
 
@@ -44,6 +46,7 @@ impl Method {
             "minimize" => Some(Method::Minimize),
             "reproducer" => Some(Method::Reproducer),
             "coverageMap" => Some(Method::CoverageMap),
+            "ready" => Some(Method::Ready),
             _ => None,
         }
     }

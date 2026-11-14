@@ -7,10 +7,11 @@
 //! scripts exactly one defect into `afz-fakeplugin` and asserts that the named rule is what
 //! comes back, because a rule that cannot fail proves nothing.
 //!
-//! The three template gates read their plugin, emitter, and project root from the install
+//! The five template gates read their plugin, emitter, and project root from the install
 //! registry, so make them pass by installing: `afz install-harness
 //! https://github.com/DustinEwan/autofuzz-harness-js-ts.git`, and the same for
-//! `autofuzz-harness-python` and `autofuzz-harness-wasm`.
+//! `autofuzz-harness-python`, `autofuzz-harness-wasm`, `autofuzz-harness-starter`, and
+//! `autofuzz-harness-openapi`.
 
 use std::path::{Path, PathBuf};
 
@@ -66,7 +67,10 @@ fn a_conforming_plugin_passes() {
     // Six targets, one of which `prepare` refuses, so five are invoked twice.
     assert_eq!(report.targets, 6);
     assert_eq!(report.driven, 6);
-    assert_eq!(report.passed(), conformance::RULES.len(), "the reference plugin declares every capability the suite can check");
+    // The reference plugin's environment is its own process, so it honestly leaves
+    // `readiness` undeclared and that rule is not applicable to it; both declared
+    // branches are driven in `crates/afz-conformance/tests/readiness.rs`.
+    assert_eq!(report.passed(), conformance::RULES.len() - 1, "readiness is the only rule the reference plugin does not claim");
 }
 
 #[test]
@@ -267,7 +271,9 @@ fn a_connection_that_only_discovered_can_answer() {
 // install record — the engine's dependency on another repository is a dependency on the
 // install contract only. The applicability set is the golden the CI asserts: python realizes
 // all ten properties; js-ts justifies exactly one absence (private-symbol); wasm realizes
-// four and accounts for six. Every not-applicable line shows in the report, so drift is
+// four and accounts for six; starter justifies two (method-receiver, coverage-digest-live);
+// openapi justifies three (crash-unguarded, coverage-digest-live, stdout-purity). Every
+// not-applicable line shows in the report, so drift is
 // visible, never a silent pass.
 
 fn installed(name: &str) -> afz_engine::harnesses::InstalledHarness {
@@ -291,8 +297,8 @@ fn render_conformance_project(emitter: &[PathBuf], out: &Path) {
 
 fn run_template_gate(label: &str, launch: Launch, out: &Path, deadline_ms: u64) -> conformance::Report {
     let loaded = afz_engine::config::load(&out.join(afz_engine::config::CONFIG_FILE_NAME)).expect("the rendered project is a scan project");
-    let scope = loaded.discovery_scope().expect("the rendered project declares a codebase block");
-    // The same environment `launch_for` gives a real scan: the wasm harness reads its module
+    let scope = loaded.discovery_scope().expect("the rendered project declares a harness block");
+    // The same environment `LoadedConfig::launch` gives a real scan: the wasm harness reads its module
     // from `AFZ_ROOT` before the first request, so a gate that omits these kills the plugin.
     let launch = launch
         .with_env("AFZ_ROOT", out.display().to_string())
@@ -408,4 +414,60 @@ fn the_wasm_harness_passes_template_v1() {
         "a module carries no guard, private name, or method receiver to inspect: {:?}",
         validator.properties
     );
+}
+
+#[test]
+fn the_starter_harness_passes_template_v1() {
+    let record = installed("starter");
+    let conformance_record = record.conformance.as_ref().expect("afz-harness.json declares conformance");
+    let out = conformance_out("starter-gate");
+    render_conformance_project(&conformance_record.emitter, &out);
+    let node = std::env::var("AFZ_NODE").unwrap_or_else(|_| "node".to_string());
+    let report = run_template_gate("starter", relaunch(&record, &node), &out, conformance_record.deadline_ms.unwrap_or(1000));
+    let template = report.template.expect("a template-driven run carries the template section");
+    assert_eq!(template.version, 1);
+    assert_eq!(
+        not_applicable_ids(&template),
+        ["method-receiver", "coverage-digest-live"],
+        "the scaffold golden is exactly two justified absences: {:?}",
+        template.properties
+    );
+    assert_eq!((template.passed(), template.failed()), (8, 0), "the other eight properties must pass for starter: {:?}", template.properties);
+    let validator = report.validator.as_ref().expect("the conformance project shipped no fixture validator");
+    assert_eq!(
+        (validator.passed(), validator.failed(), validator.not_applicable()),
+        (5, 0, 2),
+        "the starter fixture validator passes five and justifies the same two absences: {:?}",
+        validator.properties
+    );
+    assert_eq!(not_applicable_ids(validator), ["method-receiver", "coverage-digest-live"], "the fixture-side absences are the same properties the protocol side names: {:?}", validator.properties);
+}
+
+#[test]
+fn the_openapi_harness_passes_template_v1() {
+    let record = installed("openapi");
+    let conformance_record = record.conformance.as_ref().expect("afz-harness.json declares conformance");
+    let out = conformance_out("openapi-gate");
+    render_conformance_project(&conformance_record.emitter, &out);
+    let node = std::env::var("AFZ_NODE").unwrap_or_else(|_| "node".to_string());
+    // deadline_ms 1500 comes from the record, so the 10-second /slow route always outlives
+    // the cut the deadline-sleep property asserts.
+    let report = run_template_gate("openapi", relaunch(&record, &node), &out, conformance_record.deadline_ms.unwrap_or(1000));
+    let template = report.template.expect("a template-driven run carries the template section");
+    assert_eq!(template.version, 1);
+    assert_eq!(
+        not_applicable_ids(&template),
+        ["crash-unguarded", "coverage-digest-live", "stdout-purity"],
+        "the openapi golden is exactly three justified absences: {:?}",
+        template.properties
+    );
+    assert_eq!((template.passed(), template.failed()), (7, 0), "the other seven properties must pass for openapi: {:?}", template.properties);
+    let validator = report.validator.as_ref().expect("the conformance project shipped no fixture validator");
+    assert_eq!(
+        (validator.passed(), validator.failed(), validator.not_applicable()),
+        (5, 0, 2),
+        "the openapi fixture validator judges seven ids, passes five, and repeats the two document-side absences: {:?}",
+        validator.properties
+    );
+    assert_eq!(not_applicable_ids(validator), ["crash-unguarded", "coverage-digest-live"], "the fixture-side absences are the two fixture-shaped properties a runtime harness cannot realize: {:?}", validator.properties);
 }

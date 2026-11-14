@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReadyResp",
+  "description": "`ready` response; the `ready` request has no parameters. Whether the environment the\ntargets need is up. The engine calls `ready` once, after discovery and before any\nworker spawns, only when the handshake\ndeclares `readiness`. Readiness proves reachability and dialogue, never health: a\nservice that answers 500 is ready, and a scan against it is meaningful.",
+  "type": "object",
+  "properties": {
+    "detail": {
+      "description": "Why not, in the plugin's own words: the engine puts it verbatim in the abort\nline, so it should name the endpoint or file that failed the probe.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ready": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "ready"
+  ]
+}

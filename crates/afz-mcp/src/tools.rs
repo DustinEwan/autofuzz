@@ -17,7 +17,7 @@ use rmcp::{tool, tool_router, ErrorData, RoleServer};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use afz_engine::config::{Block, Severity};
+use afz_engine::config::Severity;
 use afz_engine::report::scanresult::{self, FindingRecord, GitScope, SCAN_FILE};
 use afz_engine::rpc::client::PluginClient;
 use afz_engine::scan::{self, Options, Progress};
@@ -455,7 +455,7 @@ async fn until_deadline(deadline: Option<Instant>) {
 /// thread: launch, handshake, protocol check, discover, coverage map. The client kills the
 /// plugin process when it drops.
 fn probe_blocking(resolved: &Resolved, limit: usize) -> Result<ProbeResult, String> {
-    let launch = resolved.loaded.launch_for(Block::Codebase).map_err(|e| e.to_string())?;
+    let launch = resolved.loaded.launch().map_err(|e| e.to_string())?;
     let client = PluginClient::spawn(&launch).map_err(|reason| reason.detail())?;
     let handshake = client.handshake().map_err(|reason| reason.detail())?;
     if handshake.protocol_version != PROTOCOL_VERSION {
@@ -578,8 +578,8 @@ impl Afz {
             Ok(options) => options,
             Err(message) => return Ok(action_error(message)),
         };
-        // Preflight before the job exists, so "runtime targets are not implemented" and
-        // "--git {selector} needs a git repository" answer the call instead of failing a job.
+        // Preflight before the job exists, so "--git {selector} needs a git repository"
+        // answers the call instead of failing a job.
         let preflighted = tokio::task::spawn_blocking(move || scan::preflight(&options).map(|()| options))
             .await
             .map_err(internal)?;

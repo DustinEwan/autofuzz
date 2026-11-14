@@ -7,10 +7,10 @@ write one, and the fuzzer itself does not change.
 - **You write no fuzz target.** Unlike libFuzzer, you do not wrap your code in a target function.
   The plugin reports the exported callables, and autofuzz builds the arguments for each call from the
   types that the callable declares.
-- **Not tied to a target type.** The target can be a library, a REST API, a GUI, or an ABI. The three
-  harnesses you can install today are all code-level: their plugins read a package or a WebAssembly
-  module. A `runtime` block parses and validates, and `afz scan` stops in preflight with `runtime targets
-  are not implemented`.
+- **Not tied to a target type.** The target can be a library, a REST API, a GUI, or an ABI. The engine
+  launches the plugin named by the scan project's `harness` block and reads nothing about what that
+  plugin drives: each harness lives in its own repository and decides for itself whether it reads a
+  package, a WebAssembly module, or a live service.
 - **Coverage-guided, so it finds the buried bugs.** A scan keeps an input only when it reaches code that
   no earlier input reached, so nested conditions get exercised instead of skipped.
 - **Findings arrive small.** A broken call is shrunk to the smallest input that still breaks it, with a
@@ -22,9 +22,10 @@ write one, and the fuzzer itself does not change.
 
 You need Linux or macOS. The installer below puts a Rust toolchain in place when you have none. Beyond
 that you need the host runtime of the harness you plan to scan, because no harness comes with the
-engine: each one lives in its own repository, and you install it with `afz install-harness`. Three exist
+engine: each one lives in its own repository, and you install it with `afz install-harness`. Five exist
 today: `js-ts` for TypeScript and JavaScript needs Node 24 or newer, `python` for Python needs Python
-3.12 or newer, and `wasm` scans a WebAssembly module. [`docs/harnesses.md`](docs/harnesses.md) gives
+3.12 or newer, `wasm` scans a WebAssembly module, `openapi` fuzzes an OpenAPI 3 service over HTTP, and
+`starter` is the scaffold you edit into your own plugin. [`docs/harnesses.md`](docs/harnesses.md) gives
 what each one can do and what it still cannot.
 
 Install the engine, which is the `afz` command:
@@ -55,7 +56,7 @@ uses. `vendor/ufo` in this repository is one, which is why the commands below wo
 installed with the one-liner and have no clone, point `--path` at your own project instead. Your own
 project needs the file first, because `probe-plugin` with no `autofuzz.json` above the directory and no
 `--command` answers from the fake plugin that the protocol tests drive, and prints that fixture's targets
-instead of yours. The minimum is the `codebase` block under `Harness plugins` below, and
+instead of yours. The minimum is the `harness` block under `Harness plugins` below, and
 [`docs/cli.md`](docs/cli.md) gives every other key.
 
 Start with a look rather than a scan. `probe-plugin` starts the plugin that a scan project names,
@@ -119,8 +120,8 @@ else:
 
 ```jsonc
 {
-  "codebase": {
-    "harness": "js-ts"   // resolved from the install record
+  "harness": {
+    "name": "js-ts"   // resolved from the install record
   }
 }
 ```
@@ -144,8 +145,8 @@ with `{"mcpServers": {"autofuzz": {"command": "afz-mcp"}}}` and read
 
 - [`docs/cli.md`](docs/cli.md) - every command and flag, the configuration file, scanning one git change
   set, the output files, and the MCP tools.
-- [`docs/architecture.md`](docs/architecture.md) - how a scan works, end to end, and where the reserved
-  surface is. Start here if you are going to change the engine.
+- [`docs/architecture.md`](docs/architecture.md) - how a scan works, end to end. Start here if you are
+  going to change the engine.
 - [`docs/harness-authoring.md`](docs/harness-authoring.md) - the contract that a plugin must satisfy, and
   what each answer costs.
 - [`docs/harnesses.md`](docs/harnesses.md) - how far you can trust each harness you can install, and

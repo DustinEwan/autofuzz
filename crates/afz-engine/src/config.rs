@@ -1,9 +1,9 @@
 //! Scan project: the unit of configuration and the unit of one scan.
 //!
 //! `autofuzz.json` at the target project root is found without arguments by `afz scan`;
-//! `--config <path>` selects a different file. A run names exactly one block, `codebase` or
-//! `runtime`, and one scan writes one scan result with one `harness` object, which is why
-//! the config holds at most one harness per file.
+//! `--config <path>` selects a different file. A run names exactly one `harness` block, and one
+//! scan writes one scan result with one `harness` object, which is why the config holds at most
+//! one harness per file.
 
 use std::path::{Path, PathBuf};
 
@@ -33,42 +33,12 @@ impl ConfigError {
     }
 }
 
-/// Which block a scan run targets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Block {
-    Codebase,
-    Runtime,
-}
-
-/// How the plugin is launched. `command` is argv, so a scan project can name
-/// `["node", "server.js"]` without the engine guessing a runtime.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+/// The plugin a scan drives, plus the tree its `discover` walks. The engine reads nothing in
+/// `options`: a harness reads that object itself, from the file `discover.configPath` names.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
-pub struct HarnessConfig {
-    /// Harness selector: `js-ts` today, `wasm` and `http` later.
-    pub harness: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub command: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub env: Option<std::collections::BTreeMap<String, String>>,
-}
-
-/// Fixture module for `fixture-required` parameters. Reserved in v1: the block parses, and
-/// the inventory still reports those targets as skipped.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
-pub struct FixturesConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub module: Option<String>,
-}
-
-/// A design-time target: "look at this code and fuzz its public boundaries".
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
-pub struct CodebaseBlock {
-    pub harness: String,
+pub struct HarnessBlock {
+    pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,37 +46,11 @@ pub struct CodebaseBlock {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fixtures: Option<FixturesConfig>,
-    /// Error classes the user declares as the target's rejection channel.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reject_classes: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<std::collections::BTreeMap<String, String>>,
-}
-
-/// A runtime target: an environment, a service to stand up, and an API definition to fuzz
-/// against. Reserved in v1.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields, default)]
-pub struct RuntimeBlock {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub base_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub openapi: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub allow_mutating: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub destructive: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_concurrent: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub requests_per_second: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub harness: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub command: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+    pub options: serde_json::Value,
 }
 
 /// Oracle severities. `off` disables an oracle.
@@ -265,9 +209,7 @@ impl Default for OutputConfig {
 pub struct ScanProject {
     pub project: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub codebase: Option<CodebaseBlock>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub runtime: Option<RuntimeBlock>,
+    pub harness: Option<HarnessBlock>,
     pub oracles: OraclesConfig,
     pub budget: BudgetConfig,
     pub output: OutputConfig,
@@ -291,35 +233,14 @@ impl LoadedConfig {
         Ok(format!("sha256:{hex}"))
     }
 
-    /// The plugin launch for a block, resolved against the project root.
-    pub fn launch_for(&self, block: Block) -> Result<Launch, ConfigError> {
-        let (harness, command, env) = match block {
-            Block::Codebase => {
-                let codebase = self
-                    .project
-                    .codebase
-                    .as_ref()
-                    .ok_or_else(|| ConfigError::msg("this scan project has no `codebase` block"))?;
-                (codebase.harness.as_str(), codebase.command.clone(), codebase.env.clone())
-            }
-            Block::Runtime => {
-                let runtime = self
-                    .project
-                    .runtime
-                    .as_ref()
-                    .ok_or_else(|| ConfigError::msg("this scan project has no `runtime` block"))?;
-                if runtime.base_url.is_none() {
-                    return Err(ConfigError::msg(
-                        "`runtime.baseUrl` is required: requests to a host the user did not name are refused",
-                    ));
-                }
-                (
-                    runtime.harness.as_deref().unwrap_or("http"),
-                    runtime.command.clone(),
-                    None,
-                )
-            }
-        };
+    /// The plugin launch for the `harness` block, resolved against the project root.
+    pub fn launch(&self) -> Result<Launch, ConfigError> {
+        let block = self
+            .project
+            .harness
+            .as_ref()
+            .ok_or_else(|| ConfigError::msg("a scan project must declare a `harness` block: it names the plugin that drives the scan"))?;
+        let (harness, command, env) = (block.name.as_str(), block.command.clone(), block.env.clone());
         // A missing `command` is only legal when the name is installed: the registry holds
         // argv the user installed on purpose, so the engine still never guesses a runtime.
         let argv = match command.filter(|argv| !argv.is_empty()) {
@@ -354,25 +275,7 @@ impl LoadedConfig {
         Ok(launch)
     }
 
-    /// The declared harness name for a block, for the scan result's `target.harness`.
-    pub fn harness_name(&self, block: Block) -> String {
-        match block {
-            Block::Codebase => self
-                .project
-                .codebase
-                .as_ref()
-                .map(|c| c.harness.clone())
-                .unwrap_or_else(|| "unknown".to_string()),
-            Block::Runtime => self
-                .project
-                .runtime
-                .as_ref()
-                .and_then(|r| r.harness.clone())
-                .unwrap_or_else(|| "http".to_string()),
-        }
-    }
-
-    /// Discovery scope for a codebase block: root plus include and exclude globs.
+    /// Discovery scope for the harness block: root plus include and exclude globs.
     pub fn discovery_scope(&self) -> Result<DiscoveryScope, ConfigError> {
         self.project.discovery_scope(&self.root)
     }
@@ -419,32 +322,23 @@ pub fn absolutized(index: usize, argument: String, base: &Path, exists: impl Fn(
 impl ScanProject {
     /// Reject a configuration the engine cannot honor. Every message is user-facing.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.codebase.is_none() && self.runtime.is_none() {
+        let Some(harness) = &self.harness else {
             return Err(ConfigError::msg(
-                "at least one of `codebase` or `runtime` must be present",
+                "a scan project must declare a `harness` block: it names the plugin that drives the scan",
             ));
+        };
+        if harness.name.is_empty() {
+            return Err(ConfigError::msg("`harness.name` must name a harness, e.g. \"js-ts\""));
         }
-        if let Some(codebase) = &self.codebase {
-            if codebase.harness.is_empty() {
-                return Err(ConfigError::msg("`codebase.harness` must name a harness, e.g. \"js-ts\""));
-            }
-            // Fail at load time rather than at the first spawn: a harness with no declared
-            // argv cannot run, whatever the scan does later. The engine names no runtime, so
-            // `command` is optional only when `afz install-harness` recorded an argv for
-            // this name.
-            if codebase.command.as_deref().unwrap_or(&[]).is_empty() && crate::harnesses::lookup(&codebase.harness).is_none() {
-                return Err(ConfigError::msg(format!(
-                    "`command` is required for harness \"{}\": the engine does not guess a runtime; install one with `afz install-harness <git-url>`",
-                    codebase.harness
-                )));
-            }
-        }
-        if let Some(runtime) = &self.runtime {
-            if runtime.base_url.as_deref().unwrap_or("").is_empty() {
-                return Err(ConfigError::msg(
-                    "`runtime.baseUrl` is required: requests to a host the user did not name are refused",
-                ));
-            }
+        // Fail at load time rather than at the first spawn: a harness with no declared
+        // argv cannot run, whatever the scan does later. The engine names no runtime, so
+        // `command` is optional only when `afz install-harness` recorded an argv for
+        // this name.
+        if harness.command.as_deref().unwrap_or(&[]).is_empty() && crate::harnesses::lookup(&harness.name).is_none() {
+            return Err(ConfigError::msg(format!(
+                "`command` is required for harness \"{}\": the engine does not guess a runtime; install one with `afz install-harness <git-url>`",
+                harness.name
+            )));
         }
         // The design's rule: a named-but-unimplemented oracle is a configuration error, not a
         // silently disabled check.
@@ -492,18 +386,19 @@ impl ScanProject {
     /// inputs into the tree it scans, so a second scan of the same project would otherwise
     /// discover its previous run's output as targets.
     pub fn discovery_scope(&self, root: &Path) -> Result<DiscoveryScope, ConfigError> {
-        let codebase =
-            self.codebase.as_ref().ok_or_else(|| ConfigError::msg("this scan project has no `codebase` block"))?;
-        let scope_root = match &codebase.root {
+        let harness = self.harness.as_ref().ok_or_else(|| {
+            ConfigError::msg("a scan project must declare a `harness` block: it names the plugin that drives the scan")
+        })?;
+        let scope_root = match &harness.root {
             Some(relative) => root.join(relative),
             None => root.to_path_buf(),
         };
-        let mut exclude = codebase.exclude.clone().unwrap_or_default();
+        let mut exclude = harness.exclude.clone().unwrap_or_default();
         let output = scan_output_glob(&self.output.dir);
         if !output.is_empty() {
             exclude.push(output);
         }
-        Ok(DiscoveryScope { root: scope_root, include: codebase.include.clone(), exclude: Some(exclude) })
+        Ok(DiscoveryScope { root: scope_root, include: harness.include.clone(), exclude: Some(exclude) })
     }
 }
 

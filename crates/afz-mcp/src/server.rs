@@ -2,7 +2,7 @@
 //!
 //! The server is tools-only: no resources, prompts, logging, roots, or sampling. Roots,
 //! Sampling, and Logging are Deprecated as of protocol `2026-07-28` (SEP-2577), the scan
-//! project's own `codebase.root` already says where to look, and `rmcp` answers `ping` and
+//! project's own `harness.root` already says where to look, and `rmcp` answers `ping` and
 //! `server/discover` itself.
 
 use std::time::{Duration, Instant};

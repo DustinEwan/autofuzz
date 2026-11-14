@@ -47,6 +47,11 @@ pub enum Capability {
     SideEffects,
     /// The plugin tolerates parallel instances. Absent: the engine runs one instance.
     Concurrent,
+    /// The plugin can prove the environment its targets live in is up before the scan
+    /// starts. Present: the engine calls `ready` after discovery, and a not-ready answer
+    /// aborts the scan with the plugin's own reason instead of filing per-target failures.
+    /// Absent: the environment is the tree discovery read, so there is nothing to prove.
+    Readiness,
 }
 
 /// `handshake` response.

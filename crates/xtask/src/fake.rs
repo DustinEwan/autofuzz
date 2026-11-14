@@ -61,6 +61,9 @@ pub struct Script {
     /// Answers an unparseable request with nothing at all, modelling the plugin that drops the
     /// bad line instead of writing a -32700 frame; `framing-intact` must catch it.
     pub swallow_parse_error: Option<bool>,
+    /// Answers `ready` with this document instead of the always-ready default, for tests
+    /// that need a plugin reporting its environment is down.
+    pub ready: Option<ReadyResp>,
 }
 
 impl Script {
@@ -75,7 +78,7 @@ impl Script {
         match serde_json::from_str::<Script>(&text) {
             Ok(script) => script,
             Err(struct_err) => match serde_json::from_str::<Vec<Directive>>(&text) {
-                Ok(directives) => Script { directives, discovery: None, handshake: None, require_discover: None, swallow_parse_error: None },
+                Ok(directives) => Script { directives, discovery: None, handshake: None, require_discover: None, swallow_parse_error: None, ready: None },
                 Err(_) => {
                     eprintln!("{PLUGIN_NAME}: ignoring malformed script: {struct_err}");
                     Script::default()
@@ -156,6 +159,10 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
             }
             Method::Minimize => Response::ok(req.id, minimize_resp(&req)),
             Method::Reproducer => Response::ok(req.id, reproducer_resp()),
+            Method::Ready => Response::ok(
+                req.id,
+                script.ready.clone().unwrap_or(ReadyResp { ready: true, detail: None }),
+            ),
         };
         if write_line(&mut write, &resp).is_err() {
             return;

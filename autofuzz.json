@@ -1,7 +1,7 @@
 {
   "project": "autofuzz",
-  "codebase": {
-    "harness": "js-ts",
+  "harness": {
+    "name": "js-ts",
     "include": ["**/*.ts"],
     "exclude": ["**/node_modules/**", "**/dist/**", "**/*.d.ts"]
   },

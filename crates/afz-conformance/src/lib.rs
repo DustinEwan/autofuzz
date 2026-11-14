@@ -43,6 +43,9 @@ const KILL_GRACE: Duration = Duration::from_millis(250);
 /// The scan loop's `COVERAGE_TIMEOUT`. `coverageMap` answers from a table the plugin already
 /// holds, so this only bounds writing it over a pipe.
 const COVERAGE_TIMEOUT: Duration = Duration::from_secs(10);
+/// The readiness probe is a network dialogue the plugin runs; same bound as the
+/// coverage call, because a plugin that cannot answer it is stuck.
+const READY_TIMEOUT: Duration = Duration::from_secs(10);
 /// The scan loop's `MINIMIZE_SLACK`, on top of the invocation deadline.
 const MINIMIZE_SLACK: Duration = Duration::from_secs(10);
 /// The id the unknown-method probe sends, clear of the small ids a plugin sees in normal traffic.
@@ -63,6 +66,7 @@ pub const RULES: &[&str] = &[
     "skipped-complete",
     "discover-repeatable",
     "discover-ids-stable",
+    "readiness",
     "connection-ready",
     "prepare-answers",
     "prepare-schema",
@@ -226,6 +230,7 @@ struct Schemas {
     coverage_map: Schema,
     minimize_resp: Schema,
     reproducer_resp: Schema,
+    ready_resp: Schema,
 }
 
 impl Schemas {
@@ -238,6 +243,7 @@ impl Schemas {
             coverage_map: Schema::new("coverage-map.json", include_str!("../../../docs/schema/coverage-map.json")),
             minimize_resp: Schema::new("minimize-resp.json", include_str!("../../../docs/schema/minimize-resp.json")),
             reproducer_resp: Schema::new("reproducer-resp.json", include_str!("../../../docs/schema/reproducer-resp.json")),
+            ready_resp: Schema::new("ready-resp.json", include_str!("../../../docs/schema/ready-resp.json")),
         }
     }
 }
@@ -348,8 +354,10 @@ pub fn compare_validator(fixture: &template::TemplateReport, protocol: &template
 }
 
 /// The state one run accumulates: the report's parts, plus the counters the notes report.
-struct Runner<'a> {
-    check: &'a Check,
+struct Runner {
+    /// Owned so `run` can add `AFZ_PORT` to the launch environment after the suite has
+    /// allocated the service port; every plugin connection spawns from this copy.
+    check: Check,
     schemas: Schemas,
     violations: Vec<Violation>,
     notes: Vec<Note>,
@@ -373,10 +381,10 @@ struct Runner<'a> {
     validator: Option<template::TemplateReport>,
 }
 
-impl Runner<'_> {
-    fn new(check: &Check) -> Runner<'_> {
+impl Runner {
+    fn new(check: &Check) -> Runner {
         Runner {
-            check,
+            check: check.clone(),
             schemas: Schemas::load(),
             violations: Vec::new(),
             notes: Vec::new(),
@@ -441,7 +449,7 @@ impl Runner<'_> {
         // package's own launch argv. An in-process manifest carries no lifecycle.
         let lifecycle = self.check.template.as_ref().and_then(|manifest| manifest.lifecycle.clone());
         let mut service = match &lifecycle {
-            Some(spec) => match lifecycle::Service::start(spec) {
+            Some(spec) => match lifecycle::Service::start(spec, std::path::Path::new(&self.check.root)) {
                 Ok(service) => Some(service),
                 Err(detail) => {
                     self.fail("lifecycle-service", detail);
@@ -451,6 +459,13 @@ impl Runner<'_> {
             },
             None => None,
         };
+        // The plugin reaches the service the suite started, so it needs the port the suite
+        // allocated: every connection below spawns from `self.check.launch`, and the harness
+        // substitutes `AFZ_PORT` into its own `harness.options` strings. An in-process manifest
+        // carries no lifecycle, so `service` is `None` and the environment is untouched.
+        if let Some(service) = &service {
+            self.check.launch.env.insert("AFZ_PORT".to_string(), service.port().to_string());
+        }
         // Connection A is the probe shape: `scan.rs` spawns, handshakes, and discovers on one
         // process, and it is the only connection the engine ever handshakes.
         let a = match PluginClient::spawn(&self.check.launch) {
@@ -473,6 +488,9 @@ impl Runner<'_> {
         if let Some(spec) = &lifecycle {
             self.lifecycle_probe(&a, &discovery, spec);
         }
+        // The engine asks a plugin that declares `readiness` before it spawns workers,
+        // and the suite has already started the service, so this mirrors `scan.rs`.
+        self.readiness(&a, &handshake);
         let collect_coverage = handshake.capabilities.contains(&Capability::Coverage);
         let driven = self.driven_targets(&discovery);
         self.driven = driven.len();
@@ -484,8 +502,8 @@ impl Runner<'_> {
         self.raw_framing();
         // The template pass runs last: `deadline-sleep` may legitimately end connection A, and
         // every protocol rule must already have been answered on it.
-        if let Some(manifest) = &self.check.template {
-            self.template_pass(&a, &handshake, &discovery, manifest);
+        if let Some(manifest) = self.check.template.clone() {
+            self.template_pass(&a, &handshake, &discovery, &manifest);
             // The template verdicts are the plugin's own words about its fixture. A project
             // that ships no second judge leaves those words unopposed, and says so.
             if manifest.validator.is_empty() {
@@ -494,10 +512,10 @@ impl Runner<'_> {
         }
         // The fixture-side verdicts were produced before the plugin started; the two lists
         // must agree, and a disagreement is the run's own violation, not an authoring note.
-        if let Some(fixture) = &self.check.validator {
+        if let Some(fixture) = self.check.validator.clone() {
             self.validator = Some(fixture.clone());
             if let Some(protocol) = &self.template {
-                self.violations.extend(compare_validator(fixture, protocol));
+                self.violations.extend(compare_validator(&fixture, protocol));
             }
         }
         // Teardown runs after every drive: the service must outlive the last invocation, and
@@ -934,6 +952,35 @@ impl Runner<'_> {
             ),
         }
         self.alive(client, "reproducer");
+    }
+
+    /// `readiness`, and nothing else. A plugin that declares the capability promises the
+    /// engine can ask whether the environment its targets live in is up before workers
+    /// spawn. The suite starts the service itself before spawning the plugin, so a
+    /// not-ready answer here is the plugin misreporting the fixture it just declared.
+    fn readiness(&mut self, client: &PluginClient, handshake: &Handshake) {
+        if !handshake.capabilities.contains(&Capability::Readiness) {
+            self.skip(1);
+            return;
+        }
+        match client.request::<serde_json::Value>(Method::Ready, None, READY_TIMEOUT) {
+            Ok(raw) => {
+                if let Some(detail) = self.schemas.ready_resp.mismatch("ready response", &raw) {
+                    self.fail("readiness", detail);
+                } else if raw.get("ready").and_then(|v| v.as_bool()) == Some(false) {
+                    let detail = raw.get("detail").and_then(|v| v.as_str()).unwrap_or("the harness gave no reason");
+                    self.fail(
+                        "readiness",
+                        format!("the suite started the service and the plugin still answered not ready: {detail}"),
+                    );
+                }
+            }
+            Err(reason) => self.fail(
+                "readiness",
+                format!("the handshake declares \"readiness\" but ready did not answer: {}", reason.detail()),
+            ),
+        }
+        self.alive(client, "ready");
     }
 
     /// Connection B is the shape the engine actually prepares on: `supervise.rs` spawns a worker,

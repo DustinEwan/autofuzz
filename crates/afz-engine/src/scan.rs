@@ -23,7 +23,7 @@ use afz_protocol::{
     ReproducerReq, TargetDescriptor, ValueTree,
 };
 
-use crate::config::{Block, ConfigError, LoadedConfig, Strategy};
+use crate::config::{ConfigError, LoadedConfig, Strategy};
 use crate::corpus::{self, Corpus, CoverageDigest, Recorded};
 use crate::finding::{self, Seen};
 use crate::generate::generate_arguments;
@@ -73,6 +73,9 @@ const COVERAGE_TIMEOUT: Duration = Duration::from_secs(10);
 /// The `reproducer` call answers from string concatenation in the plugin, so a slow answer is
 /// a stuck plugin, not work.
 const REPRODUCER_TIMEOUT: Duration = Duration::from_secs(10);
+/// The `ready` probe is a bounded network dialogue the plugin runs on the engine's
+/// behalf; a plugin that cannot answer within this is a stuck plugin.
+const READY_TIMEOUT: Duration = Duration::from_secs(5);
 /// The largest script a plugin may hand back. A reproducer is a dozen lines; a megabyte is a bug.
 const MAX_REPRO_SCRIPT_BYTES: usize = 1 << 20;
 
@@ -176,6 +179,10 @@ pub enum ScanError {
     /// A `--git` scope left no target. Its own variant, because the advice that belongs with
     /// `NothingFuzzable` - check your `include` - is the wrong advice here.
     EmptyScope { selector: String, changed: usize, discovered: usize },
+    /// The harness declares `readiness` and answered `ready` with no. The scan aborts
+    /// before any worker spawns, because every invocation would fail the way the probe
+    /// did, and the harness's own reason names the fix.
+    NotReady { detail: String },
 }
 
 impl fmt::Display for ScanError {
@@ -194,6 +201,7 @@ impl fmt::Display for ScanError {
                 "git scope \"{selector}\" touches no fuzzable target: {changed} changed file(s), \
                  {discovered} target(s) discovered"
             ),
+            ScanError::NotReady { detail } => write!(f, "the harness reports the target environment is not ready: {detail}"),
         }
     }
 }
@@ -221,12 +229,6 @@ impl From<io::Error> for ScanError {
 /// Reject a scan the engine cannot run, before any work starts, so a caller can report the reason
 /// as its first line instead of after announcing a scan.
 pub fn preflight(options: &Options) -> Result<(), ScanError> {
-    // Part I reserves the runtime target class: its block validates so a project can declare it
-    // before that design lands, and a scan of it stops here with the fact rather than with a
-    // complaint about a missing `codebase` block, which reads like a typo in the file.
-    if options.config.project.codebase.is_none() && options.config.project.runtime.is_some() {
-        return Err(ConfigError::msg("runtime targets are not implemented").into());
-    }
     // A scope is a statement about a repository, so a directory that is not one is refused here
     // rather than after the plugin has been spawned and a tree has been checked out.
     if let Some(selector) = &options.scope {
@@ -260,17 +262,14 @@ pub fn run(options: &Options, on_progress: &mut impl FnMut(&Progress)) -> Result
         _ => None,
     };
     let options = scoped.as_ref().unwrap_or(options);
-    let launch = options.config.launch_for(Block::Codebase)?;
-    let codebase = options
-        .config
-        .project
-        .codebase
-        .as_ref()
-        .ok_or_else(|| ConfigError::msg("this scan project has no `codebase` block"))?;
+    let launch = options.config.launch()?;
+    let harness = options.config.project.harness.as_ref().ok_or_else(|| {
+        ConfigError::msg("a scan project must declare a `harness` block: it names the plugin that drives the scan")
+    })?;
     let request = DiscoverReq {
         root: options.root.display().to_string(),
-        include: codebase.include.clone(),
-        exclude: codebase.exclude.clone(),
+        include: harness.include.clone(),
+        exclude: harness.exclude.clone(),
         config_path: Some(options.config.path.display().to_string()),
     };
 
@@ -279,6 +278,17 @@ pub fn run(options: &Options, on_progress: &mut impl FnMut(&Progress)) -> Result
     let probe = PluginClient::spawn(&launch)?;
     let handshake = probe.handshake()?;
     let mut discovery = probe.discover(&request, DISCOVERY_TIMEOUT)?;
+    // A harness that declares `readiness` vouches for the environment its targets live
+    // in. Ask before any worker spawns: a service nobody started would otherwise file
+    // one deadline finding per target, and the harness's reason is the fixable fact.
+    if handshake.capabilities.contains(&Capability::Readiness) {
+        let ready = probe.ready(READY_TIMEOUT)?;
+        if !ready.ready {
+            return Err(ScanError::NotReady {
+                detail: ready.detail.unwrap_or_else(|| "the harness gave no reason".to_string()),
+            });
+        }
+    }
     let mut notes = Vec::new();
     if let Some(resolved) = &resolved {
         let discovered = discovery.targets.len();

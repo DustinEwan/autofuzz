@@ -361,6 +361,12 @@ impl PluginClient {
     pub fn coverage_map(&self, timeout: Duration) -> Call<CoverageMap> {
         self.request(Method::CoverageMap, None, timeout)
     }
+
+    /// The readiness probe. The engine calls it once, on the probe connection, only when
+    /// the handshake declares `readiness`.
+    pub fn ready(&self, timeout: Duration) -> Call<ReadyResp> {
+        self.request(Method::Ready, None, timeout)
+    }
 }
 
 /// Start a plugin and give it the inventory it needs to answer `prepare`. Every connection the

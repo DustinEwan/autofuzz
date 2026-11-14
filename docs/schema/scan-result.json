@@ -153,6 +153,11 @@
           "description": "The plugin tolerates parallel instances. Absent: the engine runs one instance.",
           "type": "string",
           "const": "concurrent"
+        },
+        {
+          "description": "The plugin can prove the environment its targets live in is up before the scan\nstarts. Present: the engine calls `ready` after discovery, and a not-ready answer\naborts the scan with the plugin's own reason instead of filing per-target failures.\nAbsent: the environment is the tree discovery read, so there is nothing to prove.",
+          "type": "string",
+          "const": "readiness"
         }
       ]
     },

@@ -38,6 +38,8 @@ jobs:
           ./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git
           ./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-python.git
           ./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-wasm.git
+          ./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-starter.git
+          ./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-openapi.git
 
       # The gate: any clippy warning in any target, including tests, fails the job.
       - name: Clippy

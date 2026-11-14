@@ -35,8 +35,8 @@ fn project(name: &str, script: &str) -> PathBuf {
     std::fs::create_dir_all(&root).expect("scratch directory");
     let config = serde_json::json!({
         "project": name,
-        "codebase": {
-            "harness": "afz-fakeplugin",
+        "harness": {
+            "name": "afz-fakeplugin",
             "command": [fakeplugin_path().display().to_string()],
             "env": { "AFZ_FAKE_SCRIPT": script },
         },
