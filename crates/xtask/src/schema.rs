@@ -1,13 +1,17 @@
-//! Emits the committed JSON Schema in `docs/schema/` from the same types the engine compiles
-//! against. `cargo run -p afz-xtask -- schema` is the single entry point, so the output path
-//! lives in one place.
+//! Emits the committed JSON Schema in `docs/schema/<version>/` from the same types the engine
+//! compiles against. `cargo run -p afz-xtask -- schema` is the single entry point, so the
+//! output path lives in one place. One directory per protocol revision: a published set is
+//! frozen, a new revision adds a directory, and nothing edits the old one.
 
 use std::path::Path;
 
 use schemars::schema_for;
 
-/// Write every protocol schema into `dir`. Returns the file names written.
+/// Write every protocol schema into the revision directory under `dir`. Returns the paths
+/// written, so callers compare layouts, not just contents.
 pub fn write_schemas(dir: &Path) -> Result<Vec<String>, String> {
+    let dir = dir.join(afz_protocol::schema_dir(afz_protocol::PROTOCOL_VERSION));
+    let dir: &Path = &dir;
     std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     let mut written = Vec::new();
 

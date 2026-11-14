@@ -99,6 +99,9 @@ pub struct GitScope {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct HarnessInfo {
+    /// The protocol revision the handshake agreed on, so an old scan says which contract its
+    /// bytes were written under.
+    pub protocol_version: String,
     pub name: String,
     pub version: String,
     pub target_class: TargetClass,

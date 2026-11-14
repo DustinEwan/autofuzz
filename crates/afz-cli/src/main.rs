@@ -1,5 +1,6 @@
 //! The `afz` command.
 
+mod export;
 mod install;
 mod probe;
 mod scan;
@@ -100,6 +101,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Write the protocol schemas this engine validates against, so a harness author can
+    /// `cue import` them or point an editor at them without an engine checkout.
+    ExportSchema {
+        /// The protocol revision to export. Defaults to the newest this engine speaks.
+        version: Option<String>,
+        /// Directory to write into. Defaults to `schema` under the working directory.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 fn main() {
@@ -112,6 +122,7 @@ fn main() {
         Command::ValidateHarness { harness, targets, deadline, json } => validate::run(harness.as_deref(), targets, deadline, json),
         Command::InstallHarness { url, reference, no_validate, json } => install::run(&url, reference.as_deref(), no_validate, json),
         Command::Harnesses { json } => install::list(json),
+        Command::ExportSchema { version, out } => export::run(version, out),
     };
     match result {
         Ok(()) => {}

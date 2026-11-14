@@ -5,7 +5,7 @@ server. It gives every flag, every configuration key with its default, how a sca
 scope, and what a scan leaves on disk. For how a scan works inside, read
 [`architecture.md`](architecture.md) instead.
 
-## The five subcommands
+## The six subcommands
 
 |Command|What it does|
 |---|---|
@@ -14,6 +14,7 @@ scope, and what a scan leaves on disk. For how a scan works inside, read
 |`afz validate-harness`|Drives a harness plugin through the conformance suite and reports rule by rule.|
 |`afz install-harness`|Clones a harness repository, builds and validates its plugin, and records it for scans.|
 |`afz harnesses`|Lists the installed harness plugins and the command each one resolves to.|
+|`afz export-schema`|Writes the protocol schemas compiled into this binary, so a plugin author can validate against them without an engine checkout.|
 
 ### `afz probe-plugin`
 
@@ -88,6 +89,19 @@ root, and the conformance block.
 |`--json`|Print the records as JSON instead of the table.|
 
 Lists one row per installed harness: name, version-free handshake name, and the resolved command.
+
+### `afz export-schema`
+
+|Argument or flag|Meaning|
+|---|---|
+|`[version]`|The protocol revision to export, for example `afz/1`. Defaults to the newest this engine speaks.|
+|`--out <dir>`|Directory to write into. Defaults to `schema` under the working directory.|
+
+Writes every JSON Schema compiled into the binary and prints each path. These are the bytes
+`afz validate-harness` validates with, so an export and a validation cannot disagree: this is
+what a CUE author imports and what an editor's `$schema` points at, with no engine checkout
+required. The export is pinned by the `afz` you ran, and an unknown revision is refused by
+naming the revisions that engine speaks.
 
 ## The scan project file
 
@@ -184,7 +198,7 @@ A scan writes everything that it produces under `<output.dir>/<scanId>/`.
 
 |Path|Contents|
 |---|---|
-|`scan.json`|The scan result: the inventory, the execution counts, coverage, findings, artifact paths, and the `git` change set when you scoped the scan. It validates against [`docs/schema/scan-result.json`](schema/scan-result.json). The writer saves it last, so a reader never sees a scan directory whose artifacts are still being written.|
+|`scan.json`|The scan result: the inventory, the execution counts, coverage, findings, artifact paths, and the `git` change set when you scoped the scan. It validates against [`docs/schema/afz-1/scan-result.json`](schema/afz-1/scan-result.json). The writer saves it last, so a reader never sees a scan directory whose artifacts are still being written.|
 |`report.md`|Markdown rendered from `scan.json` alone. One section per finding, with its severity, its minimized input, and the path of its reproducer.|
 |`inputs/`|The input that produced each finding, as `ValueTree` JSON, and the minimized input for a finding that this scan minimized.|
 |`repros/`|One standalone reproducer script per finding. The harness that found the fault renders it through the `reproducer` method, and the file extension is the plugin's own (`repro-<id>.mjs`, `repro-<id>.py`). A finding gets no script when its harness does not declare `reproducer`, when that call fails, or when the finding is a repeat marked `seenBefore`, because the engine does not minimize a repeat either. The input in `inputs/` is replayable in every case.|

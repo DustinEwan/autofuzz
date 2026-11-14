@@ -1,6 +1,7 @@
 //! The committed schema must be regenerable from the Rust types, because the Node plugin is
 //! written against these files and a stale file means a silent protocol drift.
 
+use afz_protocol::{PROTOCOL_VERSION, schema_dir};
 use afz_xtask::schema::write_schemas;
 
 fn repo_root() -> std::path::PathBuf {
@@ -11,6 +12,7 @@ fn repo_root() -> std::path::PathBuf {
 fn every_contract_type_has_a_schema() {
     let dir = std::env::temp_dir().join(format!("afz-xtask-schema-{}", std::process::id()));
     let files = write_schemas(&dir).expect("schemas write");
+    let set = dir.join(schema_dir(PROTOCOL_VERSION));
     assert!(files.len() >= 18, "expected every contract type, got {}", files.len());
     for f in &files {
         let text = std::fs::read_to_string(f).unwrap();
@@ -19,7 +21,7 @@ fn every_contract_type_has_a_schema() {
     }
 
     let outcome: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("outcome.json")).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(set.join("outcome.json")).unwrap()).unwrap();
     let tags: Vec<&str> = outcome["oneOf"]
         .as_array()
         .expect("outcome is a tagged union")
@@ -29,7 +31,7 @@ fn every_contract_type_has_a_schema() {
     assert_eq!(tags, ["ok", "rejected", "failed"], "outcome variants changed shape");
 
     let type_node: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("type-node.json")).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(set.join("type-node.json")).unwrap()).unwrap();
     let kinds: Vec<&str> = type_node["oneOf"]
         .as_array()
         .expect("type-node is a tagged union")
@@ -40,7 +42,7 @@ fn every_contract_type_has_a_schema() {
 
     // `prepare` answers with a JSON boolean, not the string a serde internal tag would write.
     let prepare: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(dir.join("prepare-resp.json")).unwrap()).unwrap();
+        serde_json::from_str(&std::fs::read_to_string(set.join("prepare-resp.json")).unwrap()).unwrap();
     let oks: Vec<bool> = prepare["oneOf"]
         .as_array()
         .expect("prepare-resp is a two-shape union")
@@ -54,17 +56,30 @@ fn every_contract_type_has_a_schema() {
 #[test]
 fn committed_schema_matches_generated_schema() {
     let dir = std::env::temp_dir().join(format!("afz-xtask-schema-fresh-{}", std::process::id()));
-    write_schemas(&dir).expect("schemas write");
+    let files = write_schemas(&dir).expect("schemas write");
     let committed = repo_root().join("docs/schema");
     let mut stale = Vec::new();
-    for entry in std::fs::read_dir(&dir).expect("fresh schema dir") {
-        let path = entry.unwrap().path();
-        let name = path.file_name().unwrap();
-        let fresh = std::fs::read_to_string(&path).unwrap();
-        match std::fs::read_to_string(committed.join(name)) {
+    // Compare by path under `docs/schema/`, so the versioned directory layout is what is
+    // gated, not just the file contents.
+    let mut fresh_names: Vec<String> = Vec::new();
+    for path in &files {
+        let path = std::path::Path::new(path);
+        let relative = path.strip_prefix(&dir).unwrap();
+        let fresh = std::fs::read_to_string(path).unwrap();
+        fresh_names.push(relative.display().to_string());
+        match std::fs::read_to_string(committed.join(relative)) {
             Ok(have) if have == fresh => {}
-            Ok(_) => stale.push(name.to_string_lossy().to_string()),
-            Err(_) => stale.push(format!("{} (missing)", name.to_string_lossy())),
+            Ok(_) => stale.push(relative.display().to_string()),
+            Err(_) => stale.push(format!("{} (missing)", relative.display())),
+        }
+    }
+    // A committed file the generator no longer writes is drift in the other direction:
+    // someone edited docs/schema by hand, or a revision directory was added by hand.
+    let committed_set = committed.join(schema_dir(PROTOCOL_VERSION));
+    for entry in std::fs::read_dir(&committed_set).expect("committed schema dir") {
+        let name = entry.unwrap().path().file_name().unwrap().to_string_lossy().to_string();
+        if !fresh_names.iter().any(|f| f.ends_with(&format!("{}{name}", std::path::MAIN_SEPARATOR))) {
+            stale.push(format!("{name} (not generated)"));
         }
     }
     std::fs::remove_dir_all(&dir).ok();

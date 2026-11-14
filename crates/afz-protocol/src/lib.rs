@@ -25,7 +25,7 @@ pub use rpc::{
 pub use targets::{
     Blocker, Capability, CoverageEntry, CoverageMap, Discovery, Effects, Handshake, HttpOrigin,
     Materialization, Origin, Parameter, SkipReason, SkippedTarget, TargetClass, TargetDescriptor,
-    PROTOCOL_VERSION,
+    PROTOCOL_VERSION, SUPPORTED_VERSIONS, is_deprecated, schema_dir,
 };
 pub use types::{
     CollectionKind, CompositeKind, Field, FunctionBehavior, Kind, LengthBounds, NumberBounds,

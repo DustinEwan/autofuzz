@@ -83,7 +83,8 @@ record. The plugin runs with the scan root as its working directory, and the eng
 ## The eight methods
 
 All eight are on the wire, and a plugin must answer every one of them. `crates/afz-protocol/src/rpc.rs`
-defines them, and `docs/schema/` is the authority for every field, because it is generated from the Rust
+defines them, and `docs/schema/afz-1/` is the authority for every field, because it is generated
+from the Rust
 types that the engine compiles against.
 
 The contract in TypeScript, which is how the shape is easiest to read. Both plugin contract tests
@@ -181,7 +182,7 @@ what you answer, and do not declare what you do not.
 ## Interface IR
 
 One normalized description of a callable, produced by every plugin. The fields below are the real ones,
-from `docs/schema/target-descriptor.json`.
+from `docs/schema/afz-1/target-descriptor.json`.
 
 | Field | Notes |
 |---|---|

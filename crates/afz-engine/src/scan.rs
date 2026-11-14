@@ -1191,6 +1191,7 @@ impl Scanner {
                 root: root.clone(),
                 revision: git_revision(&root),
                 harness: HarnessInfo {
+                    protocol_version: self.handshake.protocol_version.clone(),
                     name: self.handshake.name.clone(),
                     version: self.handshake.version.clone(),
                     target_class: self.handshake.target_class,

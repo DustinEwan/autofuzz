@@ -196,29 +196,79 @@ impl Check {
     }
 }
 
+/// Every schema set compiled into this crate, keyed by protocol revision. The validators
+/// below are built from this table and `afz export-schema` writes it out, so an export and a
+/// validation can never disagree. The text is compiled in with `include_str!` rather than read
+/// from disk, so validation works wherever `afz` was installed, including a harness
+/// repository's CI that ran `cargo install --git`. `crates/xtask/tests/schema.rs` fails on
+/// drift between these copies and the Rust types.
+pub const SCHEMA_SETS: &[(&str, &[(&str, &str)])] = &[(
+    PROTOCOL_VERSION,
+    &[
+        ("call-input.json", include_str!("../../../docs/schema/afz-1/call-input.json")),
+        ("coverage-map.json", include_str!("../../../docs/schema/afz-1/coverage-map.json")),
+        ("discover-req.json", include_str!("../../../docs/schema/afz-1/discover-req.json")),
+        ("discovery.json", include_str!("../../../docs/schema/afz-1/discovery.json")),
+        ("handshake.json", include_str!("../../../docs/schema/afz-1/handshake.json")),
+        ("invoke-req.json", include_str!("../../../docs/schema/afz-1/invoke-req.json")),
+        ("materialized-call.json", include_str!("../../../docs/schema/afz-1/materialized-call.json")),
+        ("minimize-req.json", include_str!("../../../docs/schema/afz-1/minimize-req.json")),
+        ("minimize-resp.json", include_str!("../../../docs/schema/afz-1/minimize-resp.json")),
+        ("outcome.json", include_str!("../../../docs/schema/afz-1/outcome.json")),
+        ("prepare-req.json", include_str!("../../../docs/schema/afz-1/prepare-req.json")),
+        ("prepare-resp.json", include_str!("../../../docs/schema/afz-1/prepare-resp.json")),
+        ("ready-resp.json", include_str!("../../../docs/schema/afz-1/ready-resp.json")),
+        ("reproducer-req.json", include_str!("../../../docs/schema/afz-1/reproducer-req.json")),
+        ("reproducer-resp.json", include_str!("../../../docs/schema/afz-1/reproducer-resp.json")),
+        ("request.json", include_str!("../../../docs/schema/afz-1/request.json")),
+        ("response.json", include_str!("../../../docs/schema/afz-1/response.json")),
+        ("scan-result.json", include_str!("../../../docs/schema/afz-1/scan-result.json")),
+        ("skipped-target.json", include_str!("../../../docs/schema/afz-1/skipped-target.json")),
+        ("target-descriptor.json", include_str!("../../../docs/schema/afz-1/target-descriptor.json")),
+        ("type-node.json", include_str!("../../../docs/schema/afz-1/type-node.json")),
+        ("value-tree.json", include_str!("../../../docs/schema/afz-1/value-tree.json")),
+    ],
+)];
+
+/// The protocol revisions whose schema sets are compiled into this build.
+pub fn schema_versions() -> Vec<&'static str> {
+    SCHEMA_SETS.iter().map(|(version, _)| *version).collect()
+}
+
+/// The schema set compiled in for one revision as `(file name, text)` pairs, or `None` when
+/// this build does not carry that revision.
+pub fn embedded_schemas(version: &str) -> Option<&'static [(&'static str, &'static str)]> {
+    SCHEMA_SETS.iter().find(|(v, _)| *v == version).map(|(_, set)| *set)
+}
+
 /// One committed schema, loaded once per run.
 struct Schema {
-    file: &'static str,
+    path: String,
     validator: jsonschema::Validator,
 }
 
 impl Schema {
-    /// Build a validator from embedded text. The schemas are compiled in with `include_str!`
-    /// rather than read from disk, so validation works wherever `afz` was installed, including
-    /// a harness repository's CI that ran `cargo install --git`. `crates/xtask/tests/schema.rs`
-    /// fails on drift between these copies and the Rust types.
-    fn new(file: &'static str, text: &'static str) -> Schema {
+    /// Build the validator for one file of the current revision's embedded set. The message
+    /// names the committed path, because that is where a human goes to read the contract.
+    fn new(file: &str) -> Schema {
+        let text = embedded_schemas(PROTOCOL_VERSION)
+            .expect("this build embeds the schema set for the protocol it speaks")
+            .iter()
+            .find(|(name, _)| *name == file)
+            .unwrap_or_else(|| panic!("the {PROTOCOL_VERSION} schema set has no {file}"))
+            .1;
+        let path = format!("docs/schema/{}/{}", schema_dir(PROTOCOL_VERSION), file);
         let document: serde_json::Value = serde_json::from_str(text)
-            .unwrap_or_else(|e| panic!("docs/schema/{file} is not valid JSON: {e}"));
-        Schema { file, validator: jsonschema::validator_for(&document).expect("the committed schema is a valid JSON Schema") }
+            .unwrap_or_else(|e| panic!("{path} is not valid JSON: {e}"));
+        Schema { path, validator: jsonschema::validator_for(&document).expect("the committed schema is a valid JSON Schema") }
     }
 
-    /// `{subject} does not match docs/schema/{file}: {first error}`, when the document breaks it.
+    /// `{subject} does not match {path}: {first error}`, when the document breaks it.
     fn mismatch(&self, subject: &str, document: &serde_json::Value) -> Option<String> {
         self.validator
             .iter_errors(document)
             .next()
-            .map(|error| format!("{subject} does not match docs/schema/{}: {error}", self.file))
+            .map(|error| format!("{subject} does not match {}: {error}", self.path))
     }
 }
 
@@ -236,14 +286,14 @@ struct Schemas {
 impl Schemas {
     fn load() -> Schemas {
         Schemas {
-            handshake: Schema::new("handshake.json", include_str!("../../../docs/schema/handshake.json")),
-            discovery: Schema::new("discovery.json", include_str!("../../../docs/schema/discovery.json")),
-            prepare_resp: Schema::new("prepare-resp.json", include_str!("../../../docs/schema/prepare-resp.json")),
-            outcome: Schema::new("outcome.json", include_str!("../../../docs/schema/outcome.json")),
-            coverage_map: Schema::new("coverage-map.json", include_str!("../../../docs/schema/coverage-map.json")),
-            minimize_resp: Schema::new("minimize-resp.json", include_str!("../../../docs/schema/minimize-resp.json")),
-            reproducer_resp: Schema::new("reproducer-resp.json", include_str!("../../../docs/schema/reproducer-resp.json")),
-            ready_resp: Schema::new("ready-resp.json", include_str!("../../../docs/schema/ready-resp.json")),
+            handshake: Schema::new("handshake.json"),
+            discovery: Schema::new("discovery.json"),
+            prepare_resp: Schema::new("prepare-resp.json"),
+            outcome: Schema::new("outcome.json"),
+            coverage_map: Schema::new("coverage-map.json"),
+            minimize_resp: Schema::new("minimize-resp.json"),
+            reproducer_resp: Schema::new("reproducer-resp.json"),
+            ready_resp: Schema::new("ready-resp.json"),
         }
     }
 }
@@ -546,7 +596,7 @@ impl Runner {
                     Some(detail) => self.fail("handshake-schema", detail),
                     None => self.fail(
                         "handshake-schema",
-                        format!("handshake is not the shape docs/schema/handshake.json describes: {error}"),
+                        format!("handshake is not the shape {} describes: {error}", self.schemas.handshake.path),
                     ),
                 }
                 self.skip(RULES.len() - 3);
@@ -589,7 +639,7 @@ impl Runner {
                     Some(detail) => self.fail("discover-schema", detail),
                     None => self.fail(
                         "discover-schema",
-                        format!("discovery is not the shape docs/schema/discovery.json describes: {error}"),
+                        format!("discovery is not the shape {} describes: {error}", self.schemas.discovery.path),
                     ),
                 }
                 self.skip(RULES.len() - 4);

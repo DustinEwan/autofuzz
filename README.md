@@ -104,7 +104,7 @@ helper the package does not even export, with a human verdict on that finding.
 A scan writes everything under the scanned project, in one directory per scan at
 `<output.dir>/<scanId>/`, where `<scanId>` is that scan's id and `output.dir` defaults to `.autofuzz/`.
 Open `report.md`. The machine-readable result beside it is `scan.json`, which validates
-against [`docs/schema/scan-result.json`](docs/schema/scan-result.json), and it is written last so that
+against [`docs/schema/afz-1/scan-result.json`](docs/schema/afz-1/scan-result.json), and it is written last so that
 a reader never sees a scan directory whose artifacts are still being written.
 [`docs/cli.md`](docs/cli.md) lists every file a scan leaves behind and what it is for.
 

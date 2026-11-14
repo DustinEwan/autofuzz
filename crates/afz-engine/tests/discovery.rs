@@ -1,7 +1,8 @@
 //! The two sides of the plugin boundary, checked against each other on a real response.
 //!
-//! `docs/schema/discovery.json` is generated from the Rust types, and the plugin is written in
-//! TypeScript against the same document. This test runs the built plugin over a test target whose
+//! `docs/schema/afz-1/discovery.json` is generated from the Rust types, and the plugin is
+//! written in TypeScript against the same document. This test runs the built plugin over a
+//! test target whose
 //! entry points need a class the generator cannot build, and parses the response with the
 //! engine's own `Discovery` type: a field that changed shape on either side fails to deserialize
 //! here rather than in the middle of a scan.

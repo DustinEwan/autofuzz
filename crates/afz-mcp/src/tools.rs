@@ -21,7 +21,7 @@ use afz_engine::config::Severity;
 use afz_engine::report::scanresult::{self, FindingRecord, GitScope, SCAN_FILE};
 use afz_engine::rpc::client::PluginClient;
 use afz_engine::scan::{self, Options, Progress};
-use afz_protocol::{CoverageMap, DiscoverReq, Handshake, SkippedTarget, TargetDescriptor, PROTOCOL_VERSION};
+use afz_protocol::{CoverageMap, DiscoverReq, Handshake, SkippedTarget, TargetDescriptor, SUPPORTED_VERSIONS, is_deprecated};
 
 use crate::jobs::{self, Job, JobState, Shared};
 use crate::project::{self, Resolved};
@@ -458,11 +458,15 @@ fn probe_blocking(resolved: &Resolved, limit: usize) -> Result<ProbeResult, Stri
     let launch = resolved.loaded.launch().map_err(|e| e.to_string())?;
     let client = PluginClient::spawn(&launch).map_err(|reason| reason.detail())?;
     let handshake = client.handshake().map_err(|reason| reason.detail())?;
-    if handshake.protocol_version != PROTOCOL_VERSION {
+    if !SUPPORTED_VERSIONS.contains(&handshake.protocol_version.as_str()) {
         return Err(format!(
-            "plugin speaks protocol {}, this engine speaks {PROTOCOL_VERSION}",
-            handshake.protocol_version
+            "plugin speaks protocol {}, this engine speaks {}",
+            handshake.protocol_version,
+            SUPPORTED_VERSIONS.join(" or ")
         ));
+    }
+    if is_deprecated(&handshake.protocol_version) {
+        eprintln!("warning: protocol {} is deprecated and a future engine will refuse it", handshake.protocol_version);
     }
     let scope = resolved.loaded.discovery_scope().map_err(|e| e.to_string())?;
     let discovery = client

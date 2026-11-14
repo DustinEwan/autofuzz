@@ -14,7 +14,7 @@ belongs on.
 |`crates/afz-conformance/`|The conformance suite for plugins: 24 wire rules, template v1, the fixture-validator comparison, and the runtime lifecycle. `afz validate-harness`, `afz install-harness`, and `xtask check-harness` share it.|
 |`crates/xtask/`|A fake plugin for protocol tests and negative controls, the JSON Schema generator, and the in-repo `check-harness` entry point.|
 |`crates/afz-engine/tests/targets/`|Target trees the engine's own tests drive a plugin through: `blocked`, `minimize`, `oracles`.|
-|`docs/schema/`|Generated JSON Schema for every protocol type and for the scan result.|
+|`docs/schema/`|Generated JSON Schema for every protocol type and for the scan result, one directory per protocol revision.|
 |`docs/decisions/`|Architecture decision records.|
 |`vendor/`, `examples/`|Real packages that were scanned to produce the records under `docs/`.|
 
@@ -41,8 +41,11 @@ of scrolling past. That applies to every target, tests included.
 
 ## Generated schemas
 
-`docs/schema/*.json` is generated, so do not hand-edit it. After you change a protocol type or the scan
-result, run `cargo run -p afz-xtask -- schema` and commit the regenerated files.
+`docs/schema/<revision>/*.json` (today `docs/schema/afz-1/`) is generated, so do not hand-edit
+it. After you change a protocol type or the scan result, run `cargo run -p afz-xtask -- schema`
+and commit the regenerated files. A revision's directory freezes once a newer revision exists:
+a contract change adds a revision directory, it never edits an old one
+([decision 0016](docs/decisions/0016-the-protocol-speaks-a-version-set.md)).
 
 The test in `crates/xtask/tests/schema.rs` enforces that rule. It regenerates the schemas into a temporary
 directory and fails when the committed bytes differ, so `cargo test --workspace` catches a drift between

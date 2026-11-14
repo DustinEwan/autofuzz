@@ -141,13 +141,23 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
     not_ready(ready.as_ref()).map_or(Ok(()), Err)
 }
 
-/// Reject a plugin that speaks a different protocol revision, rather than misreading it.
+/// Reject a plugin that speaks a revision outside this engine's version set, rather than
+/// misreading it. A revision that is supported but deprecated is accepted with a warning
+/// naming it: the warning is the operator's lead time for the refusal that follows
+/// (`docs/decisions/0016-the-protocol-speaks-a-version-set.md`).
 pub(crate) fn check_protocol(handshake: &Handshake) -> Result<(), String> {
-    if handshake.protocol_version != PROTOCOL_VERSION {
+    if !SUPPORTED_VERSIONS.contains(&handshake.protocol_version.as_str()) {
         return Err(format!(
-            "plugin speaks protocol {}, this engine speaks {PROTOCOL_VERSION}",
-            handshake.protocol_version
+            "plugin speaks protocol {}, this engine speaks {}",
+            handshake.protocol_version,
+            SUPPORTED_VERSIONS.join(" or ")
         ));
+    }
+    if is_deprecated(&handshake.protocol_version) {
+        eprintln!(
+            "warning: protocol {} is deprecated and a future engine will refuse it",
+            handshake.protocol_version
+        );
     }
     Ok(())
 }

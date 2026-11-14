@@ -381,6 +381,10 @@
         "name": {
           "type": "string"
         },
+        "protocolVersion": {
+          "description": "The protocol revision the handshake agreed on, so an old scan says which contract its\nbytes were written under.",
+          "type": "string"
+        },
         "targetClass": {
           "$ref": "#/$defs/TargetClass"
         },
@@ -389,6 +393,7 @@
         }
       },
       "required": [
+        "protocolVersion",
         "name",
         "version",
         "targetClass",

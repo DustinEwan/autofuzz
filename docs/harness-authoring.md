@@ -95,14 +95,20 @@ text and `python` reports 1-based line numbers. State which unit your harness us
 `coverage.json` is written from these numbers and a reader comparing two harnesses has no other
 way to know.
 
-`docs/schema/` is the authority for every field. It is generated from `crates/afz-protocol/src/` by
-`cargo run -p afz-xtask -- schema`, and `crates/xtask/tests/schema.rs` fails the test suite when the
-committed files differ from the Rust types. A plugin written against those files cannot drift from
-the engine without one of the two failing loudly.
+`docs/schema/<revision>/` - today `docs/schema/afz-1/` - is the authority for every field. It
+is generated from `crates/afz-protocol/src/` by `cargo run -p afz-xtask -- schema`, and
+`crates/xtask/tests/schema.rs` fails the test suite when the committed files differ from the
+Rust types. A plugin written against those files cannot drift from the engine without one of
+the two failing loudly. Without an engine checkout, `afz export-schema [revision] [--out DIR]`
+writes the same bytes from the binary that will validate your plugin, which is what a CUE
+author imports and what an editor's `$schema` points at
+([decision 0016](decisions/0016-the-protocol-speaks-a-version-set.md)).
 
 Literals you must match:
 
-- `PROTOCOL_VERSION` is `"afz/1"` (`crates/afz-protocol/src/targets.rs`).
+- `PROTOCOL_VERSION` is `"afz/1"` (`crates/afz-protocol/src/targets.rs`). The engine accepts
+  any revision in `SUPPORTED_VERSIONS` - today that set is just this one - and refuses the
+  handshake otherwise.
 - `jsonrpc` is the literal `"2.0"`.
 - `id` is a `u64` assigned per plugin process, starting at 1 (`PluginClient::spawn` sets
   `next_id: AtomicU64::new(1)`). Echo it back on error frames too.
@@ -438,7 +444,7 @@ Run `afz validate-harness` first (section 2). Then copy the patterns that the sh
 
 **A wire-vocabulary pin.** The language-neutral requirement: every literal that the plugin sends or
 reads — method names, capability strings, skip reasons, materializations, error codes — is
-compared at test time against `docs/schema/*.json` and against the plugin interface in
+compared at test time against `docs/schema/afz-1/*.json` and against the plugin interface in
 `docs/architecture.md`, in a test that needs no Rust binary and no network. The two shipped
 examples are `test/contract.test.mjs` in `autofuzz-harness-js-ts` (node) and
 `test/contract_test.py` in `autofuzz-harness-python` (stdlib `unittest`, no third-party

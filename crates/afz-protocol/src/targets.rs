@@ -7,6 +7,28 @@ use crate::types::TypeNode;
 
 pub const PROTOCOL_VERSION: &str = "afz/1";
 
+/// Every protocol revision this build speaks, newest first. The handshake must name one of
+/// these; `docs/decisions/0016-the-protocol-speaks-a-version-set.md` records how a revision
+/// enters this set, how it becomes deprecated, and when deprecated stops meaning accepted.
+pub const SUPPORTED_VERSIONS: &[&str] = &[PROTOCOL_VERSION];
+
+/// Revisions that are still accepted but scheduled to be refused. The engine prints a warning
+/// naming the revision at every meeting point - probe, install, validate - while it is listed
+/// here. A revision is added at least one engine release before it is removed from
+/// `SUPPORTED_VERSIONS`, so the warning is the operator's lead time, not a surprise.
+pub const DEPRECATED_VERSIONS: &[&str] = &[];
+
+/// Whether a revision is deprecated: accepted, but on a published path to refusal.
+pub fn is_deprecated(version: &str) -> bool {
+    DEPRECATED_VERSIONS.contains(&version)
+}
+
+/// The directory under `docs/schema/` that publishes the schema set a revision ships with.
+/// `afz/1` is `docs/schema/afz-1/`, because `/` has no place in a path segment.
+pub fn schema_dir(version: &str) -> String {
+    version.replace('/', "-")
+}
+
 /// The two target classes. Design-time targets are symbols we call in a process we control;
 /// runtime targets are boundaries a live process exposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

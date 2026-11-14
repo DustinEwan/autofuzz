@@ -1,7 +1,8 @@
 //! Step 9 acceptance: the scan result document, its schema, and the markdown renderer.
 //!
-//! The document is written once, validates against the committed `docs/schema/scan-result.json`,
-//! and every artifact it names exists. The renderer is given the document's path and must produce
+//! The document is written once, validates against the committed
+//! `docs/schema/afz-1/scan-result.json`, and every artifact it names exists. The renderer is
+//! given the document's path and must produce
 //! a section per finding while the files it points at are unreadable, which is the only way to
 //! show it reads nothing but the document.
 
@@ -24,7 +25,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn committed_schema_path() -> PathBuf {
-    repo_root().join("docs/schema/scan-result.json")
+    repo_root().join("docs/schema").join(afz_protocol::schema_dir(afz_protocol::PROTOCOL_VERSION)).join("scan-result.json")
 }
 
 fn order_input() -> Vec<ValueTree> {
@@ -65,6 +66,7 @@ fn document() -> ScanDocument {
             root: "/home/jdoe/billing-service".to_string(),
             revision: Some("git:8f2c1ab".to_string()),
             harness: HarnessInfo {
+                protocol_version: "afz/1".to_string(),
                 name: "js-ts".to_string(),
                 version: "0.3.1".to_string(),
                 target_class: TargetClass::DesignTime,
@@ -243,7 +245,7 @@ fn validate(document_path: &Path) -> Vec<String> {
 fn written_document_validates_against_the_committed_schema() {
     let (_root, dir) = write_once("validate");
     let errors = validate(&dir.join(SCAN_FILE));
-    assert!(errors.is_empty(), "scan.json does not validate against docs/schema/scan-result.json: {errors:#?}");
+    assert!(errors.is_empty(), "scan.json does not validate against {}: {errors:#?}", committed_schema_path().display());
     std::fs::remove_dir_all(&_root).ok();
 }
 
@@ -292,7 +294,7 @@ fn committed_schema_is_generated_from_the_document_type() {
     assert_eq!(
         committed,
         format!("{}\n", scanresult::schema_json()),
-        "docs/schema/scan-result.json is stale; run `cargo run -p afz-xtask -- schema`"
+        "docs/schema/afz-1/scan-result.json is stale; run `cargo run -p afz-xtask -- schema`"
     );
 }
 
