@@ -33,7 +33,7 @@ back to novelty over the outcome that the call returned.
 | | Status |
 |---|---|
 | Design-time targets: functions, methods, exported symbols | Built, four harnesses |
-| Harness plugins `js-ts`, `python`, `wasm`, `starter`, `openapi` | Built. Each is gated twice: install drives the wire rules in CI, and `crates/xtask/tests/conformance.rs` asserts each template golden |
+| Harness plugins `js-ts`, `python`, `wasm`, `starter`, `openapi` | Built. Each is gated in its own repository: install drives the wire rules and that repository's CI asserts the template golden |
 | Coverage-guided loop, corpus, scheduler | Built |
 | Oracles `failed`, `rejected`, `deadline`, `memoryGrowth`, `processExit` | Built |
 | Scan result document, `json` and `markdown` renderers | Built |
