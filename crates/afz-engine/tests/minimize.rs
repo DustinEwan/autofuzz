@@ -2,8 +2,12 @@
 //! plugin, and the reproducer the plugin renders for the minimized input reproduces the fault
 //! when Node runs it on its own, with no engine and no plugin process in sight.
 //!
-//! This needs the `js-ts` plugin installed: run `afz install-harness
-//! https://github.com/DustinEwan/autofuzz-harness-js-ts.git` first.
+//! The first test is a cross-repository acceptance test: it drives the published `js-ts`
+//! plugin, so it needs `afz install-harness
+//! https://github.com/DustinEwan/autofuzz-harness-js-ts.git` and runs only under
+//! `cargo test -- --ignored`. The engine's CI installs no harness; the install machinery it
+//! would rely on is exercised against the in-repo fake plugin instead. The rest of this file
+//! pins the minimizer itself and needs no plugin.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -30,6 +34,7 @@ fn plugin_program() -> String {
 }
 
 #[test]
+#[ignore = "cross-repository acceptance test: install the js-ts harness, then cargo test -- --ignored"]
 fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
     let input_path = target_root().join("order-input.json");
     let text = std::fs::read_to_string(&input_path).expect("the committed target input");

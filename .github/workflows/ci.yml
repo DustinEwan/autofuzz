@@ -9,18 +9,14 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # The engine and the protocol crate. `cargo test --workspace` includes the Rust tests that
-  # spawn the js-ts and python plugins over stdio, and the three template gates read their
-  # plugin, emitter, and project root from the install records, so this job installs every
-  # shipped harness before running anything.
+  # The engine and the protocol crate. Published harnesses are not installed here: conformance
+  # is a property of a harness, and each harness repository's own CI drives the suite against
+  # it. This job exercises the engine's side of the install contract against the repository's
+  # own fake plugin, and runs every test that needs no plugin beyond it.
   rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -30,16 +26,19 @@ jobs:
         with:
           python-version: "3.14"
 
-      # Each install builds the harness and drives the full conformance suite, so this step is
-      # itself the wire-rules gate: a shipped harness that stops conforming fails the build here.
-      - name: Install the harness plugins
+      # The install machinery end to end on a real git source: clone, manifest parse, spawn,
+      # protocol-version and name match, and the registry record. The fixture is the fake
+      # plugin this repository already ships, generated as a one-file harness repository.
+      - name: Install the fake plugin through the install machinery
         run: |
-          cargo build --release -p afz-cli
-          ./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git
-          ./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-python.git
-          ./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-wasm.git
-          ./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-starter.git
-          ./target/release/afz install-harness https://github.com/DustinEwan/autofuzz-harness-openapi.git
+          cargo build --release -p afz-cli -p afz-xtask
+          repo=$(mktemp -d)
+          printf '{"name":"afz-fakeplugin","command":["%s/target/release/afz-fakeplugin"]}\n' "$PWD" > "$repo/afz-harness.json"
+          git -C "$repo" init -q
+          git -C "$repo" -c user.email=ci@autofuzz.local -c user.name=ci add -A
+          git -C "$repo" -c user.email=ci@autofuzz.local -c user.name=ci commit -qm "fake harness"
+          ./target/release/afz install-harness "$repo"
+          ./target/release/afz harnesses | grep -q '^afz-fakeplugin '
 
       # The gate: any clippy warning in any target, including tests, fails the job.
       - name: Clippy

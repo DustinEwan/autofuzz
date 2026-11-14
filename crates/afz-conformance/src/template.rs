@@ -230,9 +230,9 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
 
 /// Run the project's own fixture validator: one JSON `TemplateReport` on stdout, exit 0 even
 /// when a property fails, non-zero only when the validator itself could not run. `deadline_ms`
-/// is its wall-clock limit. The product driver (`afz validate-harness`, `afz install-harness`)
-/// and the engine's template gates share this one runner, so a gate that asserts the validator
-/// section sees exactly what an install sees.
+/// is its wall-clock limit. The product drivers (`afz validate-harness`, `afz install-harness`)
+/// share this one runner, so a harness repository's CI assertion on the validator section of a
+/// report sees exactly what an install sees.
 pub fn run_validator(argv: &[PathBuf], dir: &Path, deadline_ms: u64) -> Result<TemplateReport, String> {
     let joined = argv.iter().map(|argument| argument.display().to_string()).collect::<Vec<_>>().join(" ");
     let mut child = Command::new(&argv[0])

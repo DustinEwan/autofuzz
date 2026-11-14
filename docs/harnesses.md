@@ -29,27 +29,26 @@ violation of the run.
 
 |Harness|Repository|Emitter|Validator|Template v1|Gate|
 |---|---|---|---|---|---|
-|`js-ts`|`autofuzz-harness-js-ts`|`conformance/emit.mjs`|`node --experimental-strip-types conformance/validate.mjs`: 6 pass, 1 not applicable (`private-symbol`)|9 pass, 1 not applicable (`private-symbol`)|`the_js_ts_harness_passes_template_v1`, in the engine's `rust` job; install drives the wire rules|
-|`python`|`autofuzz-harness-python`|`conformance/emit.py`|`python3 conformance/validate.py`: 7 pass, 0 not applicable|10 pass, 0 not applicable|`the_python_harness_passes_template_v1`, in the engine's `rust` job; install drives the wire rules|
-|`wasm`|`autofuzz-harness-wasm`|`src/bin/emit.rs` (`afz-wasm-emit`)|`afz-wasm-check`: 4 pass, 3 not applicable (`guard-refusal`, `private-symbol`, `method-receiver`)|4 pass, 6 not applicable (`guard-refusal`, `private-symbol`, `method-receiver`, `stdout-purity`, `reproducer-script`, `deadline-sleep`)|`the_wasm_harness_passes_template_v1`, in the engine's `rust` job; install drives the wire rules|
-|`starter`|`autofuzz-harness-starter`|`conformance/emit.sh`|`sh conformance/validate.sh`: 5 pass, 2 not applicable (`method-receiver`, `coverage-digest-live`)|8 pass, 2 not applicable (`method-receiver`, `coverage-digest-live`)|`the_starter_harness_passes_template_v1`, in the engine's `rust` job; install drives the wire rules|
-|`openapi`|`autofuzz-harness-openapi`|`conformance/emit.mjs`|`node conformance/validate.mjs`: 5 pass, 2 not applicable (`crash-unguarded`, `coverage-digest-live`)|7 pass, 3 not applicable (`crash-unguarded`, `coverage-digest-live`, `stdout-purity`)|`the_openapi_harness_passes_template_v1`, in the engine's `rust` job; install drives the wire rules and the service lifecycle|
+|`js-ts`|`autofuzz-harness-js-ts`|`conformance/emit.mjs`|`node --experimental-strip-types conformance/validate.mjs`: 6 pass, 1 not applicable (`private-symbol`)|9 pass, 1 not applicable (`private-symbol`)|the harness repository's own CI: install drives the wire rules, `Assert the report` pins the golden|
+|`python`|`autofuzz-harness-python`|`conformance/emit.py`|`python3 conformance/validate.py`: 7 pass, 0 not applicable|10 pass, 0 not applicable|the harness repository's own CI: install drives the wire rules, `Assert the report` pins the golden|
+|`wasm`|`autofuzz-harness-wasm`|`src/bin/emit.rs` (`afz-wasm-emit`)|`afz-wasm-check`: 4 pass, 3 not applicable (`guard-refusal`, `private-symbol`, `method-receiver`)|4 pass, 6 not applicable (`guard-refusal`, `private-symbol`, `method-receiver`, `stdout-purity`, `reproducer-script`, `deadline-sleep`)|the harness repository's own CI: install drives the wire rules, `Assert the report` pins the golden|
+|`starter`|`autofuzz-harness-starter`|`conformance/emit.sh`|`sh conformance/validate.sh`: 5 pass, 2 not applicable (`method-receiver`, `coverage-digest-live`)|8 pass, 2 not applicable (`method-receiver`, `coverage-digest-live`)|the harness repository's own CI: install drives the wire rules, `Assert the report` pins the golden|
+|`openapi`|`autofuzz-harness-openapi`|`conformance/emit.mjs`|`node conformance/validate.mjs`: 5 pass, 2 not applicable (`crash-unguarded`, `coverage-digest-live`)|7 pass, 3 not applicable (`crash-unguarded`, `coverage-digest-live`, `stdout-purity`)|the harness repository's own CI: install drives the wire rules and the service lifecycle, `Assert the report` pins the golden|
 |fake plugin|`crates/xtask/src/fake.rs`|none, because it is the negative-control target|none|every rule is violated on demand by a directive|the `a_*` / `an_*` controls|
 
-Install is the wire-rules gate for all five: each harness repository's own CI runs
-`afz install-harness "$GITHUB_WORKSPACE"` and asserts the report, and the engine's `rust` CI job
-installs all five from their published URLs, so a shipped harness that stops conforming fails both
-its own pull request and the engine's build.
+Conformance is a property of a harness, so its gate lives in the harness repository: each one
+installs its own checkout (`afz install-harness "$GITHUB_WORKSPACE"`, which drives the 24 wire
+rules before it records anything) and asserts the report against the golden this table records.
+The engine's CI installs no published harness; it exercises the engine's side of that same
+install machinery - clone, manifest, spawn, handshake, record - against the fake plugin this
+repository ships.
 
-The expected results live in the gate tests themselves, so the numbers above are not a claim you have
-to re-measure. `the_python_harness_passes_template_v1` asserts exactly `(10, 0, 0)` and a
-fixture-side `(7, 0, 0)`. `the_js_ts_harness_passes_template_v1` asserts that `private-symbol` is the
-only not-applicable property on both sides and that the other nine pass.
-`the_wasm_harness_passes_template_v1` asserts the four realizations and the six named absences.
-`the_starter_harness_passes_template_v1` asserts eight passes and the two scaffold absences, and
-`the_openapi_harness_passes_template_v1` asserts seven passes and the three runtime absences, on
-both sides. All assertions are exact, so a new gap in any harness fails CI. To unblock CI, someone
-has to write the reason for the gap into the test.
+The expected results live in each harness repository's CI assertion, so the numbers above are
+not a claim you have to re-measure. The starter's `ci.yml` asserts exactly 8 template passes and
+the two scaffold absences on both the protocol side and the fixture side; the js-ts, python,
+wasm, and openapi repositories assert their own goldens the same way. Every assertion is exact,
+so a new gap in a harness fails that repository's CI. To unblock it, someone has to write the
+reason for the gap into the assertion.
 
 The harness repositories' CI runs Node 24 and Python 3.14. The `python` plugin's own floor is Python
 3.12, so CI does not test the oldest version that the plugin supports.

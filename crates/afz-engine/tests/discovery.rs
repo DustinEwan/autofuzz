@@ -6,9 +6,11 @@
 //! engine's own `Discovery` type: a field that changed shape on either side fails to deserialize
 //! here rather than in the middle of a scan.
 //!
-//! This needs the `js-ts` plugin installed: run `afz install-harness
-//! https://github.com/DustinEwan/autofuzz-harness-js-ts.git` first. The recorded argv is the
-//! program the user installed, so no runtime override applies here.
+//! This is a cross-repository acceptance test: it needs the `js-ts` plugin installed
+//! (`afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git`) and runs
+//! only under `cargo test -- --ignored`; the recorded argv is the program the user installed,
+//! so no runtime override applies here. The always-on cross-language pin is the js-ts
+//! repository's own contract test against `docs/schema/`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -27,6 +29,7 @@ fn launch() -> Launch {
 }
 
 #[test]
+#[ignore = "cross-repository acceptance test: install the js-ts harness, then cargo test -- --ignored"]
 fn a_blocked_symbol_arrives_in_the_shape_the_engine_reads() {
     let request = DiscoverReq {
         root: target_root().display().to_string(),

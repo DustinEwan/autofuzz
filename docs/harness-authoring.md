@@ -470,8 +470,8 @@ a property that it does not actually trigger fails. Properties that a runtime ge
 express are declared `notApplicable` with a reason, and the reason appears in the report, where CI
 keeps the not-applicable set as a golden list (section 12).
 
-**Protocol coverage for the wasm harness** is `the_wasm_harness_passes_template_v1` in
-`crates/xtask/tests/conformance.rs`, over the plugin that `afz install-harness` recorded:
+**Protocol coverage for the wasm harness** lives in the wasm harness repository's CI, which
+installs its own checkout and asserts the report; the commands it runs, locally:
 
 ```sh
 afz install-harness https://github.com/DustinEwan/autofuzz-harness-wasm.git

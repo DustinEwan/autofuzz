@@ -6,9 +6,10 @@
 //! result is the plan's own list — 0 findings, then one each of `failed`, `deadline`, and
 //! `memoryGrowth`.
 //!
-//! This needs the `js-ts` plugin installed: run `afz install-harness
-//! https://github.com/DustinEwan/autofuzz-harness-js-ts.git` first. The recorded argv is the
-//! program the user installed, so no runtime override applies here.
+//! This is a cross-repository acceptance test: it needs the `js-ts` plugin installed
+//! (`afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git`) and runs
+//! only under `cargo test -- --ignored`; the recorded argv is the program the user installed,
+//! so no runtime override applies here.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -62,6 +63,7 @@ fn job(invocation_id: u64, target_id: String, values: Vec<ValueTree>) -> Job {
 }
 
 #[test]
+#[ignore = "cross-repository acceptance test: install the js-ts harness, then cargo test -- --ignored"]
 fn the_four_targets_produce_the_four_verdicts() {
     let targets = discover_targets();
     let id = |name: &str| targets.get(name).unwrap_or_else(|| panic!("discovery reported no {name}; got {targets:?}")).clone();
