@@ -2,6 +2,7 @@
 
 mod export;
 mod install;
+mod init;
 mod probe;
 mod scan;
 mod validate;
@@ -110,6 +111,12 @@ enum Command {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Write a starter configuration - a scan project or a harness repository - by answering
+    /// questions.
+    Init {
+        #[command(subcommand)]
+        target: init::Target,
+    },
 }
 
 fn main() {
@@ -123,6 +130,7 @@ fn main() {
         Command::InstallHarness { url, reference, no_validate, json } => install::run(&url, reference.as_deref(), no_validate, json),
         Command::Harnesses { json } => install::list(json),
         Command::ExportSchema { version, out } => export::run(version, out),
+        Command::Init { target } => init::run(target),
     };
     match result {
         Ok(()) => {}

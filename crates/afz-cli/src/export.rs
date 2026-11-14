@@ -10,16 +10,23 @@ use std::path::PathBuf;
 use afz_conformance::{embedded_schemas, schema_versions};
 use afz_protocol::PROTOCOL_VERSION;
 
-/// `afz export-schema [version] [--out DIR]`. The version defaults to the newest revision
-/// this engine speaks; an unknown revision is refused by naming the ones it carries.
-pub fn run(version: Option<String>, out: Option<PathBuf>) -> Result<(), String> {
-    let version = version.unwrap_or_else(|| PROTOCOL_VERSION.to_string());
-    let set = embedded_schemas(&version).ok_or_else(|| {
+/// The schema set compiled in for one revision, or the message naming the revisions this build
+/// carries. `afz init harness` checks a requested revision with this, so a wizard never writes a
+/// manifest it cannot supply schemas for.
+pub(crate) fn schema_set(version: &str) -> Result<&'static [(&'static str, &'static str)], String> {
+    embedded_schemas(version).ok_or_else(|| {
         format!(
             "this engine carries no schema set for protocol \"{version}\"; it carries {}",
             schema_versions().join(", ")
         )
-    })?;
+    })
+}
+
+/// `afz export-schema [version] [--out DIR]`. The version defaults to the newest revision
+/// this engine speaks; an unknown revision is refused by naming the ones it carries.
+pub fn run(version: Option<String>, out: Option<PathBuf>) -> Result<(), String> {
+    let version = version.unwrap_or_else(|| PROTOCOL_VERSION.to_string());
+    let set = schema_set(&version)?;
     let dir = out.unwrap_or_else(|| PathBuf::from("schema"));
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     for (file, text) in set {

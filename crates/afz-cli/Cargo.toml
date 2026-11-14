@@ -17,6 +17,8 @@ afz-conformance.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 clap.workspace = true
+# `afz init` prompts: Input, Select, MultiSelect, Confirm.
+dialoguer.workspace = true
 # Ctrl-C sets the stop flag between batches so the engine still writes its scan result.
 ctrlc = "3.5.2"
 thiserror.workspace = true

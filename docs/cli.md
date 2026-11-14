@@ -5,7 +5,7 @@ server. It gives every flag, every configuration key with its default, how a sca
 scope, and what a scan leaves on disk. For how a scan works inside, read
 [`architecture.md`](architecture.md) instead.
 
-## The six subcommands
+## The seven subcommands
 
 |Command|What it does|
 |---|---|
@@ -15,6 +15,7 @@ scope, and what a scan leaves on disk. For how a scan works inside, read
 |`afz install-harness`|Clones a harness repository, builds and validates its plugin, and records it for scans.|
 |`afz harnesses`|Lists the installed harness plugins and the command each one resolves to.|
 |`afz export-schema`|Writes the protocol schemas compiled into this binary, so a plugin author can validate against them without an engine checkout.|
+|`afz init`|Writes a starter `autofuzz.json`, or a harness repository - the official starter scaffold or a blank manifest - with the schemas it validates against.|
 
 ### `afz probe-plugin`
 
@@ -102,6 +103,54 @@ Writes every JSON Schema compiled into the binary and prints each path. These ar
 what a CUE author imports and what an editor's `$schema` points at, with no engine checkout
 required. The export is pinned by the `afz` you ran, and an unknown revision is refused by
 naming the revisions that engine speaks.
+
+### `afz init project`
+
+|Argument or flag|Meaning|
+|---|---|
+|`<dir>`|Directory to write `autofuzz.json` into. Defaults to the working directory.|
+|`--name <name>`|Project name. Defaults to the directory's name.|
+|`--harness <name>`|The harness that drives the scan. In a terminal this is a menu of what `afz install-harness` has recorded, plus a name you type.|
+|`--command <argv…>`|Plugin argv for a harness nobody installed, space-separated with no quoting.|
+|`--include <glob…>`|Discovery include globs, repeated or comma-separated.|
+|`--exclude <glob…>`|Discovery exclude globs, repeated or comma-separated.|
+|`--output-dir <dir>`|`output.dir`. Defaults to `.autofuzz`.|
+|`--renderers <list>`|`output.renderers`, comma-separated: `json`, `markdown`, `sarif`. Defaults to `json,markdown`.|
+|`--invocations <n>`|`budget.invocations`. Defaults to 100000.|
+|`--wall-clock-seconds <n>`|`budget.wallClockMs`, asked in seconds. Defaults to 900.|
+|`--strategy <guided\|random>`|`budget.strategy`. Defaults to `guided`.|
+
+Every answer has a flag, so one command serves a terminal, a script, and CI: a flag skips its
+prompt, a question with a documented default takes that default when nothing is there to answer it,
+and a question with no default stops with the flags that answer it. Prompts go to stderr, so stdout
+stays the path written and the next command to run. The document is read back and validated before
+anything is written, so `afz init project` cannot leave a scan project that `afz scan` refuses, and
+an existing `autofuzz.json` is named and left alone rather than overwritten. `oracles` is written as
+`{}`, because the engine's defaults are the recommended starting point and every key is in the next
+section for hand-editing.
+
+### `afz init harness`
+
+|Argument or flag|Meaning|
+|---|---|
+|`<dir>`|Directory to create and fill. Defaults to the working directory.|
+|`--from <starter\|blank>`|`starter` clones the official starter repository and renames its manifest; `blank` writes only the manifest and the schemas.|
+|`--source <url-or-path>`|Clone source for `--from starter`. Defaults to `https://github.com/DustinEwan/autofuzz-harness-starter.git`. A local path clones offline.|
+|`--name <name>`|Harness name. Defaults to the directory's name. `/`, `\`, and `..` are refused, because the registry stores one directory per name.|
+|`--protocol <revision>`|The protocol revision whose schemas are exported, for example `afz/1`. Defaults to the newest this engine speaks.|
+|`--command <argv…>`|Plugin argv, blank mode only, space-separated with no quoting.|
+|`--install <argv…>`|Dependency-fetch argv, blank mode only, run only by `afz install-harness`. Empty to skip.|
+|`--build <argv…>`|Build argv, blank mode only, run by `afz install-harness` and `afz validate-harness`. Empty to skip.|
+|`--emitter <argv…>`|Conformance emitter argv, blank mode only. An empty answer leaves out the `conformance` block.|
+|`--deadline-ms <ms>`|`conformance.deadlineMs`. Defaults to 1500.|
+
+Starter mode wants a new or empty directory, because git refuses a non-empty clone target. It drops
+the clone's `.git` - the scaffold ships code to edit, not history to inherit - and changes only the
+manifest's `name`. Blank mode accepts a directory that already holds a plugin, which makes it the way
+to repair a checkout whose manifest is wrong. Both modes export the chosen revision's schemas into
+`schema/`, the same bytes `afz export-schema` writes, so a repository is validated against the
+contract it was written for. The manifest carries no protocol field: the handshake negotiates the
+revision, and `--protocol` selects only the exported set.
 
 ## The scan project file
 

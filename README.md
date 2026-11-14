@@ -131,8 +131,11 @@ and it wins over the record. An uninstalled name with no `command` is an error, 
 
 `afz scan` reads `autofuzz.json` from the directory you point at, so a scan of a configured project
 needs no arguments at all, and a directory with no `autofuzz.json` above it stops with a message that
-tells you to create one. [`docs/cli.md`](docs/cli.md) gives every flag and every configuration key,
-with the defaults.
+tells you to create one. Run `afz init project` to create one: it asks which harness drives the scan
+and how much budget to give it, then writes the file. The other file `afz init` writes is
+`afz-harness.json` - `afz init harness` starts a harness repository from the official starter scaffold
+or from blank, with the protocol schemas it validates against. [`docs/cli.md`](docs/cli.md) gives
+every flag and every configuration key, with the defaults.
 
 ## MCP server
 
