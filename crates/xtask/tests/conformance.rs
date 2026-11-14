@@ -280,9 +280,9 @@ fn installed(name: &str) -> afz_engine::harnesses::InstalledHarness {
     afz_engine::harnesses::lookup(name).unwrap_or_else(|| panic!("install the {name} harness first: afz install-harness <git url>"))
 }
 
-/// The record's argv with its program replaced by the runtime under test: for these two gates
-/// the runtime build is the point, so `AFZ_NODE` and `AFZ_PYTHON` override what the install
-/// recorded.
+/// The record's argv with its program replaced by the runtime under test: for the
+/// interpreted gates the runtime build is the point, so `AFZ_NODE` and `AFZ_PYTHON`
+/// override what the install recorded.
 fn relaunch(record: &afz_engine::harnesses::InstalledHarness, runtime: &str) -> Launch {
     let mut argv = record.argv.clone();
     argv[0] = runtime.to_string();
@@ -422,8 +422,10 @@ fn the_starter_harness_passes_template_v1() {
     let conformance_record = record.conformance.as_ref().expect("afz-harness.json declares conformance");
     let out = conformance_out("starter-gate");
     render_conformance_project(&conformance_record.emitter, &out);
-    let node = std::env::var("AFZ_NODE").unwrap_or_else(|_| "node".to_string());
-    let report = run_template_gate("starter", relaunch(&record, &node), &out, conformance_record.deadline_ms.unwrap_or(1000));
+    // No runtime override: the scaffold is the POSIX shell script the install recorded,
+    // and `sh` is the runtime under test.
+    let launch = Launch::new(record.argv.clone()).with_cwd(record.root.display().to_string());
+    let report = run_template_gate("starter", launch, &out, conformance_record.deadline_ms.unwrap_or(1000));
     let template = report.template.expect("a template-driven run carries the template section");
     assert_eq!(template.version, 1);
     assert_eq!(
