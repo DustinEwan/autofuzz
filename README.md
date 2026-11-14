@@ -151,6 +151,8 @@ with `{"mcpServers": {"autofuzz": {"command": "afz-mcp"}}}` and read
   what each answer costs.
 - [`docs/harnesses.md`](docs/harnesses.md) - how far you can trust each harness you can install, and
   what each one still cannot do.
+- [`docs/domains.md`](docs/domains.md) - what the engine fits beyond code-level fuzzing: the
+  mechanisms that generalize, the candidate domains, and what does not exist yet.
 - [`docs/decisions/`](docs/decisions/) - the decisions behind the design, each with what it rules out.
 - [`docs/dogfood/ufo.md`](docs/dogfood/ufo.md) and [`docs/examples/yaml.md`](docs/examples/yaml.md) -
   scans of real packages, with a human verdict on each finding.

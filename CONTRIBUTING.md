@@ -53,8 +53,10 @@ the Rust types and the schema. Without that test, a plugin at runtime would be t
 
 ## Reading list for a change
 
-- [`docs/architecture.md`](docs/architecture.md) for how a scan works and where the reserved surface is.
+- [`docs/architecture.md`](docs/architecture.md) for how a scan works, end to end.
 - [`docs/cli.md`](docs/cli.md) for the command line, the configuration file, and the MCP tools.
 - [`docs/harness-authoring.md`](docs/harness-authoring.md) before you write or change a plugin.
 - [`docs/decisions/`](docs/decisions/) for the decisions behind the design. These are dated records, so
   some of them describe a plan that a later record changed.
+- [`docs/domains.md`](docs/domains.md) for the domains beyond code-level fuzzing and the engine
+  gaps each one would expose.
