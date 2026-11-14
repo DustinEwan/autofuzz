@@ -1,161 +1,191 @@
-# Driving autofuzz
+# Command line and configuration
 
-This is the reference for the two ways you drive a scan: the `afz` command line and the `afz-mcp`
-server. It gives every flag, every configuration key with its default, how a scan picks what is in
-scope, and what a scan leaves on disk. For how a scan works inside, read
-[`architecture.md`](architecture.md) instead.
+`afz` runs scans and manages harness plugins. `afz-mcp` exposes the same engine to an MCP client.
+This page gives the exact flags, keys, and output files. If you are new, read the
+[README](../README.md) first; it walks through one scan.
 
-## The seven subcommands
+## Contents
 
-|Command|What it does|
-|---|---|
-|`afz probe-plugin`|Starts a plugin, completes the handshake, prints the inventory it discovers, and asks a readiness-declaring plugin whether its environment is up. Costs no invocations.|
-|`afz scan`|Runs a coverage-guided scan and writes the scan result.|
-|`afz validate-harness`|Drives a harness plugin through the conformance suite and reports rule by rule.|
-|`afz install-harness`|Clones a harness repository, builds and validates its plugin, and records it for scans.|
-|`afz harnesses`|Lists the installed harness plugins and the command each one resolves to.|
-|`afz export-schema`|Writes the protocol schemas compiled into this binary, so a plugin author can validate against them without an engine checkout.|
-|`afz init`|Writes a starter `autofuzz.json`, or a harness repository - the official starter scaffold or a blank manifest - with the schemas it validates against.|
+- [Common tasks](#common-tasks)
+- [Command reference](#command-reference)
+- [The scan project file](#the-scan-project-file)
+- [Git scoping](#git-scoping)
+- [Scan output files](#scan-output-files)
+- [Reproducible scans](#reproducible-scans)
+- [Environment variables](#environment-variables)
+- [MCP server](#mcp-server)
+
+## Common tasks
+
+```sh
+# See what a scan project would fuzz, without spending a budget.
+afz probe-plugin --path my-project
+
+# Run a scan with a fixed seed and a 50000-call budget.
+afz scan my-project --budget invocations=50000 --seed 0x5e3a91c4
+
+# Scan only what the last commit touched.
+afz scan . --git HEAD
+
+# Continue from the corpus of an earlier scan.
+afz scan my-project --resume .autofuzz/M7D0DJ2ZG8
+
+# Check a harness plugin before you install it.
+afz validate-harness
+
+# Install a harness and record its command.
+afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git
+
+# Write a starter scan project.
+afz init project
+```
+
+## Command reference
+
+`afz` has these subcommands. A command exits 0 on success and 1 on an error. `validate-harness` also
+exits 1 when the conformance suite finds a violated rule.
 
 ### `afz probe-plugin`
 
-|Flag|Meaning|
-|---|---|
-|`--command <argv…>`|Plugin argv to start, in place of the one the scan project names.|
-|`--path <dir>`|Scan project to discover against. Defaults to the current directory.|
-|`--json`|Print raw JSON instead of the table.|
+Starts the plugin that a scan project names, completes the handshake, and prints the targets that it
+discovered. It costs no invocations.
 
-With no `--command` and no scan project above the directory you point at, `probe-plugin` falls back to
-the fake plugin that the protocol tests drive. That plugin sits beside `afz` only in a workspace you
-built yourself with `cargo build --workspace`; a binary you installed with `install.sh` has none beside
-it, so pass `--command` or point `--path` at a scan project.
+| Flag | Meaning |
+| --- | --- |
+| `--command <argv...>` | Plugin command to start, in place of the one that the scan project declares. |
+| `--path <dir>` | Scan project to discover against. Defaults to the current directory. |
+| `--json` | Print the raw JSON answer instead of the table. |
 
-A plugin that declares the `readiness` capability is also sent `ready`. The table gains a
-`readiness` line, the JSON gains a `ready` field, and a not-ready answer makes the command
-exit non-zero with the plugin's own reason — the difference between "the service is down"
-and "the plugin is broken", before a scan spends its budget.
+With no `--command` and no `autofuzz.json` above the directory that you point at, the command uses
+the fake plugin that the protocol tests drive. That plugin sits beside `afz` only in a workspace
+built with `cargo build --workspace`. A binary from `install.sh` has none beside it.
+
+When the plugin declares the `readiness` capability, the command also sends `ready`. A not-ready
+answer makes the command exit non-zero with the plugin's own reason.
 
 ### `afz scan`
 
-|Flag|Meaning|
-|---|---|
-|`<dir>`|Directory to scan. Defaults to the scan project's own root.|
-|`--config <path>`|Scan project file. Defaults to the nearest `autofuzz.json` above the scan root.|
-|`--budget <key=value…>`|Budget limits, repeated or comma-separated: `invocations=50000`, `wall=90s`.|
-|`--seed <hex or decimal>`|Seed for every random choice the scan makes, so a rerun replays.|
-|`--resume <scanDir>`|A previous scan directory: its corpus is reloaded.|
-|`--strategy <guided\|random>`|`guided` steers with coverage; `random` generates without the corpus.|
-|`--git <selector>`|Scope the scan to one git change set. See below.|
-|`--workers <n>`|Plugin processes to run at once. Overrides `budget.workers`.|
-|`--quiet`, `-q`|Print only the summary, not the coverage samples.|
+Runs the engine against one scan project and writes the result. It checks the configuration and the
+git selector before it prints the banner.
 
-Two habits are worth learning early. `cargo run -p afz-cli -- scan …` works in place of `afz scan …`,
-but it runs a debug build, which is slower per invocation. And a scan writes its output under the
-scanned project, not under the directory you ran `afz` from.
+| Flag | Meaning |
+| --- | --- |
+| `<dir>` | Directory to scan. Defaults to the scan project's discovery root. |
+| `--config <path>` | Scan project file. Defaults to the nearest `autofuzz.json` above the scan root. |
+| `--budget <key=value...>` | Budget limits, repeated or comma-separated: `invocations=50000`, `wall=90s`. |
+| `--seed <hex or decimal>` | Seed for every random choice. The same seed on the same tree replays the same calls. |
+| `--resume <scanDir>` | Earlier scan directory. The new scan starts from the corpus in that directory. |
+| `--strategy <guided\|random>` | `guided` selects inputs with coverage. `random` ignores the corpus. |
+| `--git <selector>` | Scan one git change set. See [Git scoping](#git-scoping). |
+| `--workers <n>` | Plugin processes to run at once. Overrides `budget.workers`. |
+| `--quiet`, `-q` | Print only the scan summary, not the progress samples. |
+
+`--budget` takes these keys:
+
+| Key | Value | Example |
+| --- | --- | --- |
+| `invocations` | Number of calls. | `invocations=50000` |
+| `wall` | Duration in `ms`, `s`, `m`, or `h`, or a number of seconds. | `wall=90s` |
+
+A scan writes its output under the scan project, not under the directory that you ran `afz` from.
 
 ### `afz validate-harness`
 
-|Flag|Meaning|
-|---|---|
-|`<harness>`|An installed harness name, or a directory holding `afz-harness.json`. Defaults to the working directory, so running it inside a harness checkout validates that checkout.|
-|`--targets <n>`|How many discovered targets `prepare` and `invoke` run on. Default 8.|
-|`--deadline <ms>`|`deadlineMs` for every driven invocation. Default: the harness manifest's `conformance.deadlineMs`, then 1000.|
-|`--json`|Print the machine-readable report instead of the table.|
+Runs the manifest's `build` command, renders the conformance project with the harness's emitter, and
+drives the suite against the plugin that the manifest names. It never runs `install`.
 
-Validation names a harness and nothing else. The plugin's entrypoint is that harness's
-`afz-harness.json` `command`, and the scan project is whatever that harness's `conformance.emitter`
-renders into a temporary directory: there is no `--command` and no `--path`, because the harness
-already carries both. Pointing a plugin at an arbitrary project is a different job and belongs to
-`afz probe-plugin` and `afz scan`, which keep `--command`.
+| Flag | Meaning |
+| --- | --- |
+| `<harness>` | An installed harness name, or a directory that holds `afz-harness.json`. Defaults to the working directory. |
+| `--targets <n>` | Number of discovered targets that `prepare` and `invoke` run on. Default 8. |
+| `--deadline <ms>` | `deadlineMs` for every driven invocation. Defaults to the manifest's `conformance.deadlineMs`, then 1000. |
+| `--json` | Print the machine-readable report instead of the table. |
+
+Validation takes no `--command` and no `--path`. The manifest carries the plugin command, and the
+emitter carries the scan project.
 
 ### `afz install-harness`
 
-|Flag|Meaning|
-|---|---|
-|`<url>`|Git URL or local path of a harness repository carrying `afz-harness.json`.|
-|`--ref <reference>`|Branch, tag, or commit to install. Default: the repository's default branch.|
-|`--no-validate`|Record the plugin without driving the conformance suite. A manifest with no `conformance` block installs only this way.|
-|`--json`|Print the conformance report as JSON instead of the table.|
+Clones a harness repository, runs its `install` and `build` commands, validates the plugin, and
+records it. A failed install leaves the previous install of that name in place.
 
-Install clones to a staging directory, runs the manifest's `install` argv and then its `build` argv,
-and validates the plugin against the conformance suite before recording anything. A failed install
-leaves the previous install of that name in place and records nothing. The record lives at
-`$AFZ_HOME/autofuzz/harnesses/<name>/harness.json` and holds the absolute plugin argv, the checkout
-root, and the conformance block.
+| Flag | Meaning |
+| --- | --- |
+| `<url>` | Git URL or local path of a harness repository with an `afz-harness.json`. |
+| `--ref <reference>` | Branch, tag, or commit to install. Defaults to the repository's default branch. |
+| `--no-validate` | Record the plugin without running the conformance suite. A manifest with no `conformance` block installs only this way. |
+| `--json` | Print the conformance report as JSON instead of the table. |
+
+The record lives at `<registry>/<name>/harness.json`, where `<registry>` is `AFZ_HOME/harnesses`.
 
 ### `afz harnesses`
 
-|Flag|Meaning|
-|---|---|
-|`--json`|Print the records as JSON instead of the table.|
-
-Lists one row per installed harness: name, version-free handshake name, and the resolved command.
+Prints one row per installed harness: name, commit, and the command that a scan resolves. Pass
+`--json` for the records as JSON.
 
 ### `afz export-schema`
 
-|Argument or flag|Meaning|
-|---|---|
-|`[version]`|The protocol revision to export, for example `afz/1`. Defaults to the newest this engine speaks.|
-|`--out <dir>`|Directory to write into. Defaults to `schema` under the working directory.|
+Writes every JSON Schema compiled into the binary and prints each path. These are the same bytes that
+`afz validate-harness` validates with.
 
-Writes every JSON Schema compiled into the binary and prints each path. These are the bytes
-`afz validate-harness` validates with, so an export and a validation cannot disagree: this is
-what a CUE author imports and what an editor's `$schema` points at, with no engine checkout
-required. The export is pinned by the `afz` you ran, and an unknown revision is refused by
-naming the revisions that engine speaks.
+| Argument or flag | Meaning |
+| --- | --- |
+| `[version]` | Protocol revision to export, for example `afz/1`. Defaults to the newest revision that this build speaks. |
+| `--out <dir>` | Directory to write into. Defaults to `schema` under the working directory. |
 
 ### `afz init project`
 
-|Argument or flag|Meaning|
-|---|---|
-|`<dir>`|Directory to write `autofuzz.json` into. Defaults to the working directory.|
-|`--name <name>`|Project name. Defaults to the directory's name.|
-|`--harness <name>`|The harness that drives the scan. In a terminal this is a menu of what `afz install-harness` has recorded, plus a name you type.|
-|`--command <argv…>`|Plugin argv for a harness nobody installed, space-separated with no quoting.|
-|`--include <glob…>`|Discovery include globs, repeated or comma-separated.|
-|`--exclude <glob…>`|Discovery exclude globs, repeated or comma-separated.|
-|`--output-dir <dir>`|`output.dir`. Defaults to `.autofuzz`.|
-|`--renderers <list>`|`output.renderers`, comma-separated: `json`, `markdown`, `sarif`. Defaults to `json,markdown`.|
-|`--invocations <n>`|`budget.invocations`. Defaults to 100000.|
-|`--wall-clock-seconds <n>`|`budget.wallClockMs`, asked in seconds. Defaults to 900.|
-|`--strategy <guided\|random>`|`budget.strategy`. Defaults to `guided`.|
+Writes an `autofuzz.json`. Every question has a flag, so the command works in a terminal, in a
+script, and in CI. A question with a documented default takes that default when no terminal is
+available. A question with no default stops with the flags that answer it.
 
-Every answer has a flag, so one command serves a terminal, a script, and CI: a flag skips its
-prompt, a question with a documented default takes that default when nothing is there to answer it,
-and a question with no default stops with the flags that answer it. Prompts go to stderr, so stdout
-stays the path written and the next command to run. The document is read back and validated before
-anything is written, so `afz init project` cannot leave a scan project that `afz scan` refuses, and
-an existing `autofuzz.json` is named and left alone rather than overwritten. `oracles` is written as
-`{}`, because the engine's defaults are the recommended starting point and every key is in the next
-section for hand-editing.
+| Argument or flag | Meaning |
+| --- | --- |
+| `<dir>` | Directory to write `autofuzz.json` into. Defaults to the working directory. |
+| `--name <name>` | Project name. Defaults to the directory's name. |
+| `--harness <name>` | Harness that drives the scan. In a terminal, the prompt lists the installed harnesses and accepts another name. |
+| `--command <argv...>` | Plugin command for a harness that nobody installed. Space-separated, with no quoting. |
+| `--include <glob...>` | Discovery include globs, repeated or comma-separated. |
+| `--exclude <glob...>` | Discovery exclude globs, repeated or comma-separated. |
+| `--output-dir <dir>` | `output.dir`. Defaults to `.autofuzz`. |
+| `--renderers <list>` | `output.renderers`, comma-separated: `json`, `markdown`. Defaults to `json,markdown`. |
+| `--invocations <n>` | `budget.invocations`. Defaults to 100000. |
+| `--wall-clock-seconds <n>` | `budget.wallClockMs`, asked in seconds. Defaults to 900. |
+| `--strategy <guided\|random>` | `budget.strategy`. Defaults to `guided`. |
+
+The wizard validates the document before it writes anything. If `autofuzz.json` already exists, it
+reports the file and leaves it alone.
 
 ### `afz init harness`
 
-|Argument or flag|Meaning|
-|---|---|
-|`<dir>`|Directory to create and fill. Defaults to the working directory.|
-|`--from <starter\|blank>`|`starter` clones the official starter repository and renames its manifest; `blank` writes only the manifest and the schemas.|
-|`--source <url-or-path>`|Clone source for `--from starter`. Defaults to `https://github.com/DustinEwan/autofuzz-harness-starter.git`. A local path clones offline.|
-|`--name <name>`|Harness name. Defaults to the directory's name. `/`, `\`, and `..` are refused, because the registry stores one directory per name.|
-|`--protocol <revision>`|The protocol revision whose schemas are exported, for example `afz/1`. Defaults to the newest this engine speaks.|
-|`--command <argv…>`|Plugin argv, blank mode only, space-separated with no quoting.|
-|`--install <argv…>`|Dependency-fetch argv, blank mode only, run only by `afz install-harness`. Empty to skip.|
-|`--build <argv…>`|Build argv, blank mode only, run by `afz install-harness` and `afz validate-harness`. Empty to skip.|
-|`--emitter <argv…>`|Conformance emitter argv, blank mode only. An empty answer leaves out the `conformance` block.|
-|`--deadline-ms <ms>`|`conformance.deadlineMs`. Defaults to 1500.|
+Writes an `afz-harness.json` and the protocol schemas that the plugin validates against. Starter
+mode clones the official scaffold and renames its manifest. Blank mode writes only the manifest and
+the schemas.
 
-Starter mode wants a new or empty directory, because git refuses a non-empty clone target. It drops
-the clone's `.git` - the scaffold ships code to edit, not history to inherit - and changes only the
-manifest's `name`. Blank mode accepts a directory that already holds a plugin, which makes it the way
-to repair a checkout whose manifest is wrong. Both modes export the chosen revision's schemas into
-`schema/`, the same bytes `afz export-schema` writes, so a repository is validated against the
-contract it was written for. The manifest carries no protocol field: the handshake negotiates the
-revision, and `--protocol` selects only the exported set.
+| Argument or flag | Meaning |
+| --- | --- |
+| `<dir>` | Directory to create and fill. Defaults to the working directory. |
+| `--from <starter\|blank>` | `starter` clones the official starter repository and renames its manifest. `blank` writes only the manifest and the schemas. |
+| `--source <url-or-path>` | Clone source for `--from starter`. Defaults to `https://github.com/DustinEwan/autofuzz-harness-starter.git`. A local path clones offline. |
+| `--name <name>` | Harness name. Defaults to the directory's name. The command rejects `/`, `\`, and `..`. |
+| `--protocol <revision>` | Protocol revision whose schemas are exported, for example `afz/1`. Defaults to the newest revision that this build speaks. |
+| `--command <argv...>` | Plugin command, blank mode only. Space-separated, with no quoting. |
+| `--install <argv...>` | Dependency-fetch command, blank mode only. Run only by `afz install-harness`. Empty to skip. |
+| `--build <argv...>` | Build command, blank mode only. Run by `afz install-harness` and `afz validate-harness`. Empty to skip. |
+| `--emitter <argv...>` | Conformance emitter command, blank mode only. An empty answer leaves out the `conformance` block. |
+| `--deadline-ms <ms>` | `conformance.deadlineMs`. Defaults to 1500. |
+
+Starter mode needs a new or empty directory, because git rejects a non-empty clone target. Blank
+mode accepts a directory that already holds a plugin, which makes it the way to repair a checkout
+whose manifest is wrong.
+
+Both modes export the chosen revision's schemas into `schema/`. The manifest carries no protocol
+field, because the handshake negotiates the revision.
 
 ## The scan project file
 
-A scan project is a directory with an `autofuzz.json` at its root. The file says which code to fuzz, how
-hard to try, and where to write the result.
+A scan project is a directory with an `autofuzz.json` at its root. The `harness` block is required.
+The other three blocks have defaults.
 
 ```jsonc
 {
@@ -163,59 +193,96 @@ hard to try, and where to write the result.
   "harness": {
     "name": "js-ts",
     // `command` omitted: the installed `js-ts` plugin resolves from the registry.
+    "root": ".",                                        // discovery root, relative to this file
     "include": ["src/**/*.ts"],
     "exclude": ["**/*.test.ts"],
-    "options": { "rejectClasses": ["ValidationError"] }   // the harness's own configuration; the engine reads nothing here
+    "options": { "rejectClasses": ["ValidationError"] } // the harness reads this object; the engine does not
   },
   "oracles": { "deadline": { "ms": 2000 } },
   "budget": {
-    "invocations": 200000,                    // default 100000
-    "wallClockMs": 900000,                    // default 900000
-    "workers": 0,                             // default 0: one plugin process per logical CPU
-    "maxCorpus": 2048,                        // default 2048
-    "strategy": "guided"                      // default `guided`; `random` ignores the corpus
+    "invocations": 200000,
+    "wallClockMs": 900000,
+    "workers": 0,
+    "maxCorpus": 2048,
+    "strategy": "guided"
   },
   "output": { "dir": ".autofuzz", "renderers": ["json", "markdown"] }
 }
 ```
 
-Every block is optional, and an unknown key is an error rather than a typo you never notice. A scan does
-need a `harness` block, because that is where the plugin, and the file set it walks, come from. The
-engine reads nothing inside `harness.options`: the plugin named by `harness.name` reads that object
-itself, from the file `discover.configPath` names in the discovery request.
+The engine rejects an unknown key instead of ignoring it.
 
-Four keys are worth more than a comment:
+### The harness block
 
-- `harness.name` always names the harness. `command` is optional when `afz install-harness`
-  recorded that name, and the engine never guesses a runtime otherwise: an uninstalled name is an
-  error, not a `PATH` search. `command` is how you name a plugin nobody installed; the engine runs it
-  with the scan root as the working directory, and a relative path in it is resolved from where you
-  run `afz`, so an absolute path is the safer habit.
-- `harness.options.rejectClasses` changes how a call is classified for your code only. Both shipped
-  code-level plugins read it, and each has its own default idea of what a refusal looks like.
-- `output.renderers` accepts `json` and `markdown`, which are the two renderers that exist today. The
-  list controls only whether `report.md` is rendered: `scan.json` is written whatever the list holds.
-- A scan always excludes its own output directory from discovery. Without that rule, a second scan of the
-  same project would find the previous run's reproducers and fuzz them.
+`harness.name` names the harness. `harness.command` starts the plugin. The engine needs a command
+only when `afz install-harness` has no record for that name. An uninstalled name with no command is
+an error, because the engine never guesses a runtime.
 
-Four oracles are on by default: `failed` at `high`, `deadline` at 2000 ms and `medium`, `memoryGrowth` at
-256 MB and `medium`, and `processExit` at `high`. The `rejected` oracle is off by default, and you can turn
-it on for one target at a time.
+The engine runs the plugin with the directory that holds `autofuzz.json` as its working directory. A
+relative path in `command` resolves from where you ran `afz`, so an absolute path is safer.
 
-## Scan one git change set
+`harness.root` sets the discovery root, relative to the directory that holds `autofuzz.json`.
+`harness.include` and `harness.exclude` are glob lists that the engine forwards to the plugin. The
+engine adds the scan output directory to `exclude`. `harness.env` adds environment variables to the
+plugin process.
+
+The engine reads nothing inside `harness.options`. The plugin reads that object itself, from the
+file that `discover.configPath` names. The two code-level harnesses use `rejectClasses` to decide
+which errors count as refusals; `openapi` uses `allowMutating` to decide which operations it may
+call.
+
+### The oracles block
+
+These rules turn an outcome into a finding.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `oracles.failed` | `severity: "high"` | A call that broke. |
+| `oracles.rejected` | `severity: "off"` | A call that the target refused. Set a severity to report rejections. |
+| `oracles.deadline` | `severity: "medium"`, `ms: 2000` | A call that ran past its deadline. Turning it off removes the deadline from every call. |
+| `oracles.memoryGrowth` | `severity: "medium"`, `mb: 256` | A call that reported more memory than the limit. |
+| `oracles.processExit` | `severity: "high"` | The plugin process died. |
+
+`oracles.overrides` reclassifies one `via` for one target as `ok`, `rejected`, or `failed`. Use it
+when a target documents a channel as internal-failure-only.
+
+```jsonc
+"oracles": {
+  "rejected": { "severity": "low" },
+  "overrides": [
+    { "target": "afz:t:9c1f", "via": "guard-site", "treatAs": "failed" }
+  ]
+}
+```
+
+An oracle name that the engine does not implement is a configuration error. `oracles.differential`
+fails at load with `oracle "differential" is not implemented in this version`.
+
+### The budget block
+
+`budget.invocations` and `budget.wallClockMs` set the two stopping points. The scan stops at
+whichever comes first. `budget.workers` sets the number of plugin processes; `0` means one per
+logical CPU. `budget.maxCorpus` caps the corpus. `budget.strategy` is `guided` or `random`.
+
+### The output block
+
+`output.dir` is the directory for scan results, relative to the project root. `output.renderers`
+lists `json` and `markdown`. `json` always writes `scan.json`; `markdown` adds `report.md`. A
+renderer name that the engine does not implement is a configuration error.
+
+## Git scoping
 
 `--git <selector>` narrows a scan to one git change set. One selector picks both the code state that
-the scan reads and the files that count as changed. So the scan answers "does
-this change fuzz clean?" instead of "does the whole repository fuzz clean?".
+the scan reads and the files that count as changed.
 
-|Selector|Scanned state|Change set computed against|
-|---|---|---|
-|`staged`|the index|`HEAD`|
-|`unstaged`|the working tree|the index, plus the untracked files that the ignore rules allow|
-|`stash`, `stash@{2}`|that stash entry|the commit the stash was made on|
-|`HEAD`, `v1.2.0`, `main~3`, a sha|that commit|its parent, or the empty tree for a root commit|
-|`v1..HEAD`, `main~3..main`|the state at the end of the span|the start of the span|
-|`v1...feature`|the state at the end of the span|the merge base of the two sides|
+| Selector | Scanned state | Change set computed against |
+| --- | --- | --- |
+| `staged` | the index | `HEAD` |
+| `unstaged` | the working tree | the index, plus untracked files that the ignore rules allow |
+| `stash`, `stash@{2}` | that stash entry | the commit where the stash was made |
+| `HEAD`, `v1.2.0`, `main~3`, a sha | that commit | its parent, or the empty tree for a root commit |
+| `v1..HEAD`, `main~3..main` | the state at the end of the span | the start of the span |
+| `v1...feature` | the state at the end of the span | the merge base of the two sides |
 
 ```sh
 afz scan . --git HEAD --budget invocations=50000   # what the last commit touched
@@ -224,103 +291,82 @@ afz scan . --git unstaged                          # work in progress, new files
 afz scan . --git v1..HEAD                          # everything since the last release
 ```
 
-A selector that points at anything other than the working tree needs a checkout first. autofuzz creates a
-`git worktree` under the output directory and points the scan at it, so the scan reads the code exactly as
-that state has it. autofuzz removes the worktree when the scan ends.
+For any selector other than the working tree, autofuzz creates a `git worktree` under the output
+directory and scans that tree. It removes the worktree when the scan ends.
 
-The result records the scope in three places. The `git` object in `scan.json` holds it, `report.md` prints
-it in its first lines, and the inventory in `scan.json` counts the files in scope rather than the whole
-package. That distinction matters: twelve clean targets inside a change set is a narrower claim than a
-clean package.
+The result records the scope in the `git` object in `scan.json`, the first lines of `report.md`, and
+the inventory counts. Twelve clean targets inside a change set is a narrower claim than a clean
+package, and the result keeps the two claims apart.
 
-Two limits are worth knowing before you rely on a scoped run:
+Two limits apply to a scoped run:
 
-- A wasm scan scopes by the `.wasm` file, not by the Rust sources that produced it. A commit that changed
-  only `.rs` files therefore reports that the scope touches no fuzzable target, and the scan stops instead
-  of reporting a clean run.
-- A change can break a file that imports the changed file, and that importer is unchanged, so it sits
-  outside the scope. Omit `--git` when you want to ask the whole-tree question.
+- A wasm scan scopes by the `.wasm` file, not by the Rust sources that produced it. A commit that
+  changed only `.rs` files reports that the scope touches no fuzzable target, and the scan stops
+  instead of reporting a clean run.
+- A change can break a file that imports the changed file. That importer is unchanged, so it sits
+  outside the scope. Omit `--git` when you want the whole-tree answer.
 
 ## Scan output files
 
-A scan writes everything that it produces under `<output.dir>/<scanId>/`.
+A scan writes everything under `<output.dir>/<scanId>/`.
 
-|Path|Contents|
-|---|---|
-|`scan.json`|The scan result: the inventory, the execution counts, coverage, findings, artifact paths, and the `git` change set when you scoped the scan. It validates against [`docs/schema/afz-1/scan-result.json`](schema/afz-1/scan-result.json). The writer saves it last, so a reader never sees a scan directory whose artifacts are still being written.|
-|`report.md`|Markdown rendered from `scan.json` alone. One section per finding, with its severity, its minimized input, and the path of its reproducer.|
-|`inputs/`|The input that produced each finding, as `ValueTree` JSON, and the minimized input for a finding that this scan minimized.|
-|`repros/`|One standalone reproducer script per finding. The harness that found the fault renders it through the `reproducer` method, and the file extension is the plugin's own (`repro-<id>.mjs`, `repro-<id>.py`). A finding gets no script when its harness does not declare `reproducer`, when that call fails, or when the finding is a repeat marked `seenBefore`, because the engine does not minimize a repeat either. The input in `inputs/` is replayable in every case.|
-|`corpus/`|The inputs the scan kept, which `--resume` loads again.|
-|`coverage.json`|The map of coverage edge ids that the plugin published. Absent when the plugin declares no `coverage` capability, or when its `coverageMap` call fails or times out.|
-|`engine.log`|Per-worker and per-target accounting: restarts, deadline cuts, and disabled targets.|
-|`../seen.json`|One level up, beside the scan directories: the finding identities this project has already reported. Every scan reads it and adds to it.|
+| Path | Contents |
+| --- | --- |
+| `scan.json` | The scan result: inventory, execution counts, coverage, findings, artifact paths, and the `git` change set when the scan was scoped. It validates against [`schema/afz-1/scan-result.json`](schema/afz-1/scan-result.json). The engine writes it last. |
+| `report.md` | Markdown rendered from `scan.json` alone. One section per finding, with its severity, its minimized input, and the path of its reproducer. |
+| `inputs/` | The input that produced each finding, as `ValueTree` JSON, and the minimized input when the scan shrank it. |
+| `repros/` | One standalone reproducer script per finding, with the name `afz-f-<id>.<extension>`. The finding gets no script when the harness does not declare `reproducer`, when the call fails, or when the finding is a repeat marked `seenBefore`. |
+| `corpus/` | The inputs that the scan kept. `--resume` loads them again. |
+| `coverage.json` | The coverage map that the plugin published. Absent when the plugin declares no `coverage` capability, or when `coverageMap` fails or times out. |
+| `engine.log` | Per-worker and per-target accounting: restarts, deadline cuts, disabled targets, and plugin stderr. |
+| `../seen.json` | One level above the scan directories: the finding identities that this project has already reported. Every scan reads it and adds to it. |
 
-Two flags make a scan repeatable. One 32-bit seed drives every random choice, so the same `--seed` with the
-same tree and the same configuration replays the same sequence of calls. `--resume <scanDir>` adds the
-corpus of an earlier scan, so the new scan starts from the inputs that scan had kept.
+## Reproducible scans
 
-## The plugin command for each harness
+`--seed` is a 32-bit seed that drives every random choice. The same seed with the same tree and the
+same configuration replays the same sequence of calls. `--resume <scanDir>` adds the corpus of an
+earlier scan.
 
-Install each shipped harness once, from its own repository, and scan projects name the harness and
-nothing else:
+Suppression of known findings is separate. Every scan reads `seen.json`, whether or not it resumes.
+A finding that appears again is still reported, with `seenBefore: true`. The engine does not
+minimize a repeat and does not ask for a reproducer for it.
 
-```sh
-afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git
-afz install-harness https://github.com/DustinEwan/autofuzz-harness-python.git
-afz install-harness https://github.com/DustinEwan/autofuzz-harness-wasm.git
-afz install-harness https://github.com/DustinEwan/autofuzz-harness-starter.git
-afz install-harness https://github.com/DustinEwan/autofuzz-harness-openapi.git
-```
-
-```jsonc
-"harness": { "name": "js-ts" }
-```
-
-The install builds the plugin and validates it against the conformance suite before it records the
-argv, so a scan starts the plugin that passed, from the path the record holds. `afz harnesses` shows
-what each name resolves to.
-
-`command` remains the way to point a scan at a plugin nobody installed — a build you are debugging,
-for instance — and it wins over the record:
-
-```jsonc
-"harness": { "name": "js-ts", "command": ["node", "/home/me/harness-js/dist/server.js"] }
-```
-
-For wasm, the scan project names neither a command nor a module: the plugin takes the module as the
-first `.wasm` under the scan root, so the module is scan data, not a plugin property.
+Coverage ids include the file URL, so a corpus carried into a materialized git tree reports every
+edge as new. The run is valid, but its coverage ratio is not comparable to the earlier run.
+`engine.log` records that condition when `--resume` and `--git` are both present.
 
 ## Environment variables
 
-|Variable|Meaning|
-|---|---|
-|`AFZ_HOME`|Where `afz install-harness` records its registry: `$AFZ_HOME/autofuzz/harnesses`. Unset, the registry falls back to `$XDG_DATA_HOME/autofuzz/harnesses`, then to `~/.local/share/autofuzz/harnesses`. Point it at a scratch directory to try an install without touching the real one.|
+| Variable | Meaning |
+| --- | --- |
+| `AFZ_HOME` | Base directory for the harness registry. The registry is `$AFZ_HOME/harnesses`. Unset, the registry falls back to `$XDG_DATA_HOME/autofuzz/harnesses`, then to `~/.local/share/autofuzz/harnesses`. |
+| `AFZ_INSTALL_DIR` | Directory where `install.sh` puts `afz` and `afz-mcp`. Defaults to `~/.local/bin`. |
+| `AFZ_ROOT` | Set by the engine for a plugin: the directory that holds `autofuzz.json`. |
+| `AFZ_CONFIG` | Set by the engine for a plugin: the absolute path of `autofuzz.json`. |
 
 ## MCP server
 
-`afz-mcp` speaks the Model Context Protocol on stdio. An agent in Claude Code, Cursor, VS Code Copilot,
-Zed, or Codex CLI can then ask "does this change set fuzz clean?" without a shell.
+`afz-mcp` speaks the Model Context Protocol on stdio. An agent in Claude Code, Cursor, VS Code
+Copilot, Zed, or Codex CLI can probe a directory, start a scan, wait for it, and read the findings
+without a shell.
 
 ```json
 {"mcpServers": {"autofuzz": {"command": "afz-mcp"}}}
 ```
 
-You configure no directories. Every tool call gives the directory that it works on, so the agent reaches a
-different project by calling a tool again, which is how it already uses a shell.
+You configure no directories. Every tool call gives the directory that it acts on.
 
-|Tool|What it answers|
-|---|---|
-|`afz_probe`|Which harness plugin a directory uses, and which targets it would fuzz. Costs no invocations.|
-|`afz_scan`|Starts a coverage-guided scan and answers at once with a `jobId`. Pass `git` to scope the scan to a change set.|
-|`afz_scan_status`|The state of one scan and its live progress, answered immediately.|
-|`await_scan`|Waits until a scan ends. Run it as a background task, and the agent learns the result when the scan finishes. `timeoutSeconds` answers early with the state as it stands then.|
-|`afz_scan_cancel`|Ends a running scan early. The scan still writes its result, with `stoppedReason: interrupted`.|
-|`afz_findings`|The findings of a finished scan, newest scan first. Each finding names the input file and the reproducer file it came from. Pass `markdown: true` to get `report.md` in the same answer.|
+| Tool | What it answers |
+| --- | --- |
+| `afz_probe` | The harness plugin that a directory uses, and the targets that it would fuzz. |
+| `afz_scan` | Starts a scan and returns a `jobId` at once. Pass `git` to scope the scan. |
+| `afz_scan_status` | The state and live progress of one scan, answered immediately. |
+| `await_scan` | Waits until a scan ends. `timeoutSeconds` answers early with the state at that moment. |
+| `afz_scan_cancel` | Stops a running scan early. The scan still writes its result, with `stoppedReason: interrupted`. |
+| `afz_findings` | The findings of a finished scan, newest scan first. `markdown: true` adds `report.md`. |
 
-This server drives the engine in process, so it runs one scan at a time: it rejects a second `afz_scan`
-while one is running, instead of queueing it.
+The server drives the engine in process, so it runs one scan at a time. It rejects a second
+`afz_scan` while one is running instead of queueing it.
 
-Keep one caution in mind. The `harness.command` in a scan project is code that the engine runs, so point
-`afz-mcp` only at scan trees you already trust. `afz scan` runs that same command, so the trust question is
-the same one either way.
+The `harness.command` in a scan project is code that the engine runs. Point `afz-mcp` only at scan
+trees that you trust.

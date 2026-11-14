@@ -1,17 +1,16 @@
 # ufo: dogfood record
 
-`afz scan` run against the vendored `ufo` package (`vendor/ufo`, version and upstream recorded in
-`vendor/README.md`) on 2026-11-12, seed `0x5e3a91c4`, budget overridden to 20 000 invocations or
-300 s:
+We scanned the vendored `ufo` package (`vendor/ufo`, version 1.6.4) on 2026-11-12 with seed
+`0x5e3a91c4` and a budget of 20000 invocations or 300 seconds:
 
-```
+```sh
 cargo run -p afz-cli -- scan vendor/ufo --seed 0x5e3a91c4 --budget invocations=20000,wall=300s
 ```
 
-The scan finished in 51 s with `stoppedReason: budget`. The document is
+The scan finished in 51 seconds with `stoppedReason: budget`. The result is
 `vendor/ufo/.autofuzz/<scanId>/scan.json`, which is not committed.
 
-## Inventory
+## What the scan saw
 
 | | |
 | --- | --- |
@@ -19,28 +18,25 @@ The scan finished in 51 s with `stoppedReason: budget`. The document is
 | Fuzzable | 105 |
 | Skipped | 4 |
 | Materialization | 105 constructible, 2 fixture-required, 0 opaque |
-| Invocations | 16 739 of 20 000, 327 per second |
+| Invocations | 16739 of 20000 |
 | Corpus | 20 entries |
 | Coverage | 42 of 64 blocks, ratio 0.6562 |
-| Restarts | 0 plugin processes, 0 deadline exceeds |
+| Restarts | 0 |
 | Findings | 1 |
 
-Every skipped symbol is named in the document. `$URL.append` is skipped twice with
-`unconstructible-parameter`: it takes a `$URL` receiver the harness cannot build. `hasProtocol` is
-skipped twice with `unsupported-signature`.
+Every skipped symbol appears in the document. `$URL.append` is skipped twice with
+`unconstructible-parameter`, because it takes a `$URL` receiver that the harness cannot build.
+`hasProtocol` is skipped twice with `unsupported-signature`.
 
-Most of those 105 targets are the same function reached from two modules. `decode` is exported by
-`src/encoding.ts` and re-exported by `src/index.ts`, discovery gives each export site its own target id, and
-44 names therefore appear twice in the inventory and are fuzzed twice. That costs throughput and nothing in
-correctness, because a finding's identity is a target id plus the fault, and `afz probe-plugin` reports 105
-targets under 105 distinct ids.
+Most of the 105 targets are the same function reached from two modules. `decode` is exported by
+`src/encoding.ts` and re-exported by `src/index.ts`. Discovery gives each export site its own target
+id, so 44 names appear twice in the inventory and are fuzzed twice. That costs throughput and
+nothing in correctness, because a finding's identity is a target id plus the fault.
 
-`materializationCounts` sums to 107 against 105 fuzzable, which is not that duplication: the writer counts
-the skipped symbols that report a materialization as well (`scan.rs` adds `skipped[].materialization` after
-the fuzzable targets). The markdown renderer prints those rows without saying they include skipped symbols,
-so the table reads as though two targets had gone missing.
+The materialization counts include skipped symbols that report a materialization, so they need not
+sum to the fuzzable count. `report.md` prints them under a separate heading for that reason.
 
-## Finding
+## The finding
 
 | | |
 | --- | --- |
@@ -51,39 +47,20 @@ so the table reads as though two targets had gone missing.
 | Input | `[null]`, 40 bytes |
 | Reproducer | `repros/afz-f-4640773b.ts`, `toASCII(undefined)`, reproduces |
 
-**Verdict: a real crash, but not a `ufo` bug worth reporting upstream.** `src/punycode.ts` is a
+The crash is real, but it is not a `ufo` bug worth reporting upstream. `src/punycode.ts` is a
 minified copy of `punycode@2.1.1` with `@ts-nocheck` at the top, so its parameter has no declared
 type and discovery lowers it to a composite that admits `null`. The symbol is not re-exported from
-`src/index.ts`; the only caller is `src/encoding.ts:175`, which passes it a hostname it has already
-resolved to a string. Nothing in the package's public API can reach line 28 with `null`.
+`src/index.ts`. The only caller is `src/encoding.ts:175`, which passes it a hostname that it has
+already resolved to a string. Nothing in the package's public API can reach line 28 with `null`.
 
-What the finding does say about the tool: discovery treats every module-level export as a fuzzable
-target, so internal helpers are counted alongside the package's entry points. On this package 105
-symbols were fuzzable, and the one crash came from a helper the package does not export. A
-reachability filter - fuzz what the manifest exports, and report the rest as internals - is the
-change this record argues for.
+## What this record shows
 
-## What the run says about the engine
+The finding says more about the tool than about the package. Discovery treats every module-level
+export as a fuzzable target, so internal helpers are counted alongside the package's entry points. On
+this package, 105 symbols were fuzzable, and the one crash came from a helper that the package does
+not export. A reachability filter, which fuzzes what the manifest exports and reports the rest as
+internals, would remove that noise. The engine does not have one today.
 
-Throughput is not the problem here. 192 batches over 51 s: run 39.9 s, setup 9.5 s, plan 0.86 s,
-account 0.55 s, coverage map 38 ms. Ten invocations answered `failed` and retired their plugin's
-invoke worker thread, and no plugin process restarted, which is the contrast with
-[`examples/yaml`](../examples/yaml.md), where a plugin process died about once a batch. The
-unhandled-rejection path that kills the process there is not reachable from `ufo`'s synchronous API.
-
-Coverage plateaued before the first sample: 42 of 64 blocks at 5 000, 10 000, 15 000 and 20 000
-planned invocations. Guidance earns nothing on this package, and the honest reading is that the
-reachable set is small and every branch that generated values can reach is reached within the first
-thousand invocations.
-
-Two engine defects came out of this run, and both are fixed in the change that adds this record:
-
-- The minimizer accepted a candidate larger than its base. The finding's input is `[null]` at 40
-  bytes; dropping the argument yields `[undefined]`, which serializes to 45 bytes, reproduced the same
-  fault at the same line, and was accepted. The scan then reported no `minimizedInput` because the bytes
-  had not shrunk, while the reproducer was written from the accepted 45-byte input. A round now discards
-  any candidate whose wire form is larger than the base, and a test pins that a shrink cannot return
-  more bytes than it was given.
-- Progress samples were keyed on the invocation id the planner assigns, while `execution.invocations`
-  counts invocations that ran, so this document carries a sample at 20 000 against 16 739 run. A sample
-  is now taken every 5 000 invocations that ran and reports that count.
+Coverage plateaued before the first sample: 42 of 64 blocks at 5000, 10000, 15000, and 20000 planned
+invocations. Guidance earned nothing on this package. The reachable set is small, and every branch
+that generated values can reach is reached within the first thousand invocations.

@@ -1,9 +1,9 @@
 # Vendored packages
 
-Sources here are copied from upstream repositories so `afz scan` has something real to
-discovery-test against. Only what the scan reads is kept: `src/`, the package manifest, and
-the upstream licence. Tests, build configuration, and `node_modules` are not copied, and no
-package here is imported by the engine or the plugin.
+The packages here are copies of upstream repositories. They give `afz scan` a real target for
+discovery and execution. Only what the scan reads is kept: `src/`, the package manifest, and the
+upstream licence. Tests, build configuration, and `node_modules` are not copied. No package here is
+imported by the engine or by a plugin.
 
 | Package | Version | Upstream commit | Upstream | Licence |
 | --- | --- | --- | --- | --- |
@@ -12,6 +12,12 @@ package here is imported by the engine or the plugin.
 | `destr` | 2.0.5 | `541b6f9aeada9fc30de9c5a7e086dbfc1c6fcdc7` | https://github.com/unjs/destr | MIT |
 | `mitt` | 3.0.1 | `6b41670516ed8e8b738612f60491995470aa63b3` | https://github.com/developit/mitt | MIT |
 
-Each package declares no runtime dependencies, which is what lets the scan materialize its
-signatures without a workspace to install. `autofuzz.json` in each directory is the scan
-project; the scan itself is recorded in `docs/dogfood/`.
+Each package declares no runtime dependencies, which lets a scan materialize its signatures without
+a workspace to install. `autofuzz.json` in each directory is the scan project. The scan of `ufo` is
+recorded in [`docs/dogfood/ufo.md`](../docs/dogfood/ufo.md).
+
+Run it from the repository root:
+
+```sh
+cargo run -p afz-cli -- scan vendor/ufo --seed 0x5e3a91c4 --budget invocations=20000,wall=300s
+```

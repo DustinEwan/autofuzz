@@ -1,172 +1,241 @@
 # autofuzz
 
-autofuzz is a coverage-guided fuzzer. A plugin tells it what your target exposes and how to call it, so
-autofuzz can fuzz anything a plugin can drive. When no plugin covers the kind of target you want, you
-write one, and the fuzzer itself does not change.
+autofuzz is a universal fuzzer. It discovers the functions, methods, and routes that your code or
+service exposes, then calls them with generated inputs to find bugs. It uses coverage to decide what
+to try next, and when a call fails, it shrinks the input and writes a report.
 
-- **You write no fuzz target.** Unlike libFuzzer, you do not wrap your code in a target function.
-  The plugin reports the exported callables, and autofuzz builds the arguments for each call from the
-  types that the callable declares.
-- **Not tied to a target type.** The target can be a library, a REST API, a GUI, or an ABI. The engine
-  launches the plugin named by the scan project's `harness` block and reads nothing about what that
-  plugin drives: each harness lives in its own repository and decides for itself whether it reads a
-  package, a WebAssembly module, or a live service.
-- **Coverage-guided, so it finds the buried bugs.** A scan keeps an input only when it reaches code that
-  no earlier input reached, so nested conditions get exercised instead of skipped.
-- **Findings arrive small.** A broken call is shrunk to the smallest input that still breaks it, with a
-  script you can run by hand to see the fault again.
-- **One document per scan.** `scan.json` is the whole result, so CI, your triage queue, and your
-  pull-request bot all read the same numbers.
+Each harness is a plugin that reads one kind of API description. The TypeScript harness reads a
+package's declarations; the Python harness reads source files; the OpenAPI harness reads an API
+document. The harness tells the engine what it can call and what parameters each call takes. The
+engine never needs to know which kind it is.
 
-## Install and run a first scan
+By separating the fuzzer into a core engine and a plugin system, almost anything can be fuzzed. The
+same engine handles ordinary code, and it makes GUI fuzzing, agent and LLM workflows, and virtual
+machines possible, where conventional fuzzers struggle.
 
-You need Linux or macOS. The installer below puts a Rust toolchain in place when you have none. Beyond
-that you need the host runtime of the harness you plan to scan, because no harness comes with the
-engine: each one lives in its own repository, and you install it with `afz install-harness`. Five exist
-today: `js-ts` for TypeScript and JavaScript needs Node 24 or newer, `python` for Python needs Python
-3.12 or newer, `wasm` scans a WebAssembly module, `openapi` fuzzes an OpenAPI 3 service over HTTP, and
-`starter` is the scaffold you edit into your own plugin. [`docs/harnesses.md`](docs/harnesses.md) gives
-what each one can do and what it still cannot.
+## Contents
 
-Install the engine, which is the `afz` command:
+- [Get started](#get-started)
+- [Why use it](#why-use-it)
+- [How it works](#how-it-works)
+- [Recommended harnesses](#recommended-harnesses)
+- [What a scan writes](#what-a-scan-writes)
+- [MCP server](#mcp-server)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [Licence](#licence)
+
+## Get started
+
+The commands below use `vendor/ufo`, a copy of the `ufo` package that ships with this repository. If
+you have no clone, run `afz init project` in your own project instead of step 3, and replace
+`vendor/ufo` with that directory in the commands that follow.
+
+### 1. Install the engine
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/DustinEwan/autofuzz/main/install.sh | sh
 ```
 
-The script installs Rust when you have none, builds a release binary, and puts `afz` and `afz-mcp` in
-`~/.local/bin`. It never uses `sudo`; pass `AFZ_INSTALL_DIR` to choose another directory, and it prints
-the `PATH` line to add when that directory is not already on your `PATH`. To build from a clone instead,
-run `cargo build --release` and use `target/release/afz`.
+The script supports Linux and macOS. It installs Rust if `cargo` is missing, builds `afz` and
+`afz-mcp`, and puts them in `~/.local/bin`. It never uses `sudo`. Set `AFZ_INSTALL_DIR` if you want
+another directory.
 
-Then install the plugin for the harness you plan to scan. The engine never imports your code: it starts
-a plugin process and calls your target through that plugin, so the plugin has to be installed before a
-scan runs.
+To build from a clone instead:
+
+```sh
+cargo build --release
+target/release/afz --help
+```
+
+### 2. Install a harness
+
+The engine ships no harness. Install the one that matches your code or service:
 
 ```sh
 afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git
 ```
 
-`install-harness` clones the harness repository, builds it, and drives the plugin through the conformance
-suite, the checks every plugin must pass, before it records anything. `afz harnesses` lists what the
-install recorded.
+The command clones the harness, builds it, and runs its conformance tests. It records the plugin only
+if the tests pass. The `js-ts` harness needs Node 24 or newer. `afz harnesses` lists what is
+installed.
 
-A scan project is a directory that holds an `autofuzz.json`, and that file names the harness the scan
-uses. `vendor/ufo` in this repository is one, which is why the commands below work against it; when you
-installed with the one-liner and have no clone, point `--path` at your own project instead. Your own
-project needs the file first, because `probe-plugin` with no `autofuzz.json` above the directory and no
-`--command` answers from the fake plugin that the protocol tests drive, and prints that fixture's targets
-instead of yours. The minimum is the `harness` block under `Harness plugins` below, and
-[`docs/cli.md`](docs/cli.md) gives every other key.
+### 3. Point it at a project
 
-Start with a look rather than a scan. `probe-plugin` starts the plugin that a scan project names,
-completes the handshake, and prints what the plugin discovered:
+A scan project is a directory with an `autofuzz.json` at its root. The file declares the harness, the
+files or API to scan, and the budget. This repository has one at `vendor/ufo/autofuzz.json`.
+
+If you have your own project, run:
+
+```sh
+afz init project
+```
+
+The command asks which harness drives the scan and how much budget to give it, then writes the file.
+
+### 4. See what the harness can reach
 
 ```sh
 afz probe-plugin --path vendor/ufo
 ```
 
 ```text
-plugin      js-ts 0.1.0 (node /home/dusti/.local/share/autofuzz/harnesses/js-ts/checkout/dist/server.js)
-protocol    afz/1
-class       design-time
-languages   typescript, javascript
-capability  coverage, stateful, concurrent, reproducer
-discovery   static
+plugin        js-ts 0.1.0
+command       node /home/dusti/.local/share/autofuzz/harnesses/js-ts/checkout/dist/server.js
+protocol      afz/1
+target class  design-time
+languages     typescript, javascript
+capabilities  coverage, stateful, concurrent, reproducer
+discovery     static
 
-targets     105
+targets       105
   afz:t:0dd364360549 decode                   (text: composite) constructible
   afz:t:3b95560b04c3 decodePath               (text: scalar) constructible
+...
 ```
 
-The lines above `targets` are what the plugin said about itself in the handshake: its name and version,
-the protocol it speaks, the kind of target it handles, the languages it reads, what it can do, and how
-it finds callables. The `targets` block is what it found in your package.
+The `targets` block lists what the plugin found: functions, methods, and routes. Each line gives
+the parameter types and says whether the engine can build values for them. A target that the engine cannot build appears under `skipped`
+with the reason. `probe-plugin` runs no invocations, so it costs no budget.
 
-Every target line prints the parameter types and marks whether autofuzz can build arguments for them.
-A target that it cannot build is reported as skipped with the reason, never dropped in silence.
-
-Then scan the same package:
+### 5. Run a scan
 
 ```sh
 afz scan vendor/ufo --budget invocations=50000 --seed 0x5e3a91c4
 ```
 
-`--budget` sets where the scan stops, and `--seed` fixes every random choice the scan makes, so the
-same seed on the same tree replays the same calls.
+`--budget` sets the stopping point. `--seed` fixes every random choice, so the same seed on the same
+tree replays the same calls. The scan prints progress and a summary, then writes its result under
+`vendor/ufo/.autofuzz/<scanId>/`.
 
-`vendor/ufo` is a vendored copy of the real `ufo` URL package, and
-[`docs/dogfood/ufo.md`](docs/dogfood/ufo.md) is the record of a scan of it: one crash, in a punycode
-helper the package does not even export, with a human verdict on that finding.
+### 6. Read the result
 
-## Scan output
+Open `report.md` first. It has one section per finding: the function or route that broke, the fault, the
+smallest input that still reproduces it, and the path of a script that replays the invocation.
 
-A scan writes everything under the scanned project, in one directory per scan at
-`<output.dir>/<scanId>/`, where `<scanId>` is that scan's id and `output.dir` defaults to `.autofuzz/`.
-Open `report.md`. The machine-readable result beside it is `scan.json`, which validates
-against [`docs/schema/afz-1/scan-result.json`](docs/schema/afz-1/scan-result.json), and it is written last so that
-a reader never sees a scan directory whose artifacts are still being written.
-[`docs/cli.md`](docs/cli.md) lists every file a scan leaves behind and what it is for.
+Open `scan.json` when you want the same result in a machine-readable form. It holds the inventory,
+the execution counts, the coverage, the findings, and the paths of the artifacts.
 
-## Harness plugins
+The example uses a TypeScript package. The same steps work for an HTTP service: install the `openapi`
+harness, and configure the scan project with the OpenAPI document and the service address.
 
-A harness plugin is a program that the engine starts, one process per worker. The engine talks to it over
-the plugin's stdin and stdout using JSON-RPC. The engine never parses your code and never imports it, so
-a target that hangs or corrupts memory kills its own plugin process instead of your scan.
+## Why use it
 
-One consequence reaches your first scan project: **the engine never guesses how to start a plugin**.
-Install the harness once with `afz install-harness`, and a scan project names the harness and nothing
-else:
+Many fuzzers for code ask you to write a target function. You choose which function to call, how to
+build its arguments, and what counts as a failure. That work is repetitive, and it changes with every language.
 
-```jsonc
-{
-  "harness": {
-    "name": "js-ts"   // resolved from the install record
-  }
-}
+autofuzz moves that work into a harness plugin. The plugin reads the API description and reports the
+targets and their parameter types. The engine builds the parameter values, runs the invocations, and
+tracks coverage. The plugin also determines what a failure means for the code or service under test. The engine never
+needs to know whether a JavaScript exception, an HTTP 500, or a Rust `Err` is a crash or a refusal.
+
+The feedback loop is the other half. An input that reached new behavior is a better starting point
+for the next batch than a random value, so the scan goes deeper than a random search. A failing input
+is shrunk to the smallest one that reproduces the fault, with a script you can run.
+
+So you can fuzz a library or an HTTP service without a hand-written target function. If your language
+or service has no harness, you can write one without changing the engine.
+
+## How it works
+
+```mermaid
+flowchart LR
+  project[scan project] --> harness[harness plugin]
+  harness -->|targets and types| engine[engine]
+  engine -->|generated values| harness
+  harness -->|outcome and coverage| engine
+  engine --> result[scan result]
 ```
 
-The `command` key in that same block names a plugin nobody installed - a build you are debugging, say -
-and it wins over the record. An uninstalled name with no `command` is an error, never a guess.
+1. **Discovery.** The plugin lists each function, method, or route that it can reach, with the
+   parameter types and, for code, the source locations where it raises. It also lists the ones that
+   it cannot reach, with a reason.
+2. **Generation.** The engine builds a value tree for each parameter from the type that the plugin
+   reported. A number with bounds, an enum, a recursive object, and an array with a length limit all
+   have a shape that the generator understands.
+3. **Execution.** The engine sends one invocation to a plugin process and receives one outcome: `ok`,
+   `rejected`, or `failed`. The plugin determines which one applies.
+4. **Feedback.** When the plugin reports coverage, the engine keeps an input that reaches an edge no
+   earlier input reached. It plans later inputs from the corpus that this rule builds.
+5. **Minimization and output.** A failing input is shrunk by repeated calls until no smaller input
+   reproduces the same fault. The engine writes the scan result, the minimized input, and a
+   reproducer script when the harness can render one.
 
-`afz scan` reads `autofuzz.json` from the directory you point at, so a scan of a configured project
-needs no arguments at all, and a directory with no `autofuzz.json` above it stops with a message that
-tells you to create one. Run `afz init project` to create one: it asks which harness drives the scan
-and how much budget to give it, then writes the file. The other file `afz init` writes is
-`afz-harness.json` - `afz init harness` starts a harness repository from the official starter scaffold
-or from blank, with the protocol schemas it validates against. [`docs/cli.md`](docs/cli.md) gives
-every flag and every configuration key, with the defaults.
+## Recommended harnesses
+
+These are the harnesses we recommend. The table lists the language or target, the harness repository,
+and what the harness reads.
+
+| Language or target | Harness | What it reads |
+| --- | --- | --- |
+| TypeScript | [`autofuzz-harness-js-ts`](https://github.com/DustinEwan/autofuzz-harness-js-ts) | package declarations |
+| JavaScript | [`autofuzz-harness-js-ts`](https://github.com/DustinEwan/autofuzz-harness-js-ts) | package declarations |
+| Python | [`autofuzz-harness-python`](https://github.com/DustinEwan/autofuzz-harness-python) | source files |
+| WebAssembly | [`autofuzz-harness-wasm`](https://github.com/DustinEwan/autofuzz-harness-wasm) | module exports |
+| OpenAPI 3 | [`autofuzz-harness-openapi`](https://github.com/DustinEwan/autofuzz-harness-openapi) | an API document |
+| Starter | [`autofuzz-harness-starter`](https://github.com/DustinEwan/autofuzz-harness-starter) | the scaffold you edit |
+
+You can use another harness. Point a scan project at its plugin with `harness.command`, or install it
+with `afz install-harness` so a scan project can use the name.
+
+## What a scan writes
+
+A scan writes one directory per run at `<output.dir>/<scanId>/`. `output.dir` defaults to
+`.autofuzz` under the scan project root.
+
+| Path | Contents |
+| --- | --- |
+| `report.md` | The human-readable report. One section per finding, with its severity, its minimized input, and the path of its reproducer. |
+| `scan.json` | The machine-readable result. It validates against [`docs/schema/afz-1/scan-result.json`](docs/schema/afz-1/scan-result.json). The engine writes it last. |
+| `inputs/` | The input that produced each finding, and the minimized input when the scan shrank it. |
+| `repros/` | One standalone script per finding, with the name `afz-f-<id>.<extension>`. |
+| `corpus/` | The inputs that the scan kept. `--resume` loads them again. |
+| `coverage.json` | The coverage map, when the plugin reports one. |
+| `engine.log` | Per-worker and per-target accounting. |
+| `../seen.json` | The finding identities that this project has already reported. |
+
+[`docs/cli.md`](docs/cli.md) describes every file and every configuration key.
 
 ## MCP server
 
-`afz-mcp` speaks the Model Context Protocol on stdio, so an agent in Claude Code, Cursor, VS Code
-Copilot, Zed, or Codex CLI can ask "does this change set fuzz clean?" without a shell. Configure it
-with `{"mcpServers": {"autofuzz": {"command": "afz-mcp"}}}` and read
-[`docs/cli.md`](docs/cli.md) for the six tools that it offers.
+`afz-mcp` speaks the Model Context Protocol on stdio. An agent in Claude Code, Cursor, VS Code
+Copilot, Zed, or Codex CLI can probe a directory, run a scan, and read findings without a shell.
+
+```json
+{"mcpServers": {"autofuzz": {"command": "afz-mcp"}}}
+```
+
+The tools are listed in [`docs/cli.md`](docs/cli.md#mcp-server).
+
+## Troubleshooting
+
+| Symptom | What it means | What to do |
+| --- | --- | --- |
+| `afz scan` cannot find `autofuzz.json` | There is no scan project above the path. | Run `afz init project`, or pass `--config <path>`. |
+| `probe-plugin` prints the fake plugin's targets | There is no scan project and you did not pass `--command`. | Create the project, or point `--path` at one. |
+| A function or route appears under `skipped` | The engine cannot build its arguments. | Read the blocking type and field. Write a constructor for that type, or scan a target the harness can build. |
+| The harness reports the service is not ready | The service is down or unreachable. | Start it, or fix the address in `harness.options`. |
+| The scan finds nothing | The budget is too small, coverage is absent, or targets were skipped. | Increase `--budget invocations` and check the skipped list. |
+| You are on Windows | The engine and installer target Linux and macOS. | Use WSL or a Linux machine. |
 
 ## Documentation
 
-- [`docs/cli.md`](docs/cli.md) - every command and flag, the configuration file, scanning one git change
-  set, the output files, and the MCP tools.
-- [`docs/architecture.md`](docs/architecture.md) - how a scan works, end to end. Start here if you are
-  going to change the engine.
-- [`docs/harness-authoring.md`](docs/harness-authoring.md) - the contract that a plugin must satisfy, and
-  what each answer costs.
-- [`docs/harnesses.md`](docs/harnesses.md) - how far you can trust each harness you can install, and
-  what each one still cannot do.
-- [`docs/domains.md`](docs/domains.md) - what the engine fits beyond code-level fuzzing: the
-  mechanisms that generalize, the candidate domains, and what does not exist yet.
-- [`docs/decisions/`](docs/decisions/) - the decisions behind the design, each with what it rules out.
-- [`docs/dogfood/ufo.md`](docs/dogfood/ufo.md) and [`docs/examples/yaml.md`](docs/examples/yaml.md) -
-  scans of real packages, with a human verdict on each finding.
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) - the repository layout, and the commands to run before you
-  push.
+- [`docs/cli.md`](docs/cli.md): commands, flags, the scan project file, git scoping, output files,
+  and the MCP tools.
+- [`docs/architecture.md`](docs/architecture.md): how a scan works, and what the engine does not do.
+- [`docs/harness-authoring.md`](docs/harness-authoring.md): how to write a harness plugin.
+- [`docs/harnesses.md`](docs/harnesses.md): the capabilities and gaps of each recommended harness.
+- [`docs/domains.md`](docs/domains.md): design notes on targets beyond source code. This is not a
+  roadmap.
+- [`docs/decisions/`](docs/decisions/): dated design records.
+- [`docs/dogfood/ufo.md`](docs/dogfood/ufo.md) and [`docs/examples/yaml.md`](docs/examples/yaml.md):
+  scans of real packages, with a verdict on each finding.
 
-## Third-party sources
+## Contributing
 
-Packages under `vendor/` and `examples/` are copies of upstream projects. They are here so that a scan
-has a real API to run against. Each one keeps its upstream licence, which you find in its own directory.
-Nothing under those paths is compiled into the engine or into a plugin.
+The repository layout, the commands to run before you push, and the generated schema rule are in
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Licence
 
