@@ -530,6 +530,26 @@ fn markdown_prints_one_section_per_finding() {
 }
 
 #[test]
+fn markdown_notes_two_findings_from_the_same_call() {
+    let mut document = document();
+    // One call classified by two oracles: the same target, first seen on the same invocation,
+    // two fault classes. The report must say the snippets describe one event.
+    document.findings[1].target_id = document.findings[0].target_id.clone();
+    document.findings[1].first_seen_invocation = document.findings[0].first_seen_invocation;
+    let text = render_markdown::render(&document);
+    assert!(
+        text.contains("- The same call also produced: `afz:f:11b0aa99`"),
+        "the failed finding names its sibling:\n{text}"
+    );
+    assert!(
+        text.contains("- The same call also produced: `afz:f:7a41c2e0`"),
+        "the deadline finding names its sibling back:\n{text}"
+    );
+    let notes = text.lines().filter(|line| line.starts_with("- The same call also produced")).count();
+    assert_eq!(notes, 2, "one note per sibling, none elsewhere:\n{text}");
+}
+
+#[test]
 fn markdown_names_the_change_set_a_scan_was_scoped_to() {
     let mut document = document();
     document.git = Some(scoped());

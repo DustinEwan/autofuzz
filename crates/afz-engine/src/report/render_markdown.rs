@@ -5,6 +5,7 @@
 //! the coverage map, or the engine log, and it does not ask for them: a report that needed the
 //! corpus could not be handed to someone who only has the report directory.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
@@ -170,6 +171,13 @@ pub fn render(document: &ScanDocument) -> String {
         out.push('\n');
     }
 
+    // Two findings that share a target and the invocation that first saw them are one call
+    // classified by two oracles; naming the siblings keeps identical snippets readable as one
+    // event that failed in more than one way.
+    let mut sibling_groups: BTreeMap<(&str, u64), Vec<&scanresult::FindingRecord>> = BTreeMap::new();
+    for finding in &document.findings {
+        sibling_groups.entry((finding.target_id.as_str(), finding.first_seen_invocation)).or_default().push(finding);
+    }
     out.push_str(&format!("## Findings ({})\n\n", document.findings.len()));
     if document.findings.is_empty() {
         out.push_str("No finding met the configured oracles.\n");
@@ -187,6 +195,16 @@ pub fn render(document: &ScanDocument) -> String {
             finding.target_id, finding.fault.message, finding.via
         ));
         out.push_str(&format!("- Fault class: `{}`\n", finding.fault.class));
+        if let Some(group) = sibling_groups.get(&(finding.target_id.as_str(), finding.first_seen_invocation)) {
+            if group.len() > 1 {
+                let others: Vec<String> = group
+                    .iter()
+                    .filter(|other| other.finding_id != finding.finding_id)
+                    .map(|other| format!("`{}` (class `{}`)", other.finding_id, other.fault.class))
+                    .collect();
+                out.push_str(&format!("- The same call also produced: {}\n", others.join(", ")));
+            }
+        }
         for frame in &finding.fault.frames {
             let column = frame.column.map(|c| format!(":{c}")).unwrap_or_default();
             let function = frame
