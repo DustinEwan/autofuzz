@@ -1101,7 +1101,10 @@ impl Scanner {
             }
             None => CoverageDigest::new(),
         };
-        if completed.outcome.via() == Some(oracles::DEADLINE_VIA) {
+        if matches!(
+            completed.outcome.via(),
+            Some(oracles::DEADLINE_VIA) | Some(oracles::HARNESS_DEADLINE_VIA)
+        ) {
             self.deadline_exceeded += 1;
         }
         if completed.outcome.duration_ms() >= self.deadline.as_millis() as f64 {

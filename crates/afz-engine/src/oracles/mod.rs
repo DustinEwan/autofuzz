@@ -15,7 +15,7 @@
 //! | Oracle | Fires on |
 //! | --- | --- |
 //! | `failed` | a `failed` outcome whose `via` names the target itself breaking, such as `engine-error-outside-declared-channel` or `unhandled-rejection`, and no channel another oracle owns |
-//! | `deadline` | `via: "deadline"`, or an outcome slower than `oracles.deadline.ms` |
+//! | `deadline` | `via: "deadline"`, `via: "deadline-cut"` (the harness cut its own call at the deadline the engine handed it), or an outcome slower than `oracles.deadline.ms` |
 //! | `memoryGrowth` | an `ok` outcome whose reported `memoryBytes` passes `oracles.memoryGrowth.mb` |
 //! | `processExit` | a `failed` outcome whose `via` is in [`ENVIRONMENT_VIA`]: the environment died, so the target never got to answer |
 //! | `rejected` | a `rejected` outcome, off by default |
@@ -39,6 +39,12 @@ use crate::config::{OracleConfig, OraclesConfig};
 /// oracle owns it, so `failed` says nothing about it: one outcome produces one finding, and a
 /// hung target is reported as a hang rather than as a crash it did not have.
 pub const DEADLINE_VIA: &str = "deadline";
+
+/// The `via` a harness raises when it cuts its own call at the deadline the engine handed it
+/// (`docs/harness-authoring.md`). The `deadline` oracle owns it exactly as it owns the engine's
+/// substitute above: one deadline event produces one finding, whoever killed the call. Before
+/// this constant existed the two channels produced two findings for one event.
+pub const HARNESS_DEADLINE_VIA: &str = "deadline-cut";
 
 /// The channels that mean "the environment around the target stopped working". The target did
 /// not break; the process hosting it did, so `processExit` owns them and `failed` ignores them.
@@ -265,6 +271,7 @@ impl Oracle {
             Oracle::Failed => {
                 if classified.kind != Kind::Failed
                     || via == DEADLINE_VIA
+                    || via == HARNESS_DEADLINE_VIA
                     || ENVIRONMENT_VIA.contains(&via.as_str())
                     || HARNESS_VIA.contains(&via.as_str())
                 {
@@ -277,7 +284,7 @@ impl Oracle {
                 )
             }
             Oracle::Deadline => {
-                if via == DEADLINE_VIA {
+                if via == DEADLINE_VIA || via == HARNESS_DEADLINE_VIA {
                     let detail = classified
                         .detail
                         .clone()

@@ -7,7 +7,9 @@
 use std::time::Duration;
 
 use afz_engine::config::{OracleConfig, OracleOverride, OraclesConfig, Severity};
-use afz_engine::oracles::{Finding, Oracle, Oracles, ENVIRONMENT_VIA, HARNESS_VIA, OVERRIDE_CLASS};
+use afz_engine::oracles::{
+    Finding, Oracle, Oracles, ENVIRONMENT_VIA, HARNESS_DEADLINE_VIA, HARNESS_VIA, OVERRIDE_CLASS,
+};
 use afz_protocol::{FailedOutcome, FaultSignature, OkOutcome, Outcome, RejectedOutcome};
 
 const TARGET: &str = "afz:t:guard";
@@ -130,6 +132,27 @@ fn a_missed_deadline_is_reported_once_and_not_as_a_failure() {
         "deadline",
         "Deadline",
         "plugin did not answer before the deadline",
+    );
+    let findings = evaluate(&outcome, &OraclesConfig::default());
+    assert_eq!(oracles_of(&findings), vec!["deadline"]);
+    assert_eq!(findings[0].severity, Severity::Medium);
+    assert!(
+        findings[0].summary.contains("deadline"),
+        "{}",
+        findings[0].summary
+    );
+}
+
+#[test]
+fn a_harness_self_cut_is_reported_once_and_not_as_a_failure() {
+    // The harness cut its own call at the deadline the engine handed it
+    // (docs/harness-authoring.md section 7). The finding must be the same single medium
+    // `deadline` finding an engine kill produces: whoever cut the call, one deadline event
+    // files one finding. Before `HARNESS_DEADLINE_VIA` existed this outcome filed two.
+    let outcome = failed(
+        HARNESS_DEADLINE_VIA,
+        "DeadlineCut",
+        "the call was cut at its 1500 ms deadline",
     );
     let findings = evaluate(&outcome, &OraclesConfig::default());
     assert_eq!(oracles_of(&findings), vec!["deadline"]);
