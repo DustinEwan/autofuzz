@@ -172,6 +172,7 @@ and what the harness reads.
 | TypeScript | [`autofuzz-harness-js-ts`](https://github.com/DustinEwan/autofuzz-harness-js-ts) | package declarations |
 | JavaScript | [`autofuzz-harness-js-ts`](https://github.com/DustinEwan/autofuzz-harness-js-ts) | package declarations |
 | Python | [`autofuzz-harness-python`](https://github.com/DustinEwan/autofuzz-harness-python) | source files |
+| Rust | [`autofuzz-harness-rust`](https://github.com/DustinEwan/autofuzz-harness-rust) | crate sources |
 | WebAssembly | [`autofuzz-harness-wasm`](https://github.com/DustinEwan/autofuzz-harness-wasm) | module exports |
 | OpenAPI 3 | [`autofuzz-harness-openapi`](https://github.com/DustinEwan/autofuzz-harness-openapi) | an API document |
 | Starter | [`autofuzz-harness-starter`](https://github.com/DustinEwan/autofuzz-harness-starter) | the scaffold you edit |
