@@ -27,8 +27,10 @@ use afz_engine::rng::Rng;
 use afz_engine::rpc::client::{Call, Launch, PluginClient};
 use afz_engine::supervise::DISCOVERY_TIMEOUT;
 use afz_protocol::*;
+use schemars::JsonSchema;
 use serde::Serialize;
 
+pub mod harness;
 pub mod lifecycle;
 pub mod template;
 
@@ -85,7 +87,7 @@ pub const RULES: &[&str] = &[
 ];
 
 /// One rule the plugin broke.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Violation {
     pub rule: &'static str,
     pub detail: String,
@@ -93,14 +95,14 @@ pub struct Violation {
 
 /// One observation the suite cannot fail a plugin for, because it is also true of a correct
 /// plugin on arbitrary third-party code.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Note {
     pub rule: &'static str,
     pub detail: String,
 }
 
 /// What one run of the suite found.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Report {
     /// `<handshake.name> <handshake.version>`, exactly as the plugin reported it.
     pub plugin: String,

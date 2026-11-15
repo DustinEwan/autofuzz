@@ -8,11 +8,13 @@ version = "0.1.0"
 dependencies = [
  "afz-conformance",
  "afz-engine",
+ "afz-mcp",
  "afz-protocol",
  "afz-xtask",
  "clap",
  "ctrlc",
  "dialoguer",
+ "schemars",
  "serde",
  "serde_json",
  "thiserror",
@@ -25,6 +27,7 @@ dependencies = [
  "afz-engine",
  "afz-protocol",
  "jsonschema",
+ "schemars",
  "serde",
  "serde_json",
 ]
@@ -50,6 +53,7 @@ dependencies = [
 name = "afz-mcp"
 version = "0.1.0"
 dependencies = [
+ "afz-conformance",
  "afz-engine",
  "afz-protocol",
  "clap",

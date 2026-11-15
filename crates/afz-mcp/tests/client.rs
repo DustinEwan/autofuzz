@@ -12,18 +12,28 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+/// Start the built server with `root` as its working directory and extra environment variables.
+/// `AFZ_HOME` is how a test points the harness registry at a scratch directory, which is what makes
+/// `afz_harnesses` testable without a git checkout or an install.
+pub fn spawn_with_env(root: &Path, env: &[(&str, &str)]) -> Child {
+    let exe = env!("CARGO_BIN_EXE_afz-mcp");
+    let mut command = Command::new(exe);
+    command
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    command.spawn().expect("the server starts")
+}
+
 /// Start the built server with `root` as its working directory, which is what a terminal
 /// harness does. The server takes no configuration: every tool call names the directory it
 /// acts on, so reaching a different tree means calling the tool again, not restarting it.
 pub fn spawn(root: &Path) -> Child {
-    let exe = env!("CARGO_BIN_EXE_afz-mcp");
-    Command::new(exe)
-        .current_dir(root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("the server starts")
+    spawn_with_env(root, &[])
 }
 
 /// Send one request and read lines until the response carrying `id` arrives. Notifications

@@ -1,4 +1,4 @@
-//! The six tools a coding harness calls, and the waiting loop `await_scan` runs.
+//! The eight tools a coding harness calls, and the waiting loop `await_scan` runs.
 //!
 //! Every tool takes `Parameters<T>` and answers with a [`CallToolResult`]. Success is
 //! `structured` content built from a serialized result; a failure the caller can act on (bad
@@ -8,6 +8,7 @@
 //! poisoned runtime: a failed `spawn_blocking` join.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use rmcp::handler::server::wrapper::Parameters;
@@ -17,10 +18,14 @@ use rmcp::{tool, tool_router, ErrorData, RoleServer};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use afz_conformance::harness;
 use afz_engine::config::Severity;
-use afz_engine::report::scanresult::{self, FindingRecord, GitScope, SCAN_FILE};
+use afz_engine::harnesses;
+use afz_engine::report::scanresult::{
+    self, FindingRecord, GitScope, ProgressSample, TargetStat, SCAN_FILE,
+};
 use afz_engine::rpc::client::PluginClient;
-use afz_engine::scan::{self, Options, Progress};
+use afz_engine::scan::{self, Options, Progress, Seed, MAX_SEEDS};
 use afz_protocol::{
     is_deprecated, CoverageMap, DiscoverReq, Handshake, SkippedTarget, TargetDescriptor,
     SUPPORTED_VERSIONS,
@@ -189,6 +194,10 @@ pub struct ScanParams {
     pub workers: Option<u32>,
     /// A previous scan directory: its corpus is replayed and its findings are marked seen.
     pub resume: Option<String>,
+    /// Inputs to run before the guided loop, each `{"targetId":…,"values":[…]}`. The engine runs
+    /// each one and measures the coverage it earns, so a seed cannot claim an edge it never
+    /// reached. Each seed costs an invocation; at most 256.
+    pub seeds: Option<Vec<Seed>>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema, Default)]
@@ -232,6 +241,19 @@ pub struct FindingsParams {
     pub limit: Option<u32>,
     /// Include the scan's report.md text as `markdown`.
     pub markdown: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema, Default)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ValidateParams {
+    /// An installed harness name, or a directory holding afz-harness.json. Defaults to the
+    /// directory this server was started in.
+    pub harness: Option<String>,
+    /// Discovered targets that `prepare` and `invoke` run on. Default 8.
+    pub targets: Option<u32>,
+    /// `deadlineMs` for every driven invocation. Defaults to the harness manifest's
+    /// `conformance.deadlineMs`, then to 1000.
+    pub deadline_ms: Option<u64>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -329,6 +351,17 @@ pub struct FindingsExecution {
     pub stopped_reason: String,
     pub unattempted: u64,
     pub restarts: u64,
+    /// Coverage at each `SAMPLE_EVERY`-invocation interval, in order. At most a few rows: the
+    /// spacing is 5,000 invocations, so even the default budget yields twenty.
+    pub samples: Vec<ProgressSample>,
+    /// Invocations the engine stopped waiting for.
+    pub deadline_exceeded: u64,
+    /// Invocations that reported a duration at or past their deadline, whether or not the engine
+    /// had to stop them.
+    pub deadline_cuts: u64,
+    /// Inputs the caller supplied that the engine ran before the guided loop.
+    pub seeded: u64,
+    pub disabled_targets: Vec<String>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -344,9 +377,27 @@ pub struct FindingsResult {
     /// The findings in document order (first seen first), filtered and limited.
     pub findings: Vec<FindingRecord>,
     pub truncated: bool,
+    /// Cost and yield per target, in target-id order, at most `MAX_LIMIT` rows. This is where a
+    /// caller decides which target deserves the next budget increment.
+    pub targets: Vec<TargetStat>,
+    /// Whether more targets existed than the limit returned.
+    pub targets_truncated: bool,
     /// The scan's `report.md`, when the scan rendered one.
     pub report_path: Option<String>,
     pub markdown: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidateHarnessResult {
+    /// The harness the manifest was read from, by name or by the directory that held it.
+    pub harness: String,
+    pub root: String,
+    /// `report.violations` is empty. A report with violations is a successful call: the suite
+    /// ran and the harness failed it, which is the answer the caller asked for.
+    pub passed: bool,
+    /// The same document `afz validate-harness --json` prints.
+    pub report: afz_conformance::Report,
 }
 
 /// Start a scan from validated parameters, refusing anything the CLI would refuse.
@@ -368,6 +419,15 @@ fn build_scan_options(resolved: &Resolved, params: &ScanParams) -> Result<Option
         }
         None => None,
     };
+    // Checked here so the count is the tool's error text rather than a truncated scan.
+    let seeds = params.seeds.clone().unwrap_or_default();
+    if seeds.len() > MAX_SEEDS {
+        return Err(format!(
+            "at most {} seeds are accepted, {} were given",
+            MAX_SEEDS,
+            seeds.len()
+        ));
+    }
     // Parsed here so a bad selector is the tool's error text, and so preflight can see the
     // scope it needs to check.
     let scope = params
@@ -392,6 +452,7 @@ fn build_scan_options(resolved: &Resolved, params: &ScanParams) -> Result<Option
             options.workers = workers;
         }
         options.resume = resume;
+        options.seeds = seeds;
         options.scope = scope;
     }))
 }
@@ -533,6 +594,52 @@ fn probe_blocking(resolved: &Resolved, limit: usize) -> Result<ProbeResult, Stri
         skipped: discovery.skipped,
         coverage,
         truncated,
+    })
+}
+
+/// Sequence for the validation staging directory. The CLI names its directory by pid alone, and a
+/// server lives across many calls, so two validations of one harness would otherwise share a
+/// staged project and delete each other's.
+static VALIDATE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// The `afz validate-harness` sequence on a blocking thread: resolve the harness, which runs the
+/// build steps its manifest declares, then drive the suite over the project its emitter renders.
+///
+/// A report with violations is an `Ok`: the suite ran and the harness failed it, which is the
+/// answer the caller asked for. Only a harness that could not be resolved or driven is an `Err`,
+/// and every `Err` is a sentence the caller acts on - an unknown harness, a missing
+/// `afz-harness.json`, a failed build step, a failed emitter.
+fn validate_blocking(params: ValidateParams) -> Result<ValidateHarnessResult, String> {
+    let arg = params.harness.as_deref().unwrap_or(".");
+    // The name the caller recognizes: the registry's name when the argument named an installed
+    // harness, the directory that held the manifest otherwise. `harness::resolve` prefers a
+    // registry name over a same-named directory, and this reads the same registry.
+    let named = harnesses::lookup(arg).map(|record| record.name);
+    let out = std::env::temp_dir().join(format!(
+        "afz-mcp-conformance-{}-{}",
+        std::process::id(),
+        VALIDATE_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    // `true`: this server's stdout is the JSON-RPC channel, so a build tool's stdout must not
+    // reach it.
+    let target = harness::resolve(params.harness.as_deref(), true)?;
+    let report = harness::drive(
+        &target,
+        &out,
+        params.targets.unwrap_or(8) as usize,
+        params
+            .deadline_ms
+            .or(target.conformance.deadline_ms)
+            .unwrap_or(1000),
+    )?;
+    // Notes are advice about cost profile; only a violated rule fails the harness, which is the
+    // CLI's own exit rule.
+    let passed = report.violations.is_empty();
+    Ok(ValidateHarnessResult {
+        harness: named.unwrap_or_else(|| target.root.display().to_string()),
+        root: target.root.display().to_string(),
+        passed,
+        report,
     })
 }
 
@@ -776,6 +883,14 @@ impl Afz {
             .collect();
         let truncated = matched.len() > limit;
         let findings: Vec<FindingRecord> = matched.into_iter().take(limit).cloned().collect();
+        let targets_truncated = document.execution.targets.len() > MAX_LIMIT as usize;
+        let targets: Vec<TargetStat> = document
+            .execution
+            .targets
+            .iter()
+            .take(MAX_LIMIT as usize)
+            .cloned()
+            .collect();
         let report_path = dir.join("report.md");
         let rendered = report_path.is_file();
         let markdown = if params.markdown && rendered {
@@ -802,12 +917,46 @@ impl Afz {
                     .to_string(),
                 unattempted: document.execution.unattempted,
                 restarts: document.execution.restarts,
+                samples: document.execution.samples,
+                deadline_exceeded: document.execution.deadline_exceeded,
+                deadline_cuts: document.execution.deadline_cuts,
+                seeded: document.execution.seeded,
+                disabled_targets: document.execution.disabled_targets,
             },
+            targets,
+            targets_truncated,
             findings,
             truncated,
             report_path: rendered.then(|| report_path.display().to_string()),
             markdown,
         };
         structured(&result)
+    }
+
+    #[tool(
+        description = "List the harness plugins installed on this machine, each with the plugin command it resolves to. An empty list is the answer \"nothing is installed yet\", not a failure.",
+        annotations(title = "List installed harnesses", read_only_hint = true)
+    )]
+    async fn afz_harnesses(&self) -> Result<CallToolResult, ErrorData> {
+        structured(&harnesses::all())
+    }
+
+    #[tool(
+        description = "Build a harness and drive the conformance suite against it, answering rule by rule whether the plugin conforms. A report full of violations is a successful call: build the fix into the harness and run it again. Runs the manifest's build steps, so a cold runtime can take minutes.",
+        annotations(title = "Validate a harness")
+    )]
+    async fn afz_validate_harness(
+        &self,
+        Parameters(params): Parameters<ValidateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        // Blocking because the build steps and the suite's plugin processes can run for minutes;
+        // the pool is the same one afz_probe's discovery uses.
+        let outcome = tokio::task::spawn_blocking(move || validate_blocking(params))
+            .await
+            .map_err(internal)?;
+        match outcome {
+            Ok(result) => structured(&result),
+            Err(message) => Ok(action_error(message)),
+        }
     }
 }

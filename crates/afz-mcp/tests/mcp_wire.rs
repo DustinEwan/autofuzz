@@ -1,4 +1,4 @@
-//! The six tools over the wire a real harness sees: spawn the built binary, speak
+//! The eight tools over the wire a real harness sees: spawn the built binary, speak
 //! newline-delimited JSON-RPC, assert the JSON. No MCP client library, so nothing but the
 //! published protocol sits between the assertion and the server.
 
@@ -21,7 +21,13 @@ struct Session {
 
 impl Session {
     fn start(root: &Path) -> Session {
-        let mut child = client::spawn(root);
+        Session::start_with_env(root, &[])
+    }
+
+    /// A server whose environment the test controls, for the tools that read it: `AFZ_HOME`
+    /// moves the harness registry into a scratch directory.
+    fn start_with_env(root: &Path, env: &[(&str, &str)]) -> Session {
+        let mut child = client::spawn_with_env(root, env);
         let stdin = child.stdin.take().expect("stdin");
         let stdout = BufReader::new(child.stdout.take().expect("stdout"));
         let mut session = Session {
@@ -70,7 +76,7 @@ fn error_text(result: &Value) -> &str {
 }
 
 #[test]
-fn tools_list_reports_the_six_afz_tools() {
+fn tools_list_reports_the_afz_tools() {
     let root = fixture::scratch("tools-list");
     let mut session = Session::start(&root);
     let answer = session.request("tools/list", json!({}));
@@ -87,10 +93,12 @@ fn tools_list_reports_the_six_afz_tools() {
         names,
         [
             "afz_findings",
+            "afz_harnesses",
             "afz_probe",
             "afz_scan",
             "afz_scan_cancel",
             "afz_scan_status",
+            "afz_validate_harness",
             "await_scan"
         ]
     );
@@ -106,6 +114,21 @@ fn tools_list_reports_the_six_afz_tools() {
         .find(|tool| tool["name"] == "afz_probe")
         .expect("afz_probe is listed");
     assert_eq!(probe["annotations"]["readOnlyHint"], json!(true), "{probe}");
+    let harnesses = tools
+        .iter()
+        .find(|tool| tool["name"] == "afz_harnesses")
+        .expect("afz_harnesses is listed");
+    assert_eq!(
+        harnesses["annotations"]["readOnlyHint"],
+        json!(true),
+        "{harnesses}"
+    );
+    assert!(
+        harnesses["inputSchema"]["properties"]
+            .as_object()
+            .is_none_or(|properties| properties.is_empty()),
+        "afz_harnesses takes no arguments: {harnesses}"
+    );
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -318,6 +341,96 @@ fn a_second_scan_is_refused_and_a_running_one_stops() {
     assert!(
         document.contains("\"stoppedReason\":\"interrupted\""),
         "the document says interrupted under {dir}"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn afz_harnesses_lists_the_installed_records() {
+    // `harnesses::root()` honors `AFZ_HOME`, so the registry under test is a scratch directory:
+    // the tool is testable without a git checkout or an install.
+    let root = fixture::scratch("harnesses");
+    let home = fixture::scratch("harnesses-home");
+    fixture::write(
+        &home.join("harnesses/demo/harness.json"),
+        r#"{"name":"demo","url":"file:///tmp/demo","commit":"0000000000000000000000000000000000000000","root":"/tmp/demo","argv":["true"]}"#,
+    );
+    let home_text = home.display().to_string();
+    let mut session = Session::start_with_env(&root, &[("AFZ_HOME", &home_text)]);
+    let result = session.call("afz_harnesses", json!({}));
+    assert_ne!(result["isError"], json!(true), "{result}");
+    let listed = result["structuredContent"]
+        .as_array()
+        .expect("an array of records")
+        .clone();
+    assert_eq!(listed.len(), 1, "{result}");
+    assert_eq!(listed[0]["name"], "demo", "{result}");
+    assert_eq!(listed[0]["argv"][0], "true", "{result}");
+    std::fs::remove_dir_all(&root).ok();
+    std::fs::remove_dir_all(&home).ok();
+}
+
+/// An unknown harness is the sentence the caller acts on, not a protocol error: the same one
+/// `afz validate-harness` prints for the same mistake. The success path is the one
+/// `crates/afz-conformance/tests/*` and `afz-xtask check-harness` already drive through the same
+/// `harness::drive` this tool calls, and the fake plugin this repository ships carries no
+/// conformance emitter, so a passing validation cannot be driven from here.
+#[test]
+fn validate_reports_the_missing_harness_as_a_sentence() {
+    let root = fixture::scratch("validate-missing");
+    let mut session = Session::start(&root);
+    let result = session.call(
+        "afz_validate_harness",
+        json!({"harness": "no-such-harness"}),
+    );
+    assert_eq!(result["isError"], json!(true), "{result}");
+    assert!(
+        error_text(&result).contains("afz-harness.json"),
+        "{}",
+        error_text(&result)
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+fn a_seeded_scan_reports_its_seed() {
+    let root = fixture::project("scan-seeded", &fixture::scripted(&["src/a.ts"]));
+    let mut session = Session::start(&root);
+    let started = session.call(
+        "afz_scan",
+        json!({
+            "budget": {"invocations": 4},
+            "seeds": [{"targetId": "afz:t:0000", "values": []}],
+        }),
+    );
+    assert_ne!(started["isError"], json!(true), "{started}");
+    let job_id = started["structuredContent"]["jobId"]
+        .as_str()
+        .expect("a jobId")
+        .to_string();
+    let result = session.call("await_scan", json!({"jobId": job_id}));
+    assert_ne!(result["isError"], json!(true), "{result}");
+    assert_eq!(
+        result["structuredContent"]["state"], "completed",
+        "{}",
+        result["structuredContent"]
+    );
+    let findings = session.call("afz_findings", json!({"jobId": job_id}));
+    assert_ne!(findings["isError"], json!(true), "{findings}");
+    let content = &findings["structuredContent"];
+    assert_eq!(content["execution"]["seeded"], 1, "{content}");
+    let targets = content["targets"]
+        .as_array()
+        .expect("a targets array")
+        .clone();
+    assert_eq!(targets.len(), 1, "{content}");
+    assert_eq!(targets[0]["targetId"], "afz:t:0000", "{content}");
+    assert!(
+        targets[0]["invocations"]
+            .as_u64()
+            .expect("an invocation count")
+            >= 1,
+        "the seed's invocation is charged to its target: {content}"
     );
     std::fs::remove_dir_all(&root).ok();
 }

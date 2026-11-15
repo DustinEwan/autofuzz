@@ -17,6 +17,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use afz_protocol::ValueTree;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// The embedded template v1. Immutable: this bytes-hash is the version authors pin against.
@@ -111,7 +112,7 @@ pub struct Lifecycle {
 
 /// How one template property ended. `NotApplicable` carries the manifest's reason; it is never
 /// counted as a pass and never counted as a violation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum Verdict {
     Pass,
@@ -120,7 +121,7 @@ pub enum Verdict {
 }
 
 /// One property's line of the template report.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PropertyResult {
     pub id: String,
@@ -129,7 +130,7 @@ pub struct PropertyResult {
 }
 
 /// The template section of a report: present only when the run was template-driven.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TemplateReport {
     pub version: u32,

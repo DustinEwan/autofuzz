@@ -75,6 +75,7 @@ git selector before it prints the banner.
 | `--budget <key=value...>` | Budget limits, repeated or comma-separated: `invocations=50000`, `wall=90s`. |
 | `--seed <hex or decimal>` | Seed for every random choice. The same seed on the same tree replays the same calls. |
 | `--resume <scanDir>` | Earlier scan directory. The new scan starts from the corpus in that directory. |
+| `--seeds <file>` | JSON file holding `[{"targetId":…,"values":[…]}]` inputs to drive before the guided loop starts. Each seed costs one invocation, and the engine re-measures the coverage an input earns instead of trusting a recorded edge set. To continue from an earlier scan's `corpus/`, use `--resume`: a corpus file carries `edges`, which a seed file must not. |
 | `--strategy <guided\|random>` | `guided` selects inputs with coverage. `random` ignores the corpus. |
 | `--git <selector>` | Scan one git change set. See [Git scoping](#git-scoping). |
 | `--workers <n>` | Plugin processes to run at once. Overrides `budget.workers`. |
@@ -359,11 +360,13 @@ You configure no directories. Every tool call gives the directory that it acts o
 | Tool | What it answers |
 | --- | --- |
 | `afz_probe` | The harness plugin that a directory uses, and the targets that it would fuzz. |
-| `afz_scan` | Starts a scan and returns a `jobId` at once. Pass `git` to scope the scan. |
+| `afz_scan` | Starts a scan and returns a `jobId` at once. Pass `git` to scope the scan, and `seeds` to drive inputs of your own before the guided loop starts. |
 | `afz_scan_status` | The state and live progress of one scan, answered immediately. |
 | `await_scan` | Waits until a scan ends. `timeoutSeconds` answers early with the state at that moment. |
 | `afz_scan_cancel` | Stops a running scan early. The scan still writes its result, with `stoppedReason: interrupted`. |
 | `afz_findings` | The findings of a finished scan, newest scan first. `markdown: true` adds `report.md`. |
+| `afz_harnesses` | The harness plugins installed on this machine, and the plugin command each one resolves to. An empty list is the answer "nothing is installed yet", not a failure. |
+| `afz_validate_harness` | Builds a harness and answers rule by rule whether its plugin conforms. A report full of violations is a successful call: the suite ran and the harness failed it. |
 
 The server drives the engine in process, so it runs one scan at a time. It rejects a second
 `afz_scan` while one is running instead of queueing it.

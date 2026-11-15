@@ -55,6 +55,9 @@ enum Command {
         /// Earlier scan directory whose corpus this scan starts from.
         #[arg(long)]
         resume: Option<PathBuf>,
+        /// JSON file holding `[{"targetId":…,"values":[…]}]` inputs to run before the guided loop.
+        #[arg(long)]
+        seeds: Option<PathBuf>,
         /// `guided` selects inputs with coverage; `random` ignores the corpus.
         #[arg(long)]
         strategy: Option<String>,
@@ -133,12 +136,13 @@ fn main() {
             budget,
             seed,
             resume,
+            seeds,
             strategy,
             git,
             workers,
             quiet,
         } => scan::run(
-            path, config, &budget, seed, resume, strategy, git, workers, quiet,
+            path, config, &budget, seed, resume, seeds, strategy, git, workers, quiet,
         ),
         Command::ValidateHarness {
             harness,

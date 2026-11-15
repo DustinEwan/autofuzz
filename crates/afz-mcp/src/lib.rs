@@ -1,4 +1,4 @@
-//! The MCP server library: the six tools, the job registry, and the scan-project resolution
+//! The MCP server library: the eight tools, the job registry, and the scan-project resolution
 //! every tool runs before it acts on a path.
 //!
 //! The binary in `main.rs` is a thin `tokio` entry over [`server::run`]. The module tree

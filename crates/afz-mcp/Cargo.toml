@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 afz-engine.workspace = true
+# `afz_validate_harness` drives the same suite `afz validate-harness` runs, through the same driver.
+afz-conformance.workspace = true
 afz-protocol.workspace = true
 rmcp.workspace = true
 tokio.workspace = true

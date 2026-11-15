@@ -122,6 +122,9 @@ pub struct Inventory {
 pub struct Execution {
     pub invocations: u64,
     pub corpus_size: u64,
+    /// Inputs the caller supplied and the engine ran before the guided loop started. Zero for
+    /// every scan that was not seeded.
+    pub seeded: u64,
     pub coverage_edges: u64,
     pub coverage_ratio: f64,
     pub deadline_exceeded: u64,
@@ -145,6 +148,9 @@ pub struct Execution {
     /// 6,000 and then spent the rest of the budget repeating itself, and the acceptance check for
     /// a guided scan is about the series rather than its endpoint.
     pub samples: Vec<ProgressSample>,
+    /// One row per discovered target, in target-id order, including targets the scan never
+    /// invoked. Where this run's budget went and what each target gave back.
+    pub targets: Vec<TargetStat>,
 }
 
 /// One point of the coverage series. `coverageRatio` is restated against the reachable set known
@@ -156,6 +162,40 @@ pub struct ProgressSample {
     pub invocations: u64,
     pub coverage_edges: u64,
     pub coverage_ratio: f64,
+}
+
+/// What one target cost and what it gave back. `meanMs` is deliberately absent: it is
+/// `totalMs / invocations`, and two numbers for one fact disagree when one is rounded.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetStat {
+    pub target_id: String,
+    pub invocations: u64,
+    /// Distinct finding identities recorded for this target, including ones an earlier scan
+    /// also reported (`seenBefore`), because a target that keeps hitting a known bug is still
+    /// spending budget.
+    pub findings: u64,
+    pub total_ms: f64,
+    pub max_ms: f64,
+    /// Edges this target's inputs added to the corpus. A target at zero over thousands of
+    /// invocations has stopped teaching the search.
+    pub novel_edges: u64,
+    pub disabled: bool,
+}
+
+impl TargetStat {
+    /// A zeroed row for `target_id`, for a target the scan never invoked.
+    pub fn new(target_id: String) -> TargetStat {
+        TargetStat {
+            target_id,
+            invocations: 0,
+            findings: 0,
+            total_ms: 0.0,
+            max_ms: 0.0,
+            novel_edges: 0,
+            disabled: false,
+        }
+    }
 }
 
 /// Why the run ended. `budget` covers both limits, because the user reads the same sentence for

@@ -18,6 +18,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use afz_protocol::{
     Capability, CoverageMap, DiscoverReq, FaultSignature, Handshake, InvokeReq, Materialization,
     Outcome, PrepareReq, ReproducerReq, TargetDescriptor, ValueTree,
@@ -99,6 +102,19 @@ pub(crate) const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
 /// corpus full of disabled targets ends the run instead of spinning.
 const MAX_PLAN_SKIPS: usize = 64;
 
+/// One caller-supplied input to drive before the guided loop starts. `edges` is absent by
+/// design: the engine runs the input and records the digest it actually earned, so a seed
+/// cannot claim coverage it never reached.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Seed {
+    pub target_id: String,
+    pub values: Vec<ValueTree>,
+}
+
+/// Most seeds one scan may start from. Each one costs an invocation and a plugin round trip.
+pub const MAX_SEEDS: usize = 256;
+
 /// Everything the loop needs. The scan project supplies the defaults; the command line overrides
 /// the fields a user would change between runs.
 #[derive(Debug, Clone)]
@@ -115,6 +131,8 @@ pub struct Options {
     pub max_corpus: u64,
     /// A previous scan directory: its corpus is loaded and its identities are suppressed.
     pub resume: Option<PathBuf>,
+    /// Caller-supplied inputs to run before the guided loop, in order.
+    pub seeds: Vec<Seed>,
     /// The git selector the scan is limited to. `None` scans the whole tree.
     pub scope: Option<crate::git::Selector>,
     pub out_dir: PathBuf,
@@ -137,6 +155,7 @@ impl Options {
             config,
             seed: 0,
             resume: None,
+            seeds: Vec::new(),
             scope: None,
             out_dir: PathBuf::from(".autofuzz"),
             renderers: vec!["json".to_string(), "markdown".to_string()],
@@ -471,6 +490,10 @@ struct Scanner {
     supervisor: Supervisor,
     /// Ids of targets this scan has been given at least one invocation.
     attempted: BTreeSet<String>,
+    /// Cost and yield per target id, for `execution.targets`.
+    stats: BTreeMap<String, TargetStat>,
+    /// Seeds this scan ran before the loop, reported as `execution.seeded`.
+    seeded: u64,
     planned: u64,
     ran: u64,
     restarts: u64,
@@ -697,6 +720,8 @@ impl Scanner {
             },
             supervisor,
             attempted: BTreeSet::new(),
+            stats: BTreeMap::new(),
+            seeded: 0,
             planned: 0,
             ran: 0,
             restarts: 0,
@@ -730,6 +755,7 @@ impl Scanner {
             scanner.options.seed
         ));
         scanner.load_resume()?;
+        scanner.load_seeds()?;
         Ok(scanner)
     }
 
@@ -762,6 +788,64 @@ impl Scanner {
         self.log.push(format!(
             "resumed {}: {loaded} corpus entr(ies) reloaded, {suppressed} identity/ies suppressed",
             dir.display()
+        ));
+        Ok(())
+    }
+
+    /// Run the caller's seeds before the loop, so a scan starts from what the caller knows
+    /// rather than from what the generator draws first.
+    ///
+    /// A seed earns its corpus entry the same way a generated input does: the engine runs it and
+    /// records the digest the plugin reported, so a seed cannot carry an edge its run never
+    /// reached. A seed naming a target discovery never reported is skipped and logged rather than
+    /// failing the scan, because one mistyped id should not cost the caller the whole run.
+    ///
+    /// Seeds are planned invocations like any others, so a seed list longer than
+    /// `budget.invocations` leaves the loop no budget and the scan stops with
+    /// `stoppedReason: budget` after the seeds. The log line says how many ran.
+    fn load_seeds(&mut self) -> Result<(), ScanError> {
+        if self.options.seeds.is_empty() {
+            return Ok(());
+        }
+        let collect_coverage = self.handshake.capabilities.contains(&Capability::Coverage);
+        let mut jobs = Vec::with_capacity(self.options.seeds.len());
+        let mut values: HashMap<u64, Vec<ValueTree>> = HashMap::new();
+        let mut unknown = 0usize;
+        for (index, seed) in self.options.seeds.iter().enumerate() {
+            if !self.targets.iter().any(|t| t.id == seed.target_id) {
+                unknown += 1;
+                self.log.push(format!(
+                    "seed {} names unknown target {} and was not run",
+                    index + 1,
+                    seed.target_id
+                ));
+                continue;
+            }
+            let invocation = self.planned + 1;
+            self.planned += 1;
+            self.attempted.insert(seed.target_id.clone());
+            values.insert(invocation, seed.values.clone());
+            jobs.push(Job {
+                invocation_id: invocation,
+                target_id: seed.target_id.clone(),
+                values: seed.values.clone(),
+                collect_coverage,
+            });
+        }
+        let ran = jobs.len() as u64;
+        let report = self.supervisor.run(jobs, self.options.wall_clock);
+        // The no-op progress closure keeps a seed out of the coverage sample series: a sample is a
+        // point of the guided search, and no search has started yet.
+        self.account(report, &values, &mut |_| {});
+        self.seeded = ran;
+        let retained = self
+            .options
+            .seeds
+            .iter()
+            .filter(|seed| self.corpus.contains(&seed.target_id, &seed.values))
+            .count();
+        self.log.push(format!(
+            "seeded {ran} input(s): {retained} retained, {unknown} named an unknown target"
         ));
         Ok(())
     }
@@ -1023,12 +1107,23 @@ impl Scanner {
         if completed.outcome.duration_ms() >= self.deadline.as_millis() as f64 {
             self.deadline_cuts += 1;
         }
-        self.corpus.record(
+        let recorded = self.corpus.record(
             &completed.target_id,
             values,
             &edges,
             completed.invocation_id,
         );
+        let took = completed.outcome.duration_ms();
+        let stat = self
+            .stats
+            .entry(completed.target_id.clone())
+            .or_insert_with(|| TargetStat::new(completed.target_id.clone()));
+        stat.invocations += 1;
+        stat.total_ms += took;
+        stat.max_ms = stat.max_ms.max(took);
+        if let Recorded::Retained { new_edges, .. } = recorded {
+            stat.novel_edges += u64::from(new_edges);
+        }
         for finding in self.oracles.evaluate(
             &completed.target_id,
             completed.invocation_id,
@@ -1156,6 +1251,10 @@ impl Scanner {
                 fault.message
             ),
         });
+        self.stats
+            .entry(finding.target_id.clone())
+            .or_insert_with(|| TargetStat::new(finding.target_id.clone()))
+            .findings += 1;
         self.by_identity.insert(identity, self.records.len());
         self.records.push((
             record,
@@ -1403,6 +1502,7 @@ impl Scanner {
             execution: Execution {
                 invocations: self.ran,
                 corpus_size: self.corpus.len() as u64,
+                seeded: self.seeded,
                 coverage_edges: self.corpus.covered_count(),
                 coverage_ratio: self.ratio(),
                 samples: self
@@ -1412,6 +1512,19 @@ impl Scanner {
                         invocations: sample.invocations,
                         coverage_edges: sample.coverage_edges,
                         coverage_ratio: sample.coverage_ratio,
+                    })
+                    .collect(),
+                targets: self
+                    .targets
+                    .iter()
+                    .map(|target| {
+                        let mut row = self
+                            .stats
+                            .get(&target.id)
+                            .cloned()
+                            .unwrap_or_else(|| TargetStat::new(target.id.clone()));
+                        row.disabled = self.disabled.contains(&target.id);
+                        row
                     })
                     .collect(),
                 deadline_exceeded: self.deadline_exceeded,

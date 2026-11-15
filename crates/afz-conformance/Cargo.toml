@@ -15,3 +15,6 @@ afz-protocol.workspace = true
 jsonschema = { version = "0.61.1", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+# The report types carry a JSON Schema so the `afz_validate_harness` MCP tool can describe the
+# report it returns.
+schemars.workspace = true

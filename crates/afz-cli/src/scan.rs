@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use afz_engine::config::{self, ConfigError, LoadedConfig, Strategy};
 use afz_engine::report::scanresult::StoppedReason;
-use afz_engine::scan::{self, Options, Progress};
+use afz_engine::scan::{self, Options, Progress, Seed, MAX_SEEDS};
 
 /// Run the command. `path` is the directory to scan; without it the scan project's own root.
 #[allow(clippy::too_many_arguments)]
@@ -21,6 +21,7 @@ pub fn run(
     budget: &[String],
     seed: Option<String>,
     resume: Option<PathBuf>,
+    seeds: Option<PathBuf>,
     strategy: Option<String>,
     git: Option<String>,
     workers: Option<u32>,
@@ -63,6 +64,11 @@ pub fn run(
         }
         options.resume = Some(dir.clone());
     }
+    // Read before the banner, so a file the user has to fix is reported before the run announces
+    // the budget it will not spend.
+    if let Some(file) = &seeds {
+        options.seeds = read_seeds(file)?;
+    }
 
     // Parsed before the banner and before preflight, so a bad selector is reported as the first
     // line and a scope outside a repository is refused by the same check the engine runs.
@@ -94,6 +100,9 @@ pub fn run(
             options.invocations,
             options.wall_clock.as_secs_f64(),
         );
+        if !options.seeds.is_empty() {
+            println!("  {} seeded inputs", options.seeds.len());
+        }
     }
     let mut on_progress = |sample: &Progress| {
         if !quiet {
@@ -149,6 +158,31 @@ fn parse_seed(text: Option<&str>) -> Result<u64, String> {
     u64::from_str_radix(digits, radix).map_err(|_| {
         format!("--seed {text} is not a number. Use a decimal number or 0x-prefixed hex.")
     })
+}
+
+/// The caller's seeds: a JSON array of `{"targetId":…,"values":[…]}` inputs the engine drives
+/// before the guided loop starts.
+///
+/// A previous scan's `corpus/*.json` files are not seed files: they carry the `edges` their input
+/// earned, which [`Seed`] refuses, because the engine measures an input's digest rather than
+/// trusting a recorded one. `--resume` is how a scan continues from a corpus.
+fn read_seeds(file: &Path) -> Result<Vec<Seed>, String> {
+    let text = std::fs::read_to_string(file)
+        .map_err(|e| format!("--seeds {} could not be read: {e}", file.display()))?;
+    let seeds: Vec<Seed> = serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "--seeds {} is not an array of {{\"targetId\":…,\"values\":[…]}}: {e}",
+            file.display()
+        )
+    })?;
+    if seeds.len() > MAX_SEEDS {
+        return Err(format!(
+            "--seeds accepts at most {MAX_SEEDS} inputs, {} were in {}.",
+            seeds.len(),
+            file.display()
+        ));
+    }
+    Ok(seeds)
 }
 
 /// Apply `--budget invocations=50000` and `--budget wall=90s`, repeated or comma-separated.

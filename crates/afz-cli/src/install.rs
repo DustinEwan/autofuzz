@@ -8,12 +8,12 @@
 
 use std::path::{Path, PathBuf};
 
+use afz_conformance::harness;
 use afz_engine::git::git;
 use afz_engine::harnesses::{self, HarnessManifest, InstalledConformance, InstalledHarness};
 use afz_engine::rpc::client::{Launch, PluginClient};
 
 use crate::probe;
-use crate::validate;
 
 /// `afz install-harness <url>`.
 pub fn run(
@@ -124,10 +124,10 @@ fn install(
     // Only an install runs the `install` argv: fetching dependencies is a once-per-checkout
     // act, and compiling is what keeps a validation honest about current source.
     for argv in &manifest.install {
-        validate::run_stage("install", name, &checkout, argv, json)?;
+        harness::run_stage("install", name, &checkout, argv, json)?;
     }
     for argv in &manifest.build {
-        validate::run_stage("build", name, &checkout, argv, json)?;
+        harness::run_stage("build", name, &checkout, argv, json)?;
     }
     // A manifest path is relative to the harness repository root, not to the directory `afz`
     // was run from, so every file-naming element is resolved against the checkout.
@@ -146,7 +146,7 @@ fn install(
     if !no_validate {
         match &conformance {
             Some(conformance) => {
-                let target = validate::Target {
+                let target = harness::Target {
                     argv: argv.clone(),
                     root: checkout.clone(),
                     conformance: conformance.clone(),
@@ -157,7 +157,7 @@ fn install(
                     .unwrap_or_default()
                     .join(format!(".validate-{name}"));
                 let report =
-                    validate::drive(&target, &out, 8, conformance.deadline_ms.unwrap_or(1000))?;
+                    harness::drive(&target, &out, 8, conformance.deadline_ms.unwrap_or(1000))?;
                 // The handshake name is what the record is keyed on: this is what catches a
                 // manifest naming the wrong harness.
                 if !report.plugin.starts_with(&format!("{name} ")) {

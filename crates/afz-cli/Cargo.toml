@@ -25,3 +25,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 afz-xtask = { path = "../xtask" }
+# `tests/mcp_parity.rs` compares the real binary's flags with the MCP tools' argument structs.
+# `afz-mcp` never depends on this crate, so the edge stays one-directional.
+afz-mcp = { path = "../afz-mcp" }
+schemars.workspace = true
+serde_json.workspace = true

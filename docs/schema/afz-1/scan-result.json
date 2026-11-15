@@ -233,8 +233,21 @@
             "$ref": "#/$defs/ProgressSample"
           }
         },
+        "seeded": {
+          "description": "Inputs the caller supplied and the engine ran before the guided loop started. Zero for\nevery scan that was not seeded.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
         "stoppedReason": {
           "$ref": "#/$defs/StoppedReason"
+        },
+        "targets": {
+          "description": "One row per discovered target, in target-id order, including targets the scan never\ninvoked. Where this run's budget went and what each target gave back.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TargetStat"
+          }
         },
         "unattempted": {
           "description": "Planned invocations that never started: their target was disabled or proved unbuildable,\nor the wall clock ended first.",
@@ -246,6 +259,7 @@
       "required": [
         "invocations",
         "corpusSize",
+        "seeded",
         "coverageEdges",
         "coverageRatio",
         "deadlineExceeded",
@@ -254,7 +268,8 @@
         "restarts",
         "unattempted",
         "disabledTargets",
-        "samples"
+        "samples",
+        "targets"
       ]
     },
     "FindingRecord": {
@@ -738,6 +753,52 @@
       "required": [
         "root",
         "harness"
+      ]
+    },
+    "TargetStat": {
+      "description": "What one target cost and what it gave back. `meanMs` is deliberately absent: it is\n`totalMs / invocations`, and two numbers for one fact disagree when one is rounded.",
+      "type": "object",
+      "properties": {
+        "disabled": {
+          "type": "boolean"
+        },
+        "findings": {
+          "description": "Distinct finding identities recorded for this target, including ones an earlier scan\nalso reported (`seenBefore`), because a target that keeps hitting a known bug is still\nspending budget.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "invocations": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "maxMs": {
+          "type": "number",
+          "format": "double"
+        },
+        "novelEdges": {
+          "description": "Edges this target's inputs added to the corpus. A target at zero over thousands of\ninvocations has stopped teaching the search.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "targetId": {
+          "type": "string"
+        },
+        "totalMs": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "targetId",
+        "invocations",
+        "findings",
+        "totalMs",
+        "maxMs",
+        "novelEdges",
+        "disabled"
       ]
     }
   }
