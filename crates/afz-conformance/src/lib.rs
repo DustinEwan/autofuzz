@@ -12,7 +12,7 @@
 //! is deserialized, so a plugin that drifts from the published contract is told so in that
 //! contract's own vocabulary rather than with a serde message.
 //!
-//! When [`Check::template`] carries a manifest, the suite adds a second pass that judges the ten
+//! When [`Check::template`] carries a manifest, the suite adds a second pass that judges the twelve
 //! semantic properties of the embedded template against the plugin's own rendered fixture (see
 //! [`template`]). A published template version is immutable - new properties add version 2, they
 //! never edit version 1 - so a validation result stays reproducible after this tool ships.
@@ -166,7 +166,7 @@ pub struct Check {
     pub drive_targets: usize,
     /// `deadlineMs` for every driven invocation.
     pub deadline_ms: u64,
-    /// Template mode: a manifest naming the fixture symbols for the embedded template's ten
+    /// Template mode: a manifest naming the fixture symbols for the embedded template's twelve
     /// properties. `None` runs schema-only: the protocol rules and nothing about semantics.
     pub template: Option<template::Manifest>,
     /// The conformance project's own verdicts on its fixture, when it ships a
@@ -486,7 +486,7 @@ pub fn compare_validator(
         if !template::is_fixture_shaped(&property.id) {
             continue;
         }
-        // `template_pass` reports all ten ids, so a missing protocol-side line only happens
+        // `template_pass` reports all twelve ids, so a missing protocol-side line only happens
         // for a hand-built report; the disagreement is still real and is reported below.
         let Some(plugin) = protocol.properties.iter().find(|p| p.id == property.id) else {
             continue;
@@ -1540,7 +1540,7 @@ impl Runner {
             let (verdict, detail) = if let Some(reason) = &entry.not_applicable {
                 (template::Verdict::NotApplicable, reason.clone())
             } else {
-                match self.judge_property(client, handshake, discovery, &spec.id, entry) {
+                match self.judge_property(client, handshake, discovery, manifest, &spec.id, entry) {
                     Ok(detail) => (template::Verdict::Pass, detail),
                     Err(detail) => {
                         self.fail(template_rule(&spec.id), detail.clone());
@@ -1566,6 +1566,7 @@ impl Runner {
         client: &PluginClient,
         handshake: &Handshake,
         discovery: &Discovery,
+        manifest: &template::Manifest,
         id: &str,
         entry: &template::ManifestProperty,
     ) -> Result<String, String> {
@@ -1763,6 +1764,57 @@ impl Runner {
                     }
                 }
             }
+            "opaque-return" => {
+                let target = self.named_target(discovery, &symbol).ok_or_else(named)?;
+                let outcome = self
+                    .drive_template_call(client, &target.id, &input, false)
+                    .map_err(|reason| reason.detail())
+                    .and_then(outcome_of)?;
+                let Outcome::Ok(ok) = &outcome else {
+                    return Err(format!("\"{symbol}\" answered {} where the template expects ok: the call itself must succeed even though its return value has no wire form", outcome.kind()));
+                };
+                match &ok.value {
+                    None => Ok(format!("\"{symbol}\" returned a value the wire cannot carry, and the call answered ok with no value")),
+                    Some(tree) => match tree.node {
+                        ValueNode::Null | ValueNode::Undefined => {
+                            Ok(format!("\"{symbol}\" answered ok with a valueless {}", serde_json::to_string(&tree.node).unwrap_or_default()))
+                        }
+                        _ => Err(format!("\"{symbol}\" answered ok with a value the manifest says cannot be represented: the fixture is not opaque, or the plugin invented a representation ({})", serde_json::to_string(&tree.node).unwrap_or_default())),
+                    },
+                }
+            }
+            "unbuildable-symbol" => {
+                let target = self.named_target(discovery, &symbol).ok_or_else(named)?;
+                let request = PrepareReq {
+                    target_id: target.id.clone(),
+                    values: input.clone(),
+                };
+                let raw = self
+                    .raw(client, Method::Prepare, to_params(&request), PREPARE_TIMEOUT)
+                    .map_err(|reason| format!("prepare for \"{symbol}\" did not answer: {}", reason.detail()))?;
+                if raw.get("ok").and_then(serde_json::Value::as_bool).unwrap_or(false) {
+                    return Err(format!("prepare accepted \"{symbol}\": the manifest declares it unbuildable, so the harness accepted a symbol it cannot invoke"));
+                }
+                let reason = raw.get("reason").and_then(serde_json::Value::as_str).unwrap_or("");
+                if reason != "discovery-error" {
+                    return Err(format!("prepare skipped \"{symbol}\" with reason \"{reason}\": a symbol the harness cannot build must answer the reason the contract reserves for it, discovery-error"));
+                }
+                let sibling = manifest.properties.get("method-receiver");
+                let (Some(sib_symbol), Some(sib_input)) = (
+                    sibling.and_then(|e| e.symbol.as_deref()),
+                    sibling.and_then(|e| e.input.clone()),
+                ) else {
+                    return Err("unbuildable-symbol judges isolation against \"method-receiver\", and the manifest does not realize that property".to_string());
+                };
+                let Some(sibling) = self.named_target(discovery, sib_symbol) else {
+                    return Err(format!("discovery did not list the isolation sibling \"{sib_symbol}\" the manifest names for method-receiver"));
+                };
+                if self.prepare(client, sibling, &sib_input) {
+                    Ok(format!("\"{symbol}\" was skipped with discovery-error and \"{sib_symbol}\" still prepared"))
+                } else {
+                    Err(format!("prepare skipped the isolation sibling \"{sib_symbol}\" too: the unbuildable \"{symbol}\" took its siblings down with it"))
+                }
+            }
             other => unreachable!(
                 "load_manifest accepts only template v1 property ids, and {other} is not one"
             ),
@@ -1869,6 +1921,8 @@ fn template_rule(id: &str) -> &'static str {
         "stdout-purity",
         "reproducer-script",
         "deadline-sleep",
+        "opaque-return",
+        "unbuildable-symbol",
     ];
     IDS.iter()
         .copied()

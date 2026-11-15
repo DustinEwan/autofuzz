@@ -135,8 +135,11 @@ recursive references. The schema in `docs/schema/afz-1/type-node.json` is the au
 does not fit, report the target as `unsupported-signature` instead of inventing a shape.
 
 `include` and `exclude` are instructions for your plugin, not for the engine. Match them against
-paths relative to the root, with `/` separators. An empty include means your own default. The engine
-adds the scan output directory to `exclude`, so a second scan does not discover the first scan's
+paths relative to the root, with `/` separators - never relative to a nested package inside the
+root, so one pattern means the same thing in a one-package tree and a many-package one. An empty
+include means your own default.
+The engine adds the scan output directory to `exclude`, so a second scan does not discover the
+first scan's
 reproducers.
 
 Discovery must terminate. The engine gives it 120 seconds and then kills the process. If your
@@ -243,8 +246,10 @@ reproduces by not returning, so say in the header when to stop the script.
 
 The engine waits `deadlineMs + 250 ms` and then kills the process. If your runtime can interrupt a
 call, cut it yourself and return a `failed` outcome with `via: "deadline-cut"`. That answer keeps
-the process and the call's coverage. If your runtime cannot interrupt a call, let the engine kill
-it; you lose that call's coverage and nothing else.
+the process and the call's coverage, and the engine files it as the same single `deadline` finding
+an engine kill would have produced - one deadline event, one finding, whoever cut the call. If your
+runtime cannot interrupt a call, let the engine kill it; you lose that call's coverage and nothing
+else.
 
 Do not move module loading into `invoke` to look fast. `prepare` gets 120 seconds and is not held to
 the invocation deadline, because preparing imports the target's module graph. The invocation path

@@ -20,6 +20,8 @@ const V1_IDS: &[&str] = &[
     "stdout-purity",
     "reproducer-script",
     "deadline-sleep",
+    "opaque-return",
+    "unbuildable-symbol",
 ];
 
 #[test]
@@ -85,7 +87,9 @@ fn full_manifest() -> serde_json::Value {
             "coverage-digest-live": {"symbol": "tiered_price", "inputs": [[int(1)], [int(99)]]},
             "stdout-purity": {"symbol": "noisy"},
             "reproducer-script": {"symbol": "tiered_price", "input": [int(0)]},
-            "deadline-sleep": {"symbol": "spin", "input": [int(1)]}
+            "deadline-sleep": {"symbol": "spin", "input": [int(1)]},
+            "opaque-return": {"symbol": "reading", "input": [int(3)]},
+            "unbuildable-symbol": {"symbol": "unbuildable", "input": [int(0)]}
         }
     })
 }

@@ -45,10 +45,20 @@ impl ConfigError {
 #[serde(rename_all = "camelCase", deny_unknown_fields, default)]
 pub struct HarnessBlock {
     pub name: String,
+    /// Directory `discover` walks; defaults to the scan project's directory. Every pattern in
+    /// `include` and `exclude` is matched against the path of a candidate file relative to this
+    /// root, never relative to a nested package inside it, so one pattern means one thing no
+    /// matter how many packages the tree holds.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub root: Option<String>,
+    /// Glob patterns a candidate file must match to be handed to `discover`, evaluated on its
+    /// path relative to `root`; a pattern with no `/` is matched against the file name alone.
+    /// Absent means every file the walk reaches.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub include: Option<Vec<String>>,
+    /// Glob patterns a candidate file must not match, in the same reference frame as `include`
+    /// and evaluated first: a file excluded by these patterns is never handed to `discover`,
+    /// whatever `include` says.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exclude: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]

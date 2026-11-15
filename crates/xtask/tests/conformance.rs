@@ -139,7 +139,7 @@ fn a_negative_duration_is_reported() {
 // ------------------------------------------------------------------ template negative controls
 //
 // Each control realizes exactly one property of the embedded template against a scripted
-// defect in the fake plugin and declares the other nine not-applicable, so the named rule
+// defect in the fake plugin and declares the other eleven not-applicable, so the named rule
 // is the only one the run can fail. A template rule that cannot fail proves nothing.
 
 /// A Check in template mode: `defect` is realized by `realization`, every other property
@@ -329,6 +329,40 @@ fn an_instant_answer_fails_the_deadline_property() {
     assert!(
         report.failed("deadline-sleep"),
         "a sleep fixture that answers ok inside the deadline must be caught: {:?}",
+        report.violations
+    );
+}
+
+#[test]
+fn an_ok_answer_with_a_value_fails_the_opaque_return_property() {
+    // The fake's default ok outcome carries a number. A plugin that hands back a
+    // representation for a value the manifest says the wire cannot carry is exactly the
+    // invented encoding the property refuses: the caller reads a shape that was never there.
+    let report = conformance::run(&template_control(
+        "opaque-return",
+        &format!(r#"{{"symbol":"plain","input":[{}]}}"#, num(1)),
+        None,
+    ));
+    assert!(
+        report.failed("opaque-return"),
+        "an ok outcome carrying a value must fail the opaque-return property: {:?}",
+        report.violations
+    );
+}
+
+#[test]
+fn a_prepare_that_accepts_the_unbuildable_symbol_fails_the_repair_property() {
+    // The fake prepares every target but the opaque-receiver one, so a manifest naming
+    // "plain" as unbuildable describes a harness that accepted a symbol it cannot invoke -
+    // the silent drop the repair loop must never turn into a mystery.
+    let report = conformance::run(&template_control(
+        "unbuildable-symbol",
+        &format!(r#"{{"symbol":"plain","input":[{}]}}"#, num(1)),
+        None,
+    ));
+    assert!(
+        report.failed("unbuildable-symbol"),
+        "a prepare that accepts the unbuildable symbol must be caught: {:?}",
         report.violations
     );
 }

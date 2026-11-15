@@ -1,6 +1,6 @@
 //! The conformance template and the manifest a rendered project ships.
 //!
-//! `template/v1.json` is the contract: ten semantic properties stated as wire-level
+//! `template/v1.json` is the contract: twelve semantic properties stated as wire-level
 //! expectations. A published version is immutable - new rules add version 2, they never edit
 //! version 1 - so a validation result stays reproducible after the tool ships. The suite embeds
 //! v1, and `afz validate-harness` refuses a manifest whose `templateVersion` it does not embed.
@@ -160,9 +160,10 @@ impl TemplateReport {
 
 /// The properties a fixture can speak for. The project's own fixture validator reports
 /// exactly these ids, and [`crate::compare_validator`] requires its verdicts to agree with
-/// the protocol judge's. The other three - `stdout-purity`, `reproducer-script`,
-/// `deadline-sleep` - describe the plugin process, and only the protocol judge may judge
-/// them. One list, read by the driver, the CLI, and both READMEs.
+/// the protocol judge's. The other five - `stdout-purity`, `reproducer-script`,
+/// `deadline-sleep`, `opaque-return`, `unbuildable-symbol` - describe the plugin process or
+/// its build, and only the protocol judge may judge them. One list, read by the driver, the
+/// CLI, and both READMEs.
 pub const FIXTURE_SHAPED: &[&str] = &[
     "crash-unguarded",
     "guard-refusal",
@@ -183,7 +184,7 @@ pub fn is_fixture_shaped(id: &str) -> bool {
 fn required_fields(id: &str) -> &'static [&'static str] {
     match id {
         "crash-unguarded" | "guard-refusal" | "method-receiver" | "reproducer-script"
-        | "deadline-sleep" => &["symbol", "input"],
+        | "deadline-sleep" | "opaque-return" | "unbuildable-symbol" => &["symbol", "input"],
         "coverage-digest-live" => &["symbol", "inputs"],
         "unconstructible-receiver" => &["symbol", "blockedByType"],
         "private-symbol" | "unrepresentable-symbol" | "stdout-purity" => &["symbol"],

@@ -69,6 +69,18 @@
       "requires": null,
       "expectation": "Driving the named slow symbol at the suite's deadline answers `failed` with via `deadline-cut`, or the engine's kill arrives and `process-alive` still holds; answering `ok` inside the deadline fails the property (the fixture's sleep is shorter than the deadline, so it did not do its job).",
       "emitterNotes": "A symbol that sleeps well past any deadline the suite can pass (the suite's default deadline is 1000 ms; sleep at least 10 s). The input must reach the sleep unconditionally."
+    },
+    {
+      "id": "opaque-return",
+      "requires": null,
+      "expectation": "Invoking the named symbol with the manifest input answers kind `ok` with `value` absent, null, or undefined: a return value the wire vocabulary cannot carry must not fail the call and must not stop the symbol from being fuzzed.",
+      "emitterNotes": "A symbol of one simple parameter that returns a value the plugin cannot represent as a `ValueTree` (an opaque object, a closure, a handle). The input must reach the return unconditionally, so the call succeeds."
+    },
+    {
+      "id": "unbuildable-symbol",
+      "requires": null,
+      "expectation": "Discovery lists the named symbol in `targets`, `prepare` for it answers `ok: false` with reason `discovery-error`, and `prepare` for the `method-receiver` symbol still answers `ok: true`: a symbol the harness own build cannot produce is reported and skipped, and never takes its siblings down with it.",
+      "emitterNotes": "A symbol discovery accepts on its declared signature but the harness cannot build or load: for a compiled language, one whose generated call fails to compile and nothing else does; for a dynamic language, one whose module fails to load when it is prepared."
     }
   ]
 }
