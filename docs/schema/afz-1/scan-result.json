@@ -19,6 +19,15 @@
         "$ref": "#/$defs/FindingRecord"
       }
     },
+    "findingsSuppressed": {
+      "description": "Findings this scan did not report because an earlier scan had reported the same fault\nidentity. Without it, `findings: []` cannot tell \"found nothing\" from \"suppressed\neverything\". Absent in scans recorded before this field existed.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "minimum": 0
+    },
     "finishedAt": {
       "type": "string"
     },
@@ -184,6 +193,15 @@
     "Execution": {
       "type": "object",
       "properties": {
+        "corpusBytes": {
+          "description": "The total size in bytes of the compact JSON documents the scan wrote into `corpus/`:\nthe byte count of the inputs a resume or a seed file replays. Absent in scans recorded\nbefore this field existed, which is why it is optional: a missing count must not read\nas a zero-byte corpus.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
         "corpusSize": {
           "type": "integer",
           "format": "uint64",
@@ -759,6 +777,13 @@
       "description": "What one target cost and what it gave back. `meanMs` is deliberately absent: it is\n`totalMs / invocations`, and two numbers for one fact disagree when one is rounded.",
       "type": "object",
       "properties": {
+        "deadlineCuts": {
+          "description": "Invocations of this target whose reported duration reached the deadline the engine gave\nthe plugin. The scan-level `deadlineCuts` is the sum of this column. `default` keeps\ntarget rows written before this column existed readable, at zero.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 0,
+          "minimum": 0
+        },
         "disabled": {
           "type": "boolean"
         },

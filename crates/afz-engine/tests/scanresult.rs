@@ -1,8 +1,9 @@
 //! Step 9 acceptance: the scan result document, its schema, and the markdown renderer.
 //!
-//! The document is written once, validates against the committed
+//! The result is `scan.jsonl`: durable lines as they happen, then the `finished` line that
+//! carries the document. The document validates against the committed
 //! `docs/schema/afz-1/scan-result.json`, and every artifact it names exists. The renderer is
-//! given the document's path and must produce
+//! given the result's path and must produce
 //! a section per finding while the files it points at are unreadable, which is the only way to
 //! show it reads nothing but the document.
 
@@ -128,6 +129,7 @@ fn document() -> ScanDocument {
         execution: Execution {
             invocations: 184320,
             corpus_size: 1204,
+            corpus_bytes: Some(58_301),
             seeded: 1,
             coverage_edges: 8312,
             coverage_ratio: 0.41,
@@ -157,6 +159,7 @@ fn document() -> ScanDocument {
                     total_ms: 4_812.5,
                     max_ms: 41.0,
                     novel_edges: 612,
+                    deadline_cuts: 5,
                     disabled: false,
                 },
                 TargetStat {
@@ -166,6 +169,7 @@ fn document() -> ScanDocument {
                     total_ms: 61_102.0,
                     max_ms: 1_000.0,
                     novel_edges: 1_399,
+                    deadline_cuts: 2,
                     disabled: true,
                 },
             ],
@@ -227,6 +231,7 @@ fn document() -> ScanDocument {
                 seen_before: false,
             },
         ],
+        findings_suppressed: Some(2),
         artifacts: Artifacts {
             corpus: "corpus/".to_string(),
             coverage: Some("coverage.json".to_string()),
@@ -284,14 +289,25 @@ fn write_once(name: &str) -> (PathBuf, PathBuf) {
     (root, dir)
 }
 
-fn validate(document_path: &Path) -> Vec<String> {
+/// The result document as JSON: the `finished` line of the directory's journal, which is the
+/// result now.
+fn finished_value(dir: &Path) -> serde_json::Value {
+    let text = std::fs::read_to_string(dir.join(JOURNAL_FILE)).expect("scan.jsonl");
+    let last = text
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .expect("a finished line");
+    serde_json::from_str(last).expect("the finished line is JSON")
+}
+
+fn validate(scan_dir: &Path) -> Vec<String> {
     let committed =
         std::fs::read_to_string(committed_schema_path()).expect("committed scan-result schema");
     let schema: serde_json::Value = serde_json::from_str(&committed).expect("schema parses");
     let validator =
         jsonschema::validator_for(&schema).expect("the committed schema is a valid JSON Schema");
-    let text = std::fs::read_to_string(document_path).expect("scan.json");
-    let instance: serde_json::Value = serde_json::from_str(&text).expect("scan.json is JSON");
+    let instance = finished_value(scan_dir);
     validator
         .iter_errors(&instance)
         .map(|e| e.to_string())
@@ -301,11 +317,15 @@ fn validate(document_path: &Path) -> Vec<String> {
 #[test]
 fn written_document_validates_against_the_committed_schema() {
     let (_root, dir) = write_once("validate");
-    let errors = validate(&dir.join(SCAN_FILE));
+    let errors = validate(&dir);
     assert!(
         errors.is_empty(),
-        "scan.json does not validate against {}: {errors:#?}",
+        "the finished line does not validate against {}: {errors:#?}",
         committed_schema_path().display()
+    );
+    assert!(
+        !dir.join(SCAN_FILE).is_file(),
+        "the journal is the result: a finished scan writes no scan.json"
     );
     std::fs::remove_dir_all(&_root).ok();
 }
@@ -328,12 +348,12 @@ fn a_scoped_document_validates_and_keeps_its_git_object() {
     let root = workdir("scoped");
     std::fs::create_dir_all(&root).expect("create output dir");
     let dir = scanresult::write(&root, &document, &files()).expect("write a scoped scan");
-    let errors = validate(&dir.join(SCAN_FILE));
+    let errors = validate(&dir);
     assert!(
         errors.is_empty(),
-        "a scoped scan.json does not validate: {errors:#?}"
+        "a scoped scan's finished line does not validate: {errors:#?}"
     );
-    let read_back = scanresult::read(&dir.join(SCAN_FILE)).expect("read back a scoped scan");
+    let read_back = scanresult::read(&dir).expect("read back a scoped scan");
     assert_eq!(
         read_back.git, document.git,
         "the change set a scan covered has to survive the write"
@@ -345,12 +365,20 @@ fn a_scoped_document_validates_and_keeps_its_git_object() {
 fn the_validator_rejects_a_wrong_schema_version() {
     // The check above only means something if a wrong document actually fails it.
     let (root, dir) = write_once("negative");
-    let path = dir.join(SCAN_FILE);
-    let text = std::fs::read_to_string(&path).expect("scan.json");
-    let mut value: serde_json::Value = serde_json::from_str(&text).expect("scan.json is JSON");
+    let journal = dir.join(JOURNAL_FILE);
+    let lines: Vec<String> = std::fs::read_to_string(&journal)
+        .expect("scan.jsonl")
+        .lines()
+        .map(str::to_string)
+        .collect();
+    let (head, last) = lines.split_at(lines.len() - 1);
+    let mut value: serde_json::Value =
+        serde_json::from_str(&last[0]).expect("the finished line is JSON");
     value["schemaVersion"] = serde_json::json!("afz-scan/2");
-    std::fs::write(&path, value.to_string()).expect("rewrite scan.json");
-    let errors = validate(&path);
+    let mut rewritten: Vec<String> = head.to_vec();
+    rewritten.push(value.to_string());
+    std::fs::write(&journal, rewritten.join("\n") + "\n").expect("rewrite the finished line");
+    let errors = validate(&dir);
     assert!(
         !errors.is_empty(),
         "a document with schemaVersion afz-scan/2 passed validation"
@@ -372,7 +400,7 @@ fn committed_schema_is_generated_from_the_document_type() {
 #[test]
 fn every_artifact_the_document_names_exists_and_round_trips() {
     let (root, dir) = write_once("artifacts");
-    let written = scanresult::read(&dir.join(SCAN_FILE)).expect("read back");
+    let written = scanresult::read(&dir).expect("read back");
     assert_eq!(
         written,
         document(),
@@ -592,5 +620,96 @@ fn renderer_opens_nothing_but_the_document() {
         "the report changed when only the artifacts it points at changed"
     );
 
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// The journal is the scan's durability contract: every line that lands must read back exactly,
+/// because a resumed scan rebuilds its corpus and finding identities from nothing else.
+#[test]
+fn a_journal_round_trips_every_durable_line() {
+    let dir = workdir("journal-round");
+    std::fs::create_dir_all(&dir).expect("journal directory");
+    let lines = vec![
+        JournalLine::Started(JournalStarted {
+            scan_id: "M7TEST0000".into(),
+            started_at: "2026-11-15T00:00:00Z".into(),
+            seed: 7,
+            invocations: 100,
+            wall_clock_ms: 60_000,
+            workers: 2,
+        }),
+        JournalLine::Corpus(CorpusFile {
+            name: "c1".into(),
+            target_id: "afz:t:0001".into(),
+            values: vec![ValueTree::new(ValueNode::string("input"))],
+            edges: vec![42],
+        }),
+        JournalLine::Progress(JournalProgress {
+            invocations: 10,
+            coverage_edges: 3,
+            coverage_total: 9,
+            findings: 0,
+        }),
+    ];
+    {
+        let mut journal = scanresult::Journal::create(&dir).expect("the journal opens");
+        for line in &lines {
+            journal.append(line).expect("append");
+        }
+    }
+    let read = scanresult::read_journal(&dir).expect("the journal reads back");
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(!read.torn_tail, "a whole journal reports no torn tail");
+    assert_eq!(read.lines, lines, "every line must read back exactly");
+}
+
+/// The failure the journal exists for: the machine dies mid-append. The lines before the cut
+/// were fsynced and must survive; the half-written last line is skipped and reported.
+#[test]
+fn a_torn_last_journal_line_is_skipped_and_reported() {
+    use std::io::Write;
+    let dir = workdir("journal-torn");
+    std::fs::create_dir_all(&dir).expect("journal directory");
+    {
+        let mut journal = scanresult::Journal::create(&dir).expect("the journal opens");
+        journal
+            .append(&JournalLine::Corpus(CorpusFile {
+                name: "c1".into(),
+                target_id: "afz:t:0001".into(),
+                values: Vec::new(),
+                edges: Vec::new(),
+            }))
+            .expect("append");
+    }
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(dir.join(JOURNAL_FILE))
+        .expect("append handle")
+        .write_all(b"{\"kind\":\"corpus\",\"targetId\":")
+        .expect("torn bytes");
+    let read = scanresult::read_journal(&dir).expect("a torn tail is tolerated");
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(read.torn_tail, "the cut line is reported");
+    assert_eq!(read.lines.len(), 1, "the fsynced line survives the cut");
+}
+
+/// The finished line is what makes a journal a result. A directory whose journal stops short
+/// of it is an unfinished run, and reading it as a report would present a half-scan as a scan.
+#[test]
+fn a_journal_without_a_finished_line_is_an_unfinished_run() {
+    let (root, dir) = write_once("unfinished");
+    let journal = dir.join(JOURNAL_FILE);
+    let text = std::fs::read_to_string(&journal).expect("scan.jsonl");
+    let kept: Vec<&str> = text
+        .lines()
+        .filter(|line| !line.contains("\"kind\":\"finished\""))
+        .collect();
+    std::fs::write(&journal, format!("{}\n", kept.join("\n"))).expect("drop the finished line");
+    let err = scanresult::read(&dir).expect_err("an unfinished journal must not read as a result");
+    assert!(err.to_string().contains("did not complete"), "{err}");
+    assert!(
+        !scanresult::has_result(&dir),
+        "an unfinished directory holds no finished result"
+    );
     std::fs::remove_dir_all(&root).ok();
 }

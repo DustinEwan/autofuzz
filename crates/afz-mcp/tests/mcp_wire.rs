@@ -173,7 +173,7 @@ fn a_scan_runs_and_its_findings_come_back() {
     assert_eq!(scan_id.len(), 10, "scanId {scan_id}");
     let dir = content["dir"].as_str().expect("a dir").to_string();
     assert!(
-        Path::new(&dir).join("scan.json").is_file(),
+        Path::new(&dir).join("scan.jsonl").is_file(),
         "the scan result is written under {dir}"
     );
 
@@ -336,7 +336,7 @@ fn a_second_scan_is_refused_and_a_running_one_stops() {
     assert_eq!(content["state"], "cancelled", "{content}");
     assert_eq!(content["stoppedReason"], "interrupted", "{content}");
     let dir = content["dir"].as_str().expect("a dir").to_string();
-    let document = std::fs::read_to_string(Path::new(&dir).join("scan.json"))
+    let document = std::fs::read_to_string(Path::new(&dir).join("scan.jsonl"))
         .expect("the written scan result");
     assert!(
         document.contains("\"stoppedReason\":\"interrupted\""),

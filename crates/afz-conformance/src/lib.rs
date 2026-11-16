@@ -883,9 +883,9 @@ impl Runner {
         }
     }
 
-    /// `materializationCounts` is summed from `targets` and `skipped` together
-    /// (`scan.rs:1115-1121`), so a non-constructible symbol in neither list makes the inventory
-    /// arithmetic in `scan.json` lie.
+    /// `materializationCounts` is summed from `targets` and `skipped` together (the inventory
+    /// aggregation in `scan.rs`), so a non-constructible symbol in neither list makes the
+    /// inventory arithmetic in the scan result lie.
     fn check_skipped_are_reported(&mut self, discovery: &Discovery) {
         let reported: BTreeSet<&str> = discovery
             .skipped

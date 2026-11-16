@@ -74,7 +74,7 @@ git selector before it prints the banner.
 | `--config <path>` | Scan project file. Defaults to the nearest `autofuzz.json` above the scan root. |
 | `--budget <key=value...>` | Budget limits, repeated or comma-separated: `invocations=50000`, `wall=90s`. |
 | `--seed <hex or decimal>` | Seed for every random choice. The same seed on the same tree replays the same calls. |
-| `--resume <scanDir>` | Earlier scan directory. The new scan starts from the corpus in that directory. |
+| `--resume <scanDir>` | Earlier scan directory. The new scan starts from that directory's journal: its corpus entries and finding identities, whether or not the earlier scan finished. |
 | `--seeds <file>` | JSON file holding `[{"targetId":…,"values":[…]}]` inputs to drive before the guided loop starts. Each seed costs one invocation, and the engine re-measures the coverage an input earns instead of trusting a recorded edge set. To continue from an earlier scan's `corpus/`, use `--resume`: a corpus file carries `edges`, which a seed file must not. |
 | `--strategy <guided\|random>` | `guided` selects inputs with coverage. `random` ignores the corpus. |
 | `--git <selector>` | Scan one git change set. See [Git scoping](#git-scoping). |
@@ -267,9 +267,10 @@ logical CPU. `budget.maxCorpus` caps the corpus. `budget.strategy` is `guided` o
 
 ### The output block
 
-`output.dir` is the directory for scan results, relative to the project root. `output.renderers`
-lists `json` and `markdown`. `json` always writes `scan.json`; `markdown` adds `report.md`. A
-renderer name that the engine does not implement is a configuration error.
+`output.dir` is the directory for scan results, relative to the project root. The result itself —
+`scan.jsonl` — is always written; `output.renderers` names the extra renderings of it. `markdown`
+adds `report.md`; `json` names the result document and asks for nothing extra. A renderer name that
+the engine does not implement is a configuration error.
 
 ## Git scoping
 
@@ -295,7 +296,7 @@ afz scan . --git v1..HEAD                          # everything since the last r
 For any selector other than the working tree, autofuzz creates a `git worktree` under the output
 directory and scans that tree. It removes the worktree when the scan ends.
 
-The result records the scope in the `git` object in `scan.json`, the first lines of `report.md`, and
+The result records the scope in the `git` object of the finished record, the first lines of `report.md`, and
 the inventory counts. Twelve clean targets inside a change set is a narrower claim than a clean
 package, and the result keeps the two claims apart.
 
@@ -313,11 +314,12 @@ A scan writes everything under `<output.dir>/<scanId>/`.
 
 | Path | Contents |
 | --- | --- |
-| `scan.json` | The scan result: inventory, execution counts, coverage, findings, artifact paths, and the `git` change set when the scan was scoped. It validates against [`schema/afz-1/scan-result.json`](schema/afz-1/scan-result.json). The engine writes it last. |
-| `report.md` | Markdown rendered from `scan.json` alone. One section per finding, with its severity, its minimized input, and the path of its reproducer. |
+| `scan.jsonl` | The scan result: one JSON record per line, fsynced as it is written. `started`, `corpus`, `finding`, and `progress` lines record durable facts as they happen; the final `finished` line carries the complete document — inventory, execution counts, coverage, findings, artifact paths, and the `git` change set when the scan was scoped — which validates against [`schema/afz-1/scan-result.json`](schema/afz-1/scan-result.json). A journal without a `finished` line is an unfinished run, and `--resume` restarts from the lines that landed. |
+| `scan.json` | The result format of engines before the journal was the result. `--resume` and the renderers still read it, so old scan directories stay inspectable; it is never written again. |
+| `report.md` | Markdown rendered from the finished record alone. One section per finding, with its severity, its minimized input, and the path of its reproducer, plus a per-target table of where the budget went. |
 | `inputs/` | The input that produced each finding, as `ValueTree` JSON, and the minimized input when the scan shrank it. |
 | `repros/` | One standalone reproducer script per finding, with the name `afz-f-<id>.<extension>`. The finding gets no script when the harness does not declare `reproducer`, when the call fails, or when the finding is a repeat marked `seenBefore`. |
-| `corpus/` | The inputs that the scan kept. `--resume` loads them again. |
+| `corpus/` | The inputs that the scan kept, one JSON file per entry, for cutting seed files by hand. `--resume` reloads entries from the journal. |
 | `coverage.json` | The coverage map that the plugin published. Absent when the plugin declares no `coverage` capability, or when `coverageMap` fails or times out. |
 | `engine.log` | Per-worker and per-target accounting: restarts, deadline cuts, disabled targets, and plugin stderr. |
 | `../seen.json` | One level above the scan directories: the finding identities that this project has already reported. Every scan reads it and adds to it. |
@@ -326,7 +328,8 @@ A scan writes everything under `<output.dir>/<scanId>/`.
 
 `--seed` is a 32-bit seed that drives every random choice. The same seed with the same tree and the
 same configuration replays the same sequence of calls. `--resume <scanDir>` adds the corpus of an
-earlier scan.
+earlier scan, read from its journal: a scan that died before its `finished` line resumes with every
+corpus entry and finding identity that was fsynced, and the engine log says how many it reloaded.
 
 Suppression of known findings is separate. Every scan reads `seen.json`, whether or not it resumes.
 A finding that appears again is still reported, with `seenBefore: true`. The engine does not

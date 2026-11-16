@@ -21,9 +21,7 @@ use serde::{Deserialize, Serialize};
 use afz_conformance::harness;
 use afz_engine::config::Severity;
 use afz_engine::harnesses;
-use afz_engine::report::scanresult::{
-    self, FindingRecord, GitScope, ProgressSample, TargetStat, SCAN_FILE,
-};
+use afz_engine::report::scanresult::{self, FindingRecord, GitScope, ProgressSample, TargetStat};
 use afz_engine::rpc::client::PluginClient;
 use afz_engine::scan::{self, Options, Progress, Seed, MAX_SEEDS};
 use afz_protocol::{
@@ -660,7 +658,7 @@ fn findings_dir(shared: &Shared, params: &FindingsParams) -> Result<(PathBuf, St
         }
         let resolved = project::resolve(params.path.as_deref(), params.config.as_deref())?;
         let candidate = resolved.out_dir.join(scan_id);
-        if project::has_scan_file(&candidate) {
+        if project::has_result(&candidate) {
             return Ok((candidate, resolved.scan_root.display().to_string()));
         }
         return Err(format!(
@@ -693,14 +691,14 @@ fn job_dir(job: &Job) -> Result<(PathBuf, String), String> {
     }
 }
 
-/// The newest subdirectory of `out_dir` holding a readable `scan.json`. Scan ids sort by
+/// The newest subdirectory of `out_dir` holding a finished scan result. Scan ids sort by
 /// their start time, so the lexicographically last name is the most recent scan.
 fn newest_scan_dir(out_dir: &std::path::Path) -> Option<PathBuf> {
     let mut names: Vec<PathBuf> = std::fs::read_dir(out_dir)
         .ok()?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
-        .filter(|path| project::has_scan_file(path))
+        .filter(|path| project::has_result(path))
         .collect();
     names.sort();
     names.pop()
@@ -864,10 +862,9 @@ impl Afz {
             Ok(found) => found,
             Err(message) => return Ok(action_error(message)),
         };
-        let path = dir.join(SCAN_FILE);
-        let document = match scanresult::read(&path) {
+        let document = match scanresult::read(&dir) {
             Ok(document) => document,
-            Err(e) => return Ok(action_error(format!("cannot read {}: {e}", path.display()))),
+            Err(e) => return Ok(action_error(format!("cannot read {}: {e}", dir.display()))),
         };
         let floor = match params.severity.as_deref().map(parse_severity).transpose() {
             Ok(floor) => floor.flatten(),

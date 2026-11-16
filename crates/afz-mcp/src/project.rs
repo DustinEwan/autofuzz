@@ -48,9 +48,8 @@ pub fn resolve(path: Option<&str>, config_path: Option<&str>) -> Result<Resolved
     })
 }
 
-/// Whether a directory holds a readable scan result, used by `afz_findings` when it picks
+/// Whether a directory holds a finished scan result, used by `afz_findings` when it picks
 /// the newest scan under an output directory.
-pub fn has_scan_file(dir: &Path) -> bool {
-    dir.join(afz_engine::report::scanresult::SCAN_FILE)
-        .is_file()
+pub fn has_result(dir: &Path) -> bool {
+    afz_engine::report::scanresult::has_result(dir)
 }

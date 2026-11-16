@@ -251,8 +251,10 @@ platform-specific dependency for a number that the plugin already reports.
 
 ## The scan result
 
-A scan writes one immutable JSON document. It holds the inventory, the execution counts, the
-coverage, the findings, and the paths of the artifacts. The schema is
+A scan's result is `scan.jsonl`: one JSON record per line, fsynced as it is written. Durable
+lines record retained corpus entries, reported findings, and coverage samples as they happen,
+and the final `finished` line holds the complete document — the inventory, the execution
+counts, the coverage, the findings, and the paths of the artifacts. The document's schema is
 `docs/schema/afz-1/scan-result.json`.
 
 The finding identity is a hash over the target id, the fault class, and the top fault frame. It does
@@ -264,8 +266,9 @@ opens and updates. A repeat is still written, with `seenBefore: true`, because a
 bug still in the tree would be worse than one that repeats itself. The engine does not minimize a
 repeat and does not ask for a reproducer for one.
 
-The writer saves `scan.json` last, after every artifact the document lists. A reader that finds the
-document never sees a scan directory whose artifacts are still being written.
+The `finished` line is appended last, after every artifact the document lists, so a reader that
+finds it never sees a scan directory whose artifacts are still being written. A journal without
+that line is an unfinished run: `--resume` restarts from the lines that landed.
 
 ## Determinism
 

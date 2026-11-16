@@ -372,7 +372,7 @@ pub fn run(
             .as_ref()
             .map(|worktree| worktree.path.display().to_string()),
     });
-    let mut scanner = Scanner::open(options, launch, handshake, discovery, request, probe)?;
+    let mut scanner = Scanner::open(options, launch, handshake, discovery, request, probe, started_at)?;
     scanner.git_scope = git;
     scanner.log.append(&mut notes);
     scanner.setup_ms = setup_at.elapsed().as_millis();
@@ -532,6 +532,19 @@ struct Scanner {
     /// Wall time spent asking the workers for their reachable-edge tables, at each sample and at the
     /// end of the run. The answer waits for the slowest process while every other worker is idle.
     coverage_ms: u128,
+    /// The scan's directory name, fixed at open so the journal and the finished document
+    /// share one identity.
+    scan_id: String,
+    /// The directory claimed at open: the journal lives here, and the finished document
+    /// lands here rather than in a freshly chosen directory.
+    journal_dir: PathBuf,
+    /// Durability insurance. `None` once the journal could not be opened or written; a
+    /// journal failure never costs the run its results.
+    journal: Option<Journal>,
+    journal_error: Option<String>,
+    /// Findings this scan suppressed because an earlier scan had reported the identity, plus
+    /// the identities a resume imported from the scan it continues.
+    suppressed: usize,
 }
 
 /// The plugin connections minimization runs against, with the targets each has prepared.
@@ -674,6 +687,7 @@ impl Scanner {
         discovery: afz_protocol::Discovery,
         discovery_request: DiscoverReq,
         probe: PluginClient,
+        started_at: SystemTime,
     ) -> Result<Scanner, ScanError> {
         let mut targets = discovery.targets.clone();
         targets.sort_by(|a, b| a.id.cmp(&b.id));
@@ -745,6 +759,11 @@ impl Scanner {
             failed: 0,
             setup_ms: 0,
             coverage_ms: 0,
+            scan_id: scan_id(started_at),
+            journal_dir: PathBuf::default(),
+            journal: None,
+            journal_error: None,
+            suppressed: 0,
         };
         scanner.log.push(format!(
             "harness {} {} ({}), strategy {:?}, seed 0x{:08x}",
@@ -754,9 +773,45 @@ impl Scanner {
             scanner.options.strategy,
             scanner.options.seed
         ));
+        // Claim the directory and open the journal before the first invocation: everything the
+        // loop learns after this point is durable, whatever kills the process. A directory that
+        // cannot be claimed is a scan with nowhere to land its result, so that failure is fatal
+        // here; a journal file that will not open only costs the durability, and the run goes on.
+        scanner.journal_dir = reserve_dir(&scanner.options.out_dir, &scanner.scan_id)?;
+        scanner.journal = Journal::create(&scanner.journal_dir).ok();
+        if scanner.journal.is_none() {
+            scanner.journal_error = Some("the journal file could not be opened".to_string());
+            scanner.log.push(format!(
+                "journal disabled: {}; the scan still runs, but a hard kill loses this run",
+                scanner.journal_error.as_deref().unwrap_or_default()
+            ));
+        }
+        scanner.journal_append(&JournalLine::Started(JournalStarted {
+            scan_id: scanner.scan_id.clone(),
+            started_at: rfc3339(started_at),
+            seed: options.seed,
+            invocations: options.invocations,
+            wall_clock_ms: options.wall_clock.as_millis() as u64,
+            workers: options.workers,
+        }));
         scanner.load_resume()?;
         scanner.load_seeds()?;
         Ok(scanner)
+    }
+
+    /// Append one durable line. The journal is insurance: a failed write is logged once and
+    /// never costs the run more than the durability it was providing.
+    fn journal_append(&mut self, line: &JournalLine) {
+        let Some(journal) = self.journal.as_mut() else {
+            return;
+        };
+        if let Err(e) = journal.append(line) {
+            if self.journal_error.is_none() {
+                self.journal_error = Some(e.to_string());
+                self.log
+                    .push(format!("journal write failed: {e}; durable records stop here"));
+            }
+        }
     }
 
     /// A resumed scan starts with the previous corpus and the previous findings' identities.
@@ -767,7 +822,49 @@ impl Scanner {
         let Some(dir) = self.options.resume.clone() else {
             return Ok(());
         };
-        let entries = read_corpus(&dir)?;
+        // The journal is the result and the resume source: a finished scan's journal carries
+        // the same corpus entries and finding identities as its document, and a crashed scan's
+        // carries everything that landed. Directories written before the journal was the
+        // result still resume from `scan.json` and `corpus/`.
+        let (entries, identities, source) = if dir.join(JOURNAL_FILE).is_file() {
+            let journal = read_journal(&dir).map_err(|e| {
+                ConfigError::msg(format!("{} holds no readable journal: {e}", dir.display()))
+            })?;
+            let mut entries = Vec::new();
+            let mut identities = Vec::new();
+            for line in journal.lines {
+                match line {
+                    JournalLine::Corpus(entry) => entries.push(entry),
+                    JournalLine::Finding(finding) => identities.push(finding.record.identity),
+                    _ => {}
+                }
+            }
+            let source = if journal.torn_tail {
+                "journal (torn last line skipped)"
+            } else {
+                "journal"
+            };
+            (entries, identities, source)
+        } else if dir.join(SCAN_FILE).is_file() {
+            let document = read(&dir)?;
+            (
+                read_corpus(&dir)?,
+                document
+                    .findings
+                    .iter()
+                    .map(|finding| finding.identity.clone())
+                    .collect::<Vec<String>>(),
+                "scan.json",
+            )
+        } else {
+            return Err(ConfigError::msg(format!(
+                "{} holds neither {} nor {}",
+                dir.display(),
+                JOURNAL_FILE,
+                SCAN_FILE
+            ))
+            .into());
+        };
         let mut loaded = 0usize;
         for entry in entries {
             let edges: CoverageDigest = entry.edges.into_iter().collect();
@@ -779,15 +876,15 @@ impl Scanner {
                 loaded += 1;
             }
         }
-        let document = read(&dir.join(SCAN_FILE))?;
-        let suppressed = document
-            .findings
+        let suppressed = identities
             .iter()
-            .filter(|f| self.seen.record(&f.identity))
+            .filter(|identity| self.seen.record(identity))
             .count();
+        self.suppressed += suppressed;
         self.log.push(format!(
-            "resumed {}: {loaded} corpus entr(ies) reloaded, {suppressed} identity/ies suppressed",
-            dir.display()
+            "resumed {} from {}: {loaded} corpus entr(ies) reloaded, {suppressed} identity/ies suppressed",
+            dir.display(),
+            source
         ));
         Ok(())
     }
@@ -1083,6 +1180,12 @@ impl Scanner {
                 self.refresh_coverage();
                 let sample = self.progress(self.ran);
                 self.samples.push(sample.clone());
+                self.journal_append(&JournalLine::Progress(JournalProgress {
+                    invocations: sample.invocations,
+                    coverage_edges: sample.coverage_edges,
+                    coverage_total: sample.coverage_total,
+                    findings: sample.findings,
+                }));
                 on_progress(&sample);
             }
         }
@@ -1107,7 +1210,8 @@ impl Scanner {
         ) {
             self.deadline_exceeded += 1;
         }
-        if completed.outcome.duration_ms() >= self.deadline.as_millis() as f64 {
+        let cut = completed.outcome.duration_ms() >= self.deadline.as_millis() as f64;
+        if cut {
             self.deadline_cuts += 1;
         }
         let recorded = self.corpus.record(
@@ -1116,6 +1220,14 @@ impl Scanner {
             &edges,
             completed.invocation_id,
         );
+        if let Recorded::Retained { ref id, .. } = recorded {
+            self.journal_append(&JournalLine::Corpus(CorpusFile {
+                name: id.clone(),
+                target_id: completed.target_id.clone(),
+                values: values.to_vec(),
+                edges: edges.iter().copied().collect(),
+            }));
+        }
         let took = completed.outcome.duration_ms();
         let stat = self
             .stats
@@ -1124,6 +1236,9 @@ impl Scanner {
         stat.invocations += 1;
         stat.total_ms += took;
         stat.max_ms = stat.max_ms.max(took);
+        if cut {
+            stat.deadline_cuts += 1;
+        }
         if let Recorded::Retained { new_edges, .. } = recorded {
             stat.novel_edges += u64::from(new_edges);
         }
@@ -1156,6 +1271,9 @@ impl Scanner {
         // reader sees that the fault is still being hit, and is not shrunk again, because an earlier
         // scan already did that work and wrote it up.
         let seen_before = !self.seen.record(&identity);
+        if seen_before {
+            self.suppressed += 1;
+        }
         let id = finding::finding_id(&identity);
         let minimized = (!seen_before).then(|| self.shrink(&finding.target_id, values));
         // The plugin renders the reproducer. The engine owns no target-language knowledge: it
@@ -1258,6 +1376,12 @@ impl Scanner {
             .entry(finding.target_id.clone())
             .or_insert_with(|| TargetStat::new(finding.target_id.clone()))
             .findings += 1;
+        self.journal_append(&JournalLine::Finding(Box::new(JournalFinding {
+            record: record.clone(),
+            input: values.to_vec(),
+            minimized: shrunk.as_ref().map(|m| m.values.clone()),
+            reproducer: repro.as_ref().map(|r| r.content.clone()),
+        })));
         self.by_identity.insert(identity, self.records.len());
         self.records.push((
             record,
@@ -1442,17 +1566,17 @@ impl Scanner {
             coverage: coverage.as_deref(),
             log: Some(&log),
         };
-        let dir = write(&self.options.out_dir, &document, &files)?;
+        write_into(&self.journal_dir, &document, &files)?;
         let markdown = if self.options.renderers.iter().any(|r| r == "markdown") {
             let text = render_markdown::render(&document);
-            std::fs::write(dir.join("report.md"), &text)?;
+            std::fs::write(self.journal_dir.join("report.md"), &text)?;
             Some(text)
         } else {
             None
         };
         self.seen.save()?;
         Ok(ScanReport {
-            dir,
+            dir: self.journal_dir.clone(),
             document,
             samples: self.samples.clone(),
             markdown,
@@ -1472,7 +1596,7 @@ impl Scanner {
         let root = self.options.root.display().to_string();
         ScanDocument {
             schema_version: ScanSchemaVersion::AfzScan1,
-            scan_id: scan_id(started_at),
+            scan_id: self.scan_id.clone(),
             started_at: rfc3339(started_at),
             finished_at: rfc3339(finished_at),
             engine: EngineInfo {
@@ -1505,6 +1629,15 @@ impl Scanner {
             execution: Execution {
                 invocations: self.ran,
                 corpus_size: self.corpus.len() as u64,
+                corpus_bytes: Some(
+                    self.corpus
+                        .entries()
+                        .map(|entry| {
+                            serde_json::to_string(&entry.values)
+                                .map_or(0, |text| text.len() as u64)
+                        })
+                        .sum(),
+                ),
                 seeded: self.seeded,
                 coverage_edges: self.corpus.covered_count(),
                 coverage_ratio: self.ratio(),
@@ -1542,6 +1675,7 @@ impl Scanner {
                 .iter()
                 .map(|(record, _)| record.clone())
                 .collect(),
+            findings_suppressed: Some(self.suppressed as u32),
             artifacts: Artifacts {
                 corpus: format!("{CORPUS_DIR}/"),
                 coverage: self

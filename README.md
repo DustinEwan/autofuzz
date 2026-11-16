@@ -114,8 +114,9 @@ tree replays the same calls. The scan prints progress and a summary, then writes
 Open `report.md` first. It has one section per finding: the function or route that broke, the fault, the
 smallest input that still reproduces it, and the path of a script that replays the invocation.
 
-Open `scan.json` when you want the same result in a machine-readable form. It holds the inventory,
-the execution counts, the coverage, the findings, and the paths of the artifacts.
+Open `scan.jsonl` when you want the same result in a machine-readable form. It is the scan
+result: durable lines are appended as they happen, and the final `finished` line holds the
+inventory, the execution counts, the coverage, the findings, and the paths of the artifacts.
 
 The example uses a TypeScript package. The same steps work for an HTTP service: install the `openapi`
 harness, and configure the scan project with the OpenAPI document and the service address.
@@ -188,7 +189,7 @@ A scan writes one directory per run at `<output.dir>/<scanId>/`. `output.dir` de
 | Path | Contents |
 | --- | --- |
 | `report.md` | The human-readable report. One section per finding, with its severity, its minimized input, and the path of its reproducer. |
-| `scan.json` | The machine-readable result. It validates against [`docs/schema/afz-1/scan-result.json`](docs/schema/afz-1/scan-result.json). The engine writes it last. |
+| `scan.jsonl` | The machine-readable result: one record per line, fsynced as it is written. The final `finished` line holds the complete document, which validates against [`docs/schema/afz-1/scan-result.json`](docs/schema/afz-1/scan-result.json). |
 | `inputs/` | The input that produced each finding, and the minimized input when the scan shrank it. |
 | `repros/` | One standalone script per finding, with the name `afz-f-<id>.<extension>`. |
 | `corpus/` | The inputs that the scan kept. `--resume` loads them again. |

@@ -1,6 +1,8 @@
 //! The scan result document, and the files that stand beside it.
 //!
-//! One JSON document per scan, written once and never edited in place. Renderers read it and
+//! One append-only JSON Lines file per scan: `scan.jsonl`. Every line is fsynced the moment it
+//! lands, and the last line — the finished record — is the complete result document. A journal
+//! that ends without that line is an unfinished run. Renderers read the finished record and
 //! nothing else, which is why the document carries the numbers a triager needs and points at
 //! artifacts for everything large.
 //!
@@ -24,12 +26,18 @@ use afz_protocol::{Capability, EdgeId, Materialization, SkippedTarget, TargetCla
 
 use crate::config::Severity;
 
-/// The directory names beside `scan.json`.
+/// The directory names beside the result.
 pub const INPUTS_DIR: &str = "inputs";
 pub const REPROS_DIR: &str = "repros";
 pub const CORPUS_DIR: &str = "corpus";
-/// The file every renderer opens and the only one it may open.
+/// The result file of engines that ended a scan with a single document. New scans write
+/// [`JOURNAL_FILE`]; this file is still read, so old scan directories stay inspectable.
 pub const SCAN_FILE: &str = "scan.json";
+/// The scan result: one JSON record per line, fsynced as it is written. The durable lines
+/// (`started`, `corpus`, `finding`, `progress`) keep every fact a `kill -9` would otherwise
+/// lose, and the final `finished` line carries the complete document. A journal without that
+/// line is an unfinished run: `--resume` restarts from the lines that landed.
+pub const JOURNAL_FILE: &str = "scan.jsonl";
 
 /// One scan's result.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -49,6 +57,11 @@ pub struct ScanDocument {
     pub inventory: Inventory,
     pub execution: Execution,
     pub findings: Vec<FindingRecord>,
+    /// Findings this scan did not report because an earlier scan had reported the same fault
+    /// identity. Without it, `findings: []` cannot tell "found nothing" from "suppressed
+    /// everything". Absent in scans recorded before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub findings_suppressed: Option<u32>,
     pub artifacts: Artifacts,
 }
 
@@ -122,6 +135,12 @@ pub struct Inventory {
 pub struct Execution {
     pub invocations: u64,
     pub corpus_size: u64,
+    /// The total size in bytes of the compact JSON documents the scan wrote into `corpus/`:
+    /// the byte count of the inputs a resume or a seed file replays. Absent in scans recorded
+    /// before this field existed, which is why it is optional: a missing count must not read
+    /// as a zero-byte corpus.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus_bytes: Option<u64>,
     /// Inputs the caller supplied and the engine ran before the guided loop started. Zero for
     /// every scan that was not seeded.
     pub seeded: u64,
@@ -180,6 +199,11 @@ pub struct TargetStat {
     /// Edges this target's inputs added to the corpus. A target at zero over thousands of
     /// invocations has stopped teaching the search.
     pub novel_edges: u64,
+    /// Invocations of this target whose reported duration reached the deadline the engine gave
+    /// the plugin. The scan-level `deadlineCuts` is the sum of this column. `default` keeps
+    /// target rows written before this column existed readable, at zero.
+    #[serde(default)]
+    pub deadline_cuts: u64,
     pub disabled: bool,
 }
 
@@ -193,6 +217,7 @@ impl TargetStat {
             total_ms: 0.0,
             max_ms: 0.0,
             novel_edges: 0,
+            deadline_cuts: 0,
             disabled: false,
         }
     }
@@ -333,7 +358,7 @@ pub struct MinimizedInput {
 /// both: an input is only useful when the engine knows which target it belongs to and which edges
 /// it earned, and rediscovering that by re-running every retained entry would spend a scan's
 /// whole budget before the first new invocation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CorpusFile {
     /// The file stem beside `corpus/`, normally the corpus entry's own id.
@@ -390,7 +415,8 @@ pub fn scan_id(now: SystemTime) -> String {
     )
 }
 
-/// Write one scan: the document, then the files it names. Returns the scan's directory.
+/// Write one scan: the files the document names, then the `finished` line that lands the
+/// result. Returns the scan's directory.
 ///
 /// The directory is created under `out_dir` named by `document.scanId`. If that name is taken —
 /// two scans in the same millisecond and the same nonce — the writer appends `-2`, `-3` rather
@@ -402,6 +428,26 @@ pub fn write(
 ) -> io::Result<PathBuf> {
     std::fs::create_dir_all(out_dir)?;
     let dir = unique_dir(out_dir, &document.scan_id)?;
+    write_into(&dir, document, files)?;
+    Ok(dir)
+}
+
+/// Claim the scan's directory before the first invocation, so the journal has somewhere to live
+/// from the first line. Naming is reserved once and for all: the finished document lands in the
+/// same directory the journal started in.
+pub fn reserve_dir(out_dir: &Path, scan_id: &str) -> io::Result<PathBuf> {
+    std::fs::create_dir_all(out_dir)?;
+    let dir = unique_dir(out_dir, scan_id)?;
+    std::fs::create_dir_all(dir.join(INPUTS_DIR))?;
+    std::fs::create_dir_all(dir.join(REPROS_DIR))?;
+    std::fs::create_dir_all(dir.join(CORPUS_DIR))?;
+    Ok(dir)
+}
+
+/// Land a finished scan in a directory [`reserve_dir`] already claimed: the artifact files
+/// first, then the `finished` line that completes the journal. Split from [`write`] because a
+/// journalled scan's directory predates its document.
+pub fn write_into(dir: &Path, document: &ScanDocument, files: &ScanFiles<'_>) -> io::Result<()> {
     std::fs::create_dir_all(dir.join(INPUTS_DIR))?;
     std::fs::create_dir_all(dir.join(REPROS_DIR))?;
     std::fs::create_dir_all(dir.join(CORPUS_DIR))?;
@@ -436,21 +482,70 @@ pub fn write(
         std::fs::write(dir.join("engine.log"), log)?;
     }
 
-    // Last, so a reader that finds `scan.json` never sees a scan directory whose artifacts are
+    // The completion of the scan: the finished line rides the journal last, fsynced like every
+    // line before it, so a reader that finds it never sees a scan directory whose artifacts are
     // still being written.
-    write_json(&dir.join(SCAN_FILE), document)?;
-    Ok(dir)
+    let mut journal = Journal::create(dir)?;
+    journal.append(&JournalLine::Finished(Box::new(document.clone())))
 }
 
-/// Read a scan result. Renderers go through here and open nothing else.
-pub fn read(path: &Path) -> Result<ScanDocument, io::Error> {
-    let text = std::fs::read_to_string(path)?;
+/// Read a scan result from the directory that holds it. Renderers go through here and open
+/// nothing else.
+///
+/// The journal is the result: the newest `finished` line of `scan.jsonl` is the document, and
+/// a journal without one is an unfinished run, reported as such rather than rendered as a
+/// partial report. Directories written by engines that ended the scan with `scan.json` are
+/// still read, so old scan directories stay inspectable and resumable.
+pub fn read(dir: &Path) -> Result<ScanDocument, io::Error> {
+    if dir.join(JOURNAL_FILE).is_file() {
+        let contents = read_journal(dir)?;
+        for line in contents.lines.into_iter().rev() {
+            if let JournalLine::Finished(document) = line {
+                return Ok(*document);
+            }
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            format!(
+                "{}: no finished record: the scan did not complete",
+                dir.display()
+            ),
+        ));
+    }
+    let path = dir.join(SCAN_FILE);
+    let text = std::fs::read_to_string(&path)?;
     serde_json::from_str(&text).map_err(|e| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("{}: {e}", path.display()),
         )
     })
+}
+
+/// The file holding a directory's result: the journal, or the legacy document for a directory
+/// written before the journal was the result.
+pub fn result_file_in(dir: &Path) -> PathBuf {
+    if dir.join(JOURNAL_FILE).is_file() {
+        dir.join(JOURNAL_FILE)
+    } else {
+        dir.join(SCAN_FILE)
+    }
+}
+
+/// Whether a directory holds a finished scan result: a journal with a `finished` line, or a
+/// legacy `scan.json`.
+pub fn has_result(dir: &Path) -> bool {
+    if dir.join(JOURNAL_FILE).is_file() {
+        return read_journal(dir)
+            .map(|contents| {
+                contents
+                    .lines
+                    .iter()
+                    .any(|line| matches!(line, JournalLine::Finished(_)))
+            })
+            .unwrap_or(false);
+    }
+    dir.join(SCAN_FILE).is_file()
 }
 
 /// The JSON Schema for this document, the same bytes `docs/schema/afz-1/scan-result.json` holds.
@@ -524,4 +619,131 @@ pub fn relativize(root: &str, path: &str) -> String {
         Some(rest) => rest.trim_start_matches('/').to_string(),
         None => trimmed.to_string(),
     }
+}
+
+/// One durable fact of a scan, one line of `scan.jsonl`, the scan result.
+///
+/// The durable lines exist for the one failure no signal handler catches: power loss, the OOM
+/// killer, `kill -9`. Every line that landed is durable the moment it was appended, so a scan
+/// that died mid-flight still left its corpus and findings behind for `--resume` to restart
+/// from. The `finished` line is what makes the journal complete: it carries the whole result
+/// document, and a journal without it marks an unfinished run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum JournalLine {
+    /// The scan claimed its directory and began.
+    #[serde(rename = "started")]
+    Started(JournalStarted),
+    /// The corpus retained this input; a resumed scan replays it without rediscovering it.
+    #[serde(rename = "corpus")]
+    Corpus(CorpusFile),
+    /// The scan found something. The record is the finished document's, and the values and
+    /// script ride inline because the artifact files they name do not exist yet.
+    #[serde(rename = "finding")]
+    Finding(Box<JournalFinding>),
+    /// One progress sample, so a crashed run's trajectory survives it.
+    #[serde(rename = "progress")]
+    Progress(JournalProgress),
+    /// The scan is complete, and this is its result. Appended last and fsynced like every
+    /// line before it: the scan is finished exactly when this line lands.
+    #[serde(rename = "finished")]
+    Finished(Box<ScanDocument>),
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JournalStarted {
+    pub scan_id: String,
+    pub started_at: String,
+    pub seed: u64,
+    pub invocations: u64,
+    pub wall_clock_ms: u64,
+    pub workers: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JournalFinding {
+    pub record: FindingRecord,
+    /// The input that produced the finding, the same shape `inputs/<id>.json` carries.
+    pub input: Vec<ValueTree>,
+    /// The shrunk input, if shrinking had finished when the scan died.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimized: Option<Vec<ValueTree>>,
+    /// The rendered reproducer script, if the harness had handed one back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reproducer: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JournalProgress {
+    pub invocations: u64,
+    pub coverage_edges: u64,
+    pub coverage_total: u64,
+    pub findings: usize,
+}
+
+/// The scan's open journal. Every append flushes and fsyncs before returning: a durability
+/// promise that lives in the page cache is no promise at all, and journal lines are rare
+/// (one per retained corpus entry, per finding, per progress sample) next to the batch that
+/// produced them.
+#[derive(Debug)]
+pub struct Journal {
+    file: std::fs::File,
+}
+
+impl Journal {
+    pub fn create(dir: &Path) -> io::Result<Journal> {
+        Ok(Journal {
+            file: std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join(JOURNAL_FILE))?,
+        })
+    }
+
+    pub fn append(&mut self, line: &JournalLine) -> io::Result<()> {
+        let text = serde_json::to_string(line)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+            + "\n";
+        self.file.write_all(text.as_bytes())?;
+        self.file.flush()?;
+        self.file.sync_all()
+    }
+}
+
+/// What a journal held when it was read back.
+#[derive(Debug, Clone)]
+pub struct JournalContents {
+    pub lines: Vec<JournalLine>,
+    /// The last line was not complete JSON: the machine died mid-append. Everything before
+    /// it is intact, because every landed line was fsynced.
+    pub torn_tail: bool,
+}
+
+/// Read a scan journal. A torn last line is expected after a hard kill and is skipped; a
+/// corrupt line in the middle means the file was not written by a journal, and that is
+/// reported rather than skipped in silence.
+pub fn read_journal(dir: &Path) -> io::Result<JournalContents> {
+    let text = std::fs::read_to_string(dir.join(JOURNAL_FILE))?;
+    let mut lines = Vec::new();
+    let mut torn_tail = false;
+    let raw: Vec<&str> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+    for (index, line) in raw.iter().enumerate() {
+        match serde_json::from_str::<JournalLine>(line) {
+            Ok(parsed) => lines.push(parsed),
+            Err(e) => {
+                if index + 1 == raw.len() {
+                    torn_tail = true;
+                } else {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("{} line {}: {e}", JOURNAL_FILE, index + 1),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(JournalContents { lines, torn_tail })
 }

@@ -1,19 +1,21 @@
 //! Markdown for a scan result.
 //!
-//! This module reads `scan.json` and nothing else. It receives a path, hands it to
-//! [`crate::report::scanresult::read`], and formats the document. It has no access to the corpus,
-//! the coverage map, or the engine log, and it does not ask for them: a report that needed the
-//! corpus could not be handed to someone who only has the report directory.
+//! This module reads a scan directory's result and nothing else. It receives a path, hands the
+//! directory to [`crate::report::scanresult::read`], and formats the finished record. It has no
+//! access to the corpus, the coverage map, or the engine log, and it does not ask for them: a
+//! report that needed the corpus could not be handed to someone who only has the report
+//! directory.
 
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
-use crate::report::scanresult::{self, ScanDocument, SCAN_FILE};
+use crate::report::scanresult::{self, ScanDocument};
 
-/// Render the scan result at `path`. `path` is the only file opened.
+/// Render the scan result of the directory holding `path`. [`scanresult::read`] chooses the
+/// file: the journal's finished record, or a legacy `scan.json`.
 pub fn render_file(path: &Path) -> Result<String, io::Error> {
-    let document = scanresult::read(path)?;
+    let document = scanresult::read(path.parent().unwrap_or(Path::new(".")))?;
     Ok(render(&document))
 }
 
@@ -95,6 +97,9 @@ pub fn render(document: &ScanDocument) -> String {
         "corpus entries",
         &document.execution.corpus_size.to_string(),
     );
+    if let Some(bytes) = &document.execution.corpus_bytes {
+        row(&mut out, "corpus bytes", &bytes.to_string());
+    }
     row(
         &mut out,
         "coverage",
@@ -132,6 +137,11 @@ pub fn render(document: &ScanDocument) -> String {
         );
     }
     row(&mut out, "findings", &document.findings.len().to_string());
+    if let Some(suppressed) = &document.findings_suppressed {
+        if *suppressed > 0 {
+            row(&mut out, "findings suppressed", &suppressed.to_string());
+        }
+    }
     out.push('\n');
 
     if !document.inventory.materialization_counts.is_empty() {
@@ -170,6 +180,31 @@ pub fn render(document: &ScanDocument) -> String {
         }
         out.push('\n');
     }
+
+    // One row per target: where the budget went, what each target taught the corpus, and which
+    // targets spent invocations without adding anything.
+    out.push_str("## Targets\n\n");
+    out.push_str(
+        "| target | invocations | findings | novel edges | deadline cuts | total ms | max ms |\n|---|---|---|---|---|---|---|\n",
+    );
+    for target in &document.execution.targets {
+        out.push_str(&format!(
+            "| `{}`{} | {} | {} | {} | {} | {:.1} | {:.1} |\n",
+            target.target_id,
+            if target.disabled {
+                " (disabled)"
+            } else {
+                ""
+            },
+            target.invocations,
+            target.findings,
+            target.novel_edges,
+            target.deadline_cuts,
+            target.total_ms,
+            target.max_ms
+        ));
+    }
+    out.push('\n');
 
     // Two findings that share a target and the invocation that first saw them are one call
     // classified by two oracles; naming the siblings keeps identical snippets readable as one
@@ -277,5 +312,5 @@ fn keyword<T: serde::Serialize>(value: &T) -> String {
 
 /// The file a renderer is given: `<scan dir>/scan.json`.
 pub fn scan_file_in(scan_dir: &Path) -> std::path::PathBuf {
-    scan_dir.join(SCAN_FILE)
+    scanresult::result_file_in(scan_dir)
 }

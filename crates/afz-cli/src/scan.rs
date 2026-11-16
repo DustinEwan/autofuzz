@@ -2,7 +2,7 @@
 //!
 //! The command resolves the scan project, applies the flags the user would change between runs,
 //! and hands the rest to [`afz_engine::scan`]. Everything it prints comes from the scan result it
-//! just wrote, so the terminal and `scan.json` cannot disagree.
+//! just wrote, so the terminal and `scan.jsonl` cannot disagree.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -279,6 +279,17 @@ fn print_summary(report: &scan::ScanReport) {
             "  {} plugin restarts, {} unattempted invocations, {} disabled targets",
             document.execution.restarts,
             document.execution.unattempted,
+            document.execution.disabled_targets.len()
+        );
+    }
+    if let Some(suppressed) = document.findings_suppressed {
+        if suppressed > 0 {
+            println!("  {suppressed} finding(s) suppressed as already reported.");
+        }
+    }
+    if !document.execution.disabled_targets.is_empty() {
+        eprintln!(
+            "warning: {} target(s) were disabled after repeated plugin process loss; their planned invocations were dropped (execution.disabledTargets)",
             document.execution.disabled_targets.len()
         );
     }
