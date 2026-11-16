@@ -1,0 +1,150 @@
+# Agent install guide — autofuzz (`afz`)
+
+**Audience:** coding agents (Claude Code, Codex, Cursor, Copilot, …) and humans who paste this URL into an agent.
+
+**Goal:** install the `afz` CLI, install the harness for the user's language, configure the user's project for scanning, and prove the setup with a small smoke scan.
+
+**Version:** this guide covers `afz` 0.1.0 and protocol `afz/1`. Check the installed version with `afz --version`.
+
+**Hard rules for the agent:**
+
+1. **Never edit the target project's source code.** A scan project is `autofuzz.json` plus scan output; nothing else in the target repo changes.
+2. **Never commit `.autofuzz/`** (scan output) and never paste file contents from it into git-tracked files.
+3. **Do not scan a service you do not have permission to test.** For HTTP/OpenAPI targets, confirm the user owns or may attack the address before any scan.
+4. **Discover before asking the user.** Read the target repo first: its language picks the harness, its layout picks the include globs. Ask only what the repo cannot answer.
+5. **Every step below ends in a check you run.** Do not report success from the exit of an install command alone.
+6. Anything that needs `sudo` is a question for the human, not a step to improvise.
+
+---
+
+## 0. What you are installing
+
+| Piece | Purpose |
+|-------|---------|
+| `afz` | The engine: discovers targets, generates inputs, runs scans, writes reports |
+| `afz-mcp` | The same operations as MCP tools over stdio (optional, §5) |
+| A harness plugin | Connects the engine to one language or API; installed per machine under `~/.local/share/autofuzz/` |
+| `autofuzz.json` | The scan project, written into the user's repo root |
+
+**Prerequisites:** `curl`, `git`, and any C compiler. The installer bootstraps the Rust toolchain itself; it never uses `sudo`.
+
+## 1. Detect the environment
+
+```bash
+command -v afz && afz --version && afz harnesses
+```
+
+If `afz` resolves and prints a version, skip §2. If it resolves but no harness for the target's language is listed, skip to §3. If `~/.local/bin` is not on `PATH` after a fresh install:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+## 2. Install the engine
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DustinEwan/autofuzz/main/install.sh | sh
+```
+
+The script builds a release binary from the public repository into `~/.local/bin` (both `afz` and `afz-mcp`). To pin a revision, prefix the command with `AFZ_REF=<tag-or-branch>`. The first build takes a few minutes.
+
+**Success criteria:**
+
+```bash
+afz --version          # prints a version
+afz-mcp --help         # the MCP server binary is present
+```
+
+## 3. Choose and install a harness
+
+Pick by what the target repo is:
+
+| Target | Harness | Install |
+|--------|---------|---------|
+| TypeScript / JavaScript | `js-ts` | `afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts` |
+| Python | `python` | `afz install-harness https://github.com/DustinEwan/autofuzz-harness-python` |
+| Rust | `rust` | `afz install-harness https://github.com/DustinEwan/autofuzz-harness-rust` |
+| C++ | `cpp` | `afz install-harness https://github.com/DustinEwan/autofuzz-harness-cpp` |
+| HTTP service / OpenAPI | `openapi` | `afz install-harness https://github.com/DustinEwan/autofuzz-harness-openapi` |
+| WebAssembly | `wasm` | `afz install-harness https://github.com/DustinEwan/autofuzz-harness-wasm` |
+| Writing a new harness | `starter` | `afz install-harness https://github.com/DustinEwan/autofuzz-harness-starter` |
+
+`install-harness` clones, builds, and runs the twelve-property conformance suite before recording the plugin. Exit 0 **is** the validation; add `--json` for the machine-readable report. Some harnesses need their target toolchain present (Node for `js-ts`, `clang` + `libclang` for `cpp`, `cargo` for `rust`); the install output names the missing tool if so.
+
+**Success criteria:**
+
+```bash
+afz harnesses          # lists the harness with a resolved command
+```
+
+## 4. Configure the project
+
+Run this from the target repo root. Without a terminal, `afz init project` needs `--name`, `--harness`, **and** `--command`; take the plugin command verbatim from the `afz harnesses` line of your chosen harness:
+
+```bash
+afz harnesses                    # find the line of your harness; copy its COMMAND column
+afz init project --name <project-name> --harness <name> --command '<command from that line>' \
+  --include '<globs covering the public source>' --exclude '**/build*/**' --exclude '**/node_modules/**'
+```
+
+`afz init project --help` lists every flag. Hand-write `autofuzz.json` only against the schemas this build carries:
+
+```bash
+afz export-schema      # writes the authoritative JSON Schemas; do not copy field names from this document
+```
+
+**Success criteria:**
+
+```bash
+afz probe-plugin --path .   # prints a table with at least one target
+```
+
+If the table is empty, fix the include globs; do not add flags you cannot name a reason for. The `skipped` list explains every symbol the harness refused and why.
+
+## 5. Register the MCP server (optional)
+
+`afz-mcp` speaks MCP over stdio and is already installed by §2. Register it with whatever mechanism your own harness documents for stdio MCP servers — this document deliberately names no config format or path, because those belong to your tool. Verify by listing your tools and finding the autofuzz ones.
+
+## 6. Prove it with a smoke scan
+
+```bash
+afz scan . --budget invocations=50,wall=2m --quiet
+```
+
+Exit codes: `0` means the scan completed — findings are a result, not a failure; `1` means the scan did not complete.
+
+**Success criteria — all four:**
+
+```bash
+test -d .autofuzz                       # the scan directory exists
+tail -n 1 "$(ls -t .autofuzz/*/scan.jsonl | head -1)" | grep -q '"kind":"finished"'
+test -f "$(dirname "$(ls -t .autofuzz/*/scan.jsonl | head -1)")/report.md"
+tail -n 1 "$(ls -t .autofuzz/*/scan.jsonl | head -1)" | grep -Eq '"invocations":[1-9]'
+```
+
+The last line of `scan.jsonl` is the scan's result: one JSON document with the inventory, counts, coverage, and findings. `report.md` is the human artifact. A journal **without** a `finished` line is an unfinished run — restart it with `afz scan . --resume <scan-dir>`. A scan that completes with **zero** invocations found targets but could not build inputs for them (untyped JavaScript exports do this); report that as a discovery gap instead of calling the setup proven.
+
+For the real scan, raise the budget to what the user asked for (`--budget invocations=…,wall=…`), keep `--seed` fixed so the run replays, and re-read `afz scan --help` before adding any other flag.
+
+## 7. Errors and what to do
+
+| Observation | Action |
+|---|---|
+| `harness '<name>' is not installed` | Run the §3 install line for that harness |
+| `probe-plugin` prints zero targets | Your include globs match nothing; re-read the repo layout |
+| `plugin-lost` in a scan | `afz harnesses` — the plugin command failed to start; the harness's own README names its toolchain requirements |
+| A scan exits 1 | Read the last lines of stderr; the engine names what it could not do |
+| Findings appear | That is the product. Report `report.md`; do not "fix" the target without being asked |
+
+## 8. Facts to hold — an answer that contradicts one of these is wrong
+
+- The scan's result is `scan.jsonl` in `.autofuzz/<scan-id>/`; each durable line is fsynced as it lands and the `finished` line carries the whole document. `scan.json` is a legacy format that `--resume` still reads — never write it.
+- A finding is not a crash you observed: it is one invocation whose outcome the harness classified. Zero findings is not proof of absence of bugs.
+- The engine never calls `minimize` on a repeat of a known finding, and `seen.json` (under the output dir) marks repeats across scans.
+- Coverage granularity is per function for the compiled harnesses; the `cpp` harness reports **line** ranges and `js-ts` reports byte offsets.
+- A fault is an outcome in the scan result, never a JSON-RPC error frame.
+- The conformance template v1 is immutable; a harness that cannot express a property fails validation rather than skipping it.
+
+## 9. If a step fails
+
+Report to the human: which numbered step, the exact command, the exact stderr, and which success criterion did not pass. Stop there — do not install unrelated packages, change system config, or edit the target project to work around a failed step.

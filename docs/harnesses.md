@@ -11,6 +11,7 @@ These are the ones we recommend:
 | [`autofuzz-harness-python`](https://github.com/DustinEwan/autofuzz-harness-python) | Python | source files | `sys.monitoring` line events | none |
 | [`autofuzz-harness-wasm`](https://github.com/DustinEwan/autofuzz-harness-wasm) | WebAssembly | module exports | instrumented module | no guard refusal, private symbol, method receiver, reproducer, or deadline cut |
 | [`autofuzz-harness-openapi`](https://github.com/DustinEwan/autofuzz-harness-openapi) | HTTP, OpenAPI 3 | API document | none | no crash frame, per-call coverage, or stdout purity |
+| [`autofuzz-harness-cpp`](https://github.com/DustinEwan/autofuzz-harness-cpp) | C++ | headers and sources | LLVM profile counters, per function | coverage is per function, not per line |
 | [`autofuzz-harness-starter`](https://github.com/DustinEwan/autofuzz-harness-starter) | your own | the scaffold | none | no receiver or live coverage |
 
 They cover the common languages and services. You can use another harness: point a scan project at its plugin

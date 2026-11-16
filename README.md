@@ -42,6 +42,9 @@ The script supports Linux and macOS. It installs Rust if `cargo` is missing, bui
 `afz-mcp`, and puts them in `~/.local/bin`. It never uses `sudo`. Set `AFZ_INSTALL_DIR` if you want
 another directory.
 
+Or skip the steps: point a coding agent at [`llms.txt`](https://raw.githubusercontent.com/DustinEwan/autofuzz/main/llms.txt)
+and let it install, configure, and prove the setup for you.
+
 To build from a clone instead:
 
 ```sh
@@ -174,6 +177,7 @@ and what the harness reads.
 | JavaScript | [`autofuzz-harness-js-ts`](https://github.com/DustinEwan/autofuzz-harness-js-ts) | package declarations |
 | Python | [`autofuzz-harness-python`](https://github.com/DustinEwan/autofuzz-harness-python) | source files |
 | Rust | [`autofuzz-harness-rust`](https://github.com/DustinEwan/autofuzz-harness-rust) | crate sources |
+| C++ | [`autofuzz-harness-cpp`](https://github.com/DustinEwan/autofuzz-harness-cpp) | headers and sources |
 | WebAssembly | [`autofuzz-harness-wasm`](https://github.com/DustinEwan/autofuzz-harness-wasm) | module exports |
 | OpenAPI 3 | [`autofuzz-harness-openapi`](https://github.com/DustinEwan/autofuzz-harness-openapi) | an API document |
 | Starter | [`autofuzz-harness-starter`](https://github.com/DustinEwan/autofuzz-harness-starter) | the scaffold you edit |
