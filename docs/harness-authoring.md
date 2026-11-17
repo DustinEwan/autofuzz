@@ -47,6 +47,11 @@ fire, or a sentence saying none exists. The pluginrpc mechanism reads that file,
 `prpc-core --suite` runs the six wire rules and these profile rules against a plugin with none of
 this repository's code in between.
 
+Those scripted defects start this repository's own test plugin, which your checkout does not
+contain, so `prpc-core` says so once when it runs them against your plugin and leaves those rules
+as the profile states them. Whether a rule can fail is this repository's proof; what your run
+answers is whether your plugin passes the rule.
+
 `probe-plugin` starts the plugin against a real scan project and prints the targets it discovers.
 Use it to check what the engine will see before you run a scan.
 
