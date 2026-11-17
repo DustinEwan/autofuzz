@@ -48,7 +48,7 @@ jobs:
       # with, exactly as a harness repository's manifest does.
       - name: Conformance (prpc-core)
         run: |
-          cargo install plugin-rpc --bin prpc-core --version 0.1.0-alpha.8 --locked
+          cargo install plugin-rpc --bin prpc-core --version 0.1.0-alpha.11 --locked
           printf '{"name":"afz-fakeplugin","command":["%s/target/release/afz-fakeplugin"],"conformance":{"emitter":["%s/target/release/afz-xtask","fake-fixture"],"deadlineMs":1000}}\n' "$PWD" "$PWD" > /tmp/afz-harness.json
           prpc-core afz-1.profile.json /tmp/afz-harness.json --suite
 
