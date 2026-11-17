@@ -68,12 +68,12 @@ fn a_harness_block_loads_with_design_defaults() {
 
     let launch = loaded.launch().expect("launch");
     assert_eq!(
-        launch.argv,
+        launch.command,
         vec!["node".to_string(), "server.js".to_string()]
     );
     assert_eq!(
-        launch.cwd.as_deref(),
-        Some(loaded.root.display().to_string().as_str())
+        launch.cwd.as_deref().map(|cwd| cwd.display().to_string()),
+        Some(loaded.root.display().to_string())
     );
     assert_eq!(
         launch.env.get("AFZ_ROOT").map(String::as_str),
@@ -99,7 +99,7 @@ fn an_explicit_command_overrides_the_builtin_launch() {
     let loaded = config::load(&path).expect("loads");
     let launch = loaded.launch().expect("launch");
     assert_eq!(
-        launch.argv,
+        launch.command,
         vec![
             "node".to_string(),
             "--import".to_string(),
@@ -154,15 +154,15 @@ fn an_installed_harness_needs_no_command() {
     let loaded = config::load(&path).expect("an installed name loads without a command");
     let launch = loaded.launch().expect("launch");
     assert_eq!(
-        launch.argv,
+        launch.command,
         vec![
             "node".to_string(),
             checkout.join("server.js").display().to_string()
         ]
     );
     assert_eq!(
-        launch.cwd.as_deref(),
-        Some(dir.display().to_string().as_str()),
+        launch.cwd.as_deref().map(|cwd| cwd.display().to_string()),
+        Some(dir.display().to_string()),
         "the scan root is the plugin's cwd"
     );
     std::env::remove_var("AFZ_HOME");

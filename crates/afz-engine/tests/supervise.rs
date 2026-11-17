@@ -9,9 +9,8 @@ use std::time::{Duration, Instant};
 
 use afz_engine::config::OraclesConfig;
 use afz_engine::oracles::{Oracle, Oracles};
-use afz_engine::rpc::client::Launch;
 use afz_engine::supervise::{Completed, Job, RunReport, Supervisor, DISABLE_AFTER};
-use afz_protocol::{DiscoverReq, SkipReason, ValueTree};
+use afz_protocol::{DiscoverReq, PluginConfig, SkipReason, ValueTree};
 
 /// The fake plugin is a binary of the `xtask` package, so `CARGO_BIN_EXE_…` does not cover it
 /// from here.
@@ -37,8 +36,8 @@ fn fakeplugin_path() -> PathBuf {
 }
 
 fn supervisor(script: &str, workers: usize, deadline_ms: u64) -> Supervisor {
-    let launch =
-        Launch::new([fakeplugin_path().display().to_string()]).with_env("AFZ_FAKE_SCRIPT", script);
+    let launch = PluginConfig::new([fakeplugin_path().display().to_string()])
+        .with_env("AFZ_FAKE_SCRIPT", script);
     // The fake plugin answers `discover` from a fixed inventory, so the scope here is only
     // what a real plugin would need to resolve a `targetId`.
     let discovery = DiscoverReq {
@@ -371,10 +370,12 @@ fn a_second_batch_reports_only_its_own_restarts() {
 /// A harness that cuts a slow call itself answers a little after the deadline. The engine has to
 /// let it answer: the answer carries that call's coverage, and killing the process instead costs a
 /// restart on every slow invocation. The `deadline` finding is not lost, because the oracle reads
-/// the duration the harness reports.
+/// the duration the harness reports. The window is `Timeouts::host_wait` of the configured
+/// deadline - the mechanism's margin, not a grace constant this engine keeps.
 #[test]
 fn a_plugin_that_answers_past_the_deadline_but_inside_the_grace_keeps_its_process() {
-    // 400 ms against a 300 ms deadline: past the deadline, inside `KILL_GRACE`.
+    // 400 ms against a 300 ms deadline: past the `deadlineMs` the plugin was given, inside the
+    // 550 ms the engine waits.
     let script = r#"[{"sleepMs":400,"at":1,"to":100000}]"#;
     let mut supervisor = supervisor(script, 1, 300);
     let report = supervisor.run(jobs("afz:t:0001", 3), Duration::from_millis(20_000));

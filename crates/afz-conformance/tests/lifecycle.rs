@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use afz_conformance::lifecycle::{health_ready, substitute, Service};
 use afz_conformance::template::{Lifecycle, Manifest, ManifestProperty};
 use afz_conformance::{self as conformance, Check};
-use afz_engine::rpc::client::Launch;
+use afz_protocol::PluginConfig;
 
 fn fakeplugin_path() -> PathBuf {
     // cargo places a test executable under `<target>/<profile>/deps/` or under
@@ -195,7 +195,7 @@ fn a_relative_launch_resolves_inside_the_project_root() {
 
 #[test]
 fn a_dead_service_ends_the_run_before_the_plugin_is_spawned() {
-    let mut check = Check::new(Launch::new([fakeplugin_path().display().to_string()]), ".");
+    let mut check = Check::new(PluginConfig::new([fakeplugin_path().display().to_string()]), ".");
     check.template = Some(manifest_with(dead_service()));
     let report = conformance::run(&check);
     assert_eq!(
@@ -219,7 +219,7 @@ fn probe_script(directives: &str) -> String {
 }
 
 fn probe_check(script: &str, lifecycle: Lifecycle) -> Check {
-    let launch = Launch::new([fakeplugin_path().display().to_string()])
+    let launch = PluginConfig::new([fakeplugin_path().display().to_string()])
         .with_env("AFZ_FAKE_SCRIPT", probe_script(script));
     let mut check = Check::new(launch, ".");
     check.template = Some(manifest_with(lifecycle));
@@ -274,7 +274,7 @@ fn a_probe_that_echoes_the_nonce_passes() {
 #[test]
 fn the_suite_hands_the_plugin_the_allocated_port() {
     let guarded = || {
-        Launch::new([
+        PluginConfig::new([
             "sh".to_string(),
             "-c".to_string(),
             "if [ -z \"${AFZ_PORT:-}\" ]; then exit 9; fi; exec \"$0\" \"$@\"".to_string(),

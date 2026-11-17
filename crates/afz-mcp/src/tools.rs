@@ -22,11 +22,11 @@ use afz_conformance::harness;
 use afz_engine::config::Severity;
 use afz_engine::harnesses;
 use afz_engine::report::scanresult::{self, FindingRecord, GitScope, ProgressSample, TargetStat};
-use afz_engine::rpc::client::{sentence, PluginClient};
+use afz_engine::rpc::client::{sentence, ClientError, PluginClient};
 use afz_engine::scan::{self, Options, Progress, Seed, MAX_SEEDS};
 use afz_protocol::{
-    is_deprecated, CoverageMap, DiscoverReq, Handshake, SkippedTarget, TargetDescriptor,
-    SUPPORTED_VERSIONS,
+    is_deprecated, CoverageMap, DiscoverReq, Handshake, SkippedTarget, StartError,
+    TargetDescriptor, SUPPORTED_VERSIONS,
 };
 
 use crate::jobs::{self, Job, JobState, Shared};
@@ -539,8 +539,15 @@ async fn until_deadline(deadline: Option<Instant>) {
 /// plugin process when it drops.
 fn probe_blocking(resolved: &Resolved, limit: usize) -> Result<ProbeResult, String> {
     let launch = resolved.loaded.launch().map_err(|e| e.to_string())?;
-    let client = PluginClient::spawn(&launch).map_err(|reason| reason.to_string())?;
-    let handshake = sentence("handshake", client.handshake())?;
+    // The handshake came back with the process. A refusal is a plugin that is alive and declined,
+    // which the caller fixes in the harness; a loss is a plugin that never came up.
+    let client = PluginClient::spawn(&launch).map_err(|error| match error {
+        ClientError::Start(StartError::Refused(_)) => {
+            format!("{error}; the process is running and declined")
+        }
+        other => other.to_string(),
+    })?;
+    let handshake = client.handshake().clone();
     if !SUPPORTED_VERSIONS.contains(&handshake.protocol_version.as_str()) {
         return Err(format!(
             "plugin speaks protocol {}, this engine speaks {}",

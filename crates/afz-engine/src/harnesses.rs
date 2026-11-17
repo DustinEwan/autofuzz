@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::config::absolutized;
-use crate::rpc::client::Launch;
+use afz_protocol::PluginConfig;
 
 /// The `afz-harness.json` at the root of a harness repository. Flat, not an array: a
 /// repository holds one harness.
@@ -140,8 +140,8 @@ pub fn record(harness: &InstalledHarness) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// A `Launch` carrying the recorded argv, with no cwd and no environment: the caller sets
+/// A `PluginConfig` carrying the recorded argv, with no cwd and no environment: the caller sets
 /// both, exactly as `LoadedConfig::launch` does.
-pub fn launch(name: &str) -> Option<Launch> {
-    lookup(name).map(|harness| Launch::new(harness.argv))
+pub fn launch(name: &str) -> Option<PluginConfig> {
+    lookup(name).map(|harness| PluginConfig::new(harness.argv))
 }

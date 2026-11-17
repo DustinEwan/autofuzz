@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use afz_engine::generate::generate_arguments;
 use afz_engine::rng::Rng;
-use afz_engine::rpc::client::{sentence, Launch, PluginClient};
+use afz_engine::rpc::client::{sentence, PluginClient};
 use afz_engine::supervise::DISCOVERY_TIMEOUT;
 use afz_protocol::*;
 use schemars::JsonSchema;
@@ -40,8 +40,6 @@ pub mod template;
 const PREPARE_TIMEOUT: Duration = Duration::from_secs(120);
 /// The bound `PluginClient::handshake` uses.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
-/// The supervisor's `KILL_GRACE`: the engine waits this far past `deadlineMs` before it kills.
-const KILL_GRACE: Duration = Duration::from_millis(250);
 /// The scan loop's `COVERAGE_TIMEOUT`. `coverageMap` answers from a table the plugin already
 /// holds, so this only bounds writing it over a pipe.
 const COVERAGE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -50,11 +48,14 @@ const COVERAGE_TIMEOUT: Duration = Duration::from_secs(10);
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 /// The scan loop's `MINIMIZE_SLACK`, on top of the invocation deadline.
 const MINIMIZE_SLACK: Duration = Duration::from_secs(10);
-/// The id the unknown-method probe sends, clear of the small ids a plugin sees in normal traffic.
-const PROBE_ID: u64 = 9001;
-/// The JSON-RPC parse-error code. `framing-intact` requires the bad request to receive this
-/// frame rather than silence; the engine discards unparseable lines on both directions.
-const PARSE_ERROR_CODE: i64 = -32700;
+/// The two numbers for one driven invocation: the `deadlineMs` the plugin is given, which is the
+/// configured budget unchanged, and the wait the suite keeps, which §9 derives from it.
+fn invocation_clock(deadline_ms: u64) -> (Duration, u64) {
+    (
+        Timeouts::host_wait(Duration::from_millis(deadline_ms)),
+        deadline_ms,
+    )
+}
 
 /// Every rule the suite can report, in the order it drives them. A rule that does not apply to a
 /// plugin — `minimize-schema` for a plugin that does not declare `minimize` — is counted as not
@@ -149,7 +150,7 @@ impl Report {
 #[derive(Debug, Clone)]
 pub struct Check {
     /// How to start the plugin.
-    pub launch: Launch,
+    pub launch: PluginConfig,
     /// The directory `discover` walks.
     pub root: String,
     /// `DiscoverReq.include`, sent verbatim.
@@ -176,7 +177,7 @@ pub struct Check {
 
 impl Check {
     /// A check that drives `launch` over `root` with the repository's usual seed and budget.
-    pub fn new(launch: Launch, root: impl Into<String>) -> Check {
+    pub fn new(launch: PluginConfig, root: impl Into<String>) -> Check {
         Check {
             launch,
             root: root.into(),
@@ -640,6 +641,8 @@ impl Runner {
         // process, and it is the only connection the engine ever handshakes.
         let a = match PluginClient::spawn(&self.check.launch) {
             Ok(client) => client,
+            // `Lost` never came up; `Refused` is running and declined. Both end the run here, and
+            // the report says which, because only one of them is a machine problem.
             Err(reason) => {
                 self.fail("spawn", reason.to_string());
                 self.skip(RULES.len() - 1);
@@ -701,20 +704,10 @@ impl Runner {
 
     /// `spawn`, `protocol-version`, `handshake-schema`.
     fn handshake(&mut self, client: &PluginClient) -> Option<Handshake> {
-        let raw = match self.raw(
-            client,
-            Method::Handshake,
-            serde_json::Value::Null,
-            HANDSHAKE_TIMEOUT,
-        ) {
-            Ok(raw) => raw,
-            Err(reason) => {
-                self.fail("spawn", reason);
-                self.alive(client, "handshake");
-                self.skip(RULES.len() - 2);
-                return None;
-            }
-        };
+        // The document is the one `Plugin::start` read, so the schema rule sees exactly what the
+        // plugin wrote and `handshake` stays one request on this connection. A plugin that never
+        // answered at all is already a failed `spawn` rule: `Check::run` does not get here.
+        let raw = client.handshake_document().clone();
         let handshake = match serde_json::from_value::<Handshake>(raw.clone()) {
             Ok(handshake) => handshake,
             Err(error) => {
@@ -1026,14 +1019,14 @@ impl Runner {
     ) -> Vec<&'static str> {
         let mut kinds: Vec<&'static str> = Vec::new();
         for index in 0..2 {
+            let (timeout, deadline_ms) = invocation_clock(self.check.deadline_ms);
             let request = InvokeReq {
                 invocation_id: index,
                 target_id: target.id.clone(),
                 values: values.to_vec(),
-                deadline_ms: self.check.deadline_ms,
+                deadline_ms,
                 collect_coverage,
             };
-            let timeout = Duration::from_millis(self.check.deadline_ms) + KILL_GRACE;
             match self.raw(client, Method::Invoke, to_params(&request), timeout) {
                 Err(reason) => {
                     self.fail(
@@ -1360,14 +1353,14 @@ impl Runner {
             self.alive(&client, "prepare on the second process");
             return;
         }
+        let (timeout, deadline_ms) = invocation_clock(self.check.deadline_ms);
         let invoke = InvokeReq {
             invocation_id: 0,
             target_id: target.id.clone(),
             values,
-            deadline_ms: self.check.deadline_ms,
+            deadline_ms,
             collect_coverage: false,
         };
-        let timeout = Duration::from_millis(self.check.deadline_ms) + KILL_GRACE;
         if let Err(reason) = sentence("invoke", client.invoke(&invoke, timeout)) {
             self.fail(
                 "connection-ready",
@@ -1380,12 +1373,44 @@ impl Runner {
         self.alive(&client, "invoke on the second process");
     }
 
-    /// Connection C is the framing probe. `PluginClient::request` takes a typed `Method` and so
-    /// cannot send an unknown method name, which is the one request the engine's own client will
-    /// never make and the one a plugin most often gets wrong.
+    /// Connection C is the framing probe, split by what the mechanism can carry.
+    ///
+    /// `unknown-method-id` goes through the mechanism: a conformance-local [`MethodName`] whose wire
+    /// name is outside the profile sends the one request the engine's own client will never make,
+    /// and the transport still matches the answer by the id it chose. `framing-intact` is the rule
+    /// the mechanism cannot express - it puts bytes on the pipe the mechanism would never serialize
+    /// and reads back a frame whose id matches nothing - so that rule alone keeps [`Raw`]; see the
+    /// note there for why the suite owning that pipe is the right boundary (§11).
     fn raw_framing(&mut self) {
-        let mut connection = match Raw::open(&self.check.launch) {
-            Ok(connection) => connection,
+        match Plugin::start(&self.check.launch) {
+            Ok((probe, _handshake)) => {
+                match probe.request::<serde_json::Value>(Probe::Unknown, None, HANDSHAKE_TIMEOUT) {
+                    Call::Refusal(error) if error.code == METHOD_NOT_FOUND => {}
+                    Call::Refusal(error) => self.fail(
+                        "unknown-method-id",
+                        format!(
+                            "an unknown method must be answered with code {METHOD_NOT_FOUND} and the request id; got code {}",
+                            error.code
+                        ),
+                    ),
+                    Call::Result(answer) => self.fail(
+                        "unknown-method-id",
+                        format!(
+                            "an unknown method must be refused with code {METHOD_NOT_FOUND}, not answered; got {}",
+                            compact(&answer)
+                        ),
+                    ),
+                    // The transport matches the reply to the id it sent, so a plugin that answers
+                    // with another id, or with nothing, arrives here. Either way the reply is not
+                    // attributable, which is what this rule is about.
+                    Call::Lost(loss) => self.fail(
+                        "unknown-method-id",
+                        format!(
+                            "an unknown method must be answered with code {METHOD_NOT_FOUND} and the request id the host sent; got no answer for it: {loss}"
+                        ),
+                    ),
+                }
+            }
             Err(detail) => {
                 self.fail(
                     "unknown-method-id",
@@ -1394,39 +1419,25 @@ impl Runner {
                 self.skip(1);
                 return;
             }
-        };
-
-        let unknown = format!(
-            "{{\"jsonrpc\":\"2.0\",\"id\":{PROBE_ID},\"method\":\"afz/does-not-exist\"}}\n"
-        );
-        match connection.ask(&unknown, PROBE_ID) {
-            None => self.fail(
-                "unknown-method-id",
-                "an unknown method must be answered with code -32601 and the request id; got no answer at all".to_string(),
-            ),
-            Some(answer) => {
-                let id = answer.get("id").and_then(|id| id.as_u64());
-                let code = answer.get("error").and_then(|error| error.get("code")).and_then(|code| code.as_i64());
-                if id != Some(PROBE_ID) || code != Some(METHOD_NOT_FOUND) {
-                    let shape = match (id, code) {
-                        (Some(id), Some(code)) => format!("id {id} with code {code}"),
-                        (Some(id), None) => format!("id {id} with no error object"),
-                        _ => answer.to_string(),
-                    };
-                    self.fail(
-                        "unknown-method-id",
-                        format!("an unknown method must be answered with code -32601 and the request id; got {shape}"),
-                    );
-                }
-            }
         }
 
+        let mut connection = match Raw::open(&self.check.launch) {
+            Ok(connection) => connection,
+            Err(detail) => {
+                self.fail(
+                    "framing-intact",
+                    format!("the framing probe could not start the plugin: {detail}"),
+                );
+                return;
+            }
+        };
+
         // A plugin that exits on a request it cannot parse, or that writes a blank line, ends the
-        // channel for the engine: `read_line` treats an empty line as EOF (`rpc.rs:186-188`).
+        // channel for the engine: `read_line` treats an empty line as EOF.
         connection.write_raw("{not json\n");
         // The bad request itself must be answered with a parse-error frame. The engine drops
-        // unparseable lines on both directions (`rpc.rs` `spawn_reader`), so silence here is
-        // indistinguishable from a hung plugin in the engine log.
+        // unparseable lines on both directions, so silence here is indistinguishable from a hung
+        // plugin in the engine log.
         match connection.next_frame() {
             None => self.fail(
                 "framing-intact",
@@ -1434,10 +1445,10 @@ impl Runner {
             ),
             Some(frame) => {
                 let code = frame.get("error").and_then(|error| error.get("code")).and_then(|code| code.as_i64());
-                if code != Some(PARSE_ERROR_CODE) {
+                if code != Some(PARSE_ERROR) {
                     self.fail(
                         "framing-intact",
-                        format!("an unparseable request must be answered with code {PARSE_ERROR_CODE}; got {}", compact(&frame)),
+                        format!("an unparseable request must be answered with code {PARSE_ERROR}; got {}", compact(&frame)),
                     );
                 }
             }
@@ -1860,19 +1871,15 @@ impl Runner {
         values: &[ValueTree],
         collect_coverage: bool,
     ) -> Result<serde_json::Value, String> {
+        let (timeout, deadline_ms) = invocation_clock(self.check.deadline_ms);
         let request = InvokeReq {
             invocation_id: 0,
             target_id: target_id.to_string(),
             values: values.to_vec(),
-            deadline_ms: self.check.deadline_ms,
+            deadline_ms,
             collect_coverage,
         };
-        self.raw(
-            client,
-            Method::Invoke,
-            to_params(&request),
-            Duration::from_millis(self.check.deadline_ms) + KILL_GRACE,
-        )
+        self.raw(client, Method::Invoke, to_params(&request), timeout)
     }
 }
 
@@ -1938,8 +1945,36 @@ fn wire_materialization(materialization: Materialization) -> String {
         .unwrap_or_else(|| "?".to_string())
 }
 
-/// One plugin process driven with hand-built lines. `PluginClient` cannot send a method name it
-/// does not know, so the two framing rules need their own pipe.
+/// A method name outside the profile, for the framing probe. The engine's client can only name a
+/// [`Method`], and the point of this request is the name no `Method` can produce; `from_wire`
+/// resolves nothing, because nothing on this side would accept it either.
+enum Probe {
+    Unknown,
+}
+
+impl MethodName for Probe {
+    fn name(&self) -> &'static str {
+        match self {
+            Probe::Unknown => "afz/does-not-exist",
+        }
+    }
+
+    fn from_wire(_name: &str) -> Option<Self> {
+        None
+    }
+}
+
+/// One plugin process driven with hand-built lines.
+///
+/// This is the one place the suite holds a process itself, and it is deliberate. `Plugin` is what
+/// makes a protocol violation impossible to express: a typed method name, ids it owns, one JSON
+/// value per line it serialized itself. A §11 conformance probe has to do the opposite - put bytes
+/// on the pipe that the mechanism would never produce (`{not json`, a blank line, a frame whose id
+/// matches nothing it asked) and read whatever comes back, matched or not. Giving the transport a
+/// raw-pipe accessor to let the suite do that would hand every host the same accessor, and with it
+/// the power to break the rules the transport exists to enforce. So the probe stands outside the
+/// mechanism, and everything the mechanism *can* drive - including the unknown-method check, via
+/// [`Probe`] - goes through it.
 struct Raw {
     child: std::process::Child,
     stdin: std::process::ChildStdin,
@@ -1947,13 +1982,13 @@ struct Raw {
 }
 
 impl Raw {
-    fn open(launch: &Launch) -> Result<Raw, String> {
+    fn open(launch: &PluginConfig) -> Result<Raw, String> {
         use std::process::{Command, Stdio};
-        let Some(program) = launch.argv.first() else {
+        let Some(program) = launch.command.first() else {
             return Err("empty harness.command".to_string());
         };
         let mut cmd = Command::new(program);
-        cmd.args(launch.argv.iter().skip(1))
+        cmd.args(launch.command.iter().skip(1))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Null rather than a pipe: nothing drains this one, and a plugin that writes a lot to
@@ -1965,7 +2000,7 @@ impl Raw {
         }
         let mut child = cmd
             .spawn()
-            .map_err(|e| format!("{}: {e}", launch.display()))?;
+            .map_err(|e| format!("{}: {e}", launch.command.join(" ")))?;
         let stdin = child.stdin.take().expect("stdin is piped");
         let stdout = child.stdout.take().expect("stdout is piped");
         let (tx, rx) = mpsc::channel();

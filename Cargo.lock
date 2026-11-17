@@ -40,6 +40,7 @@ dependencies = [
  "afz-xtask",
  "jsonschema",
  "num_cpus",
+ "plugin-rpc",
  "rand",
  "rand_chacha",
  "schemars",
@@ -1022,9 +1023,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "plugin-rpc"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b9b10cd07c8769c3370db64275ef2dc932f5956a35a25fa837d56b0a5933f62"
+checksum = "26df03026b7b737dff768ef92962be740c695ea2e9c9a52f1798d58e55c71e1f"
 dependencies = [
  "schemars",
  "serde",

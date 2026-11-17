@@ -16,14 +16,14 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use afz_engine::rpc::client::{Launch, PluginClient};
-use afz_protocol::{DiscoverReq, SkipReason};
+use afz_engine::rpc::client::PluginClient;
+use afz_protocol::{DiscoverReq, PluginConfig, SkipReason};
 
 fn target_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/targets/blocked")
 }
 
-fn launch() -> Launch {
+fn launch() -> PluginConfig {
     afz_engine::harnesses::launch("js-ts")
         .expect("install the js-ts harness first: afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git")
         .with_cwd(target_root().display().to_string())

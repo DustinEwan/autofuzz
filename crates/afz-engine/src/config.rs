@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::rpc::client::Launch;
+use afz_protocol::PluginConfig;
 
 pub const CONFIG_FILE_NAME: &str = "autofuzz.json";
 
@@ -279,8 +279,9 @@ impl LoadedConfig {
         Ok(format!("sha256:{hex}"))
     }
 
-    /// The plugin launch for the `harness` block, resolved against the project root.
-    pub fn launch(&self) -> Result<Launch, ConfigError> {
+    /// The plugin launch for the `harness` block, resolved against the project root: the
+    /// mechanism's own `PluginConfig`, which is what starts the process.
+    pub fn launch(&self) -> Result<PluginConfig, ConfigError> {
         let block = self
             .project
             .harness
@@ -296,7 +297,7 @@ impl LoadedConfig {
         let argv = match command.filter(|argv| !argv.is_empty()) {
             Some(argv) => argv,
             None => match crate::harnesses::launch(harness) {
-                Some(recorded) => recorded.argv,
+                Some(recorded) => recorded.command.clone(),
                 None => {
                     return Err(ConfigError::msg(format!(
                         "`command` is required for harness \"{harness}\". Install it with `afz install-harness <git-url>`, or set `harness.command`."
@@ -313,7 +314,7 @@ impl LoadedConfig {
             .enumerate()
             .map(|(index, argument)| absolutized(index, argument, &cwd, |path| path.exists()))
             .collect();
-        let mut launch = Launch::new(argv);
+        let mut launch = PluginConfig::new(argv);
         if let Some(env) = env {
             for (k, v) in env {
                 launch.env.insert(k, v);
@@ -325,7 +326,7 @@ impl LoadedConfig {
         launch
             .env
             .insert("AFZ_CONFIG".to_string(), self.path.display().to_string());
-        launch.cwd = Some(self.root.display().to_string());
+        launch.cwd = Some(self.root.clone());
         Ok(launch)
     }
 

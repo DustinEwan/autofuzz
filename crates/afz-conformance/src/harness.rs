@@ -17,7 +17,7 @@ use std::process::{Command, Stdio};
 
 use afz_engine::config::ScanProject;
 use afz_engine::harnesses::{self, InstalledConformance};
-use afz_engine::rpc::client::Launch;
+use afz_protocol::PluginConfig;
 
 use crate::Check;
 
@@ -192,7 +192,7 @@ fn drive_inner(
     //    record. `AFZ_ROOT` and `AFZ_CONFIG` point at the staged project exactly as
     //    `LoadedConfig::launch` points them at a real scan root, because a plugin reads its module or
     //    its harness settings from them before any request arrives.
-    let launch = Launch::new(target.argv.clone())
+    let launch = PluginConfig::new(target.argv.clone())
         .with_cwd(target.root.display().to_string())
         .with_env("AFZ_ROOT", out.display().to_string())
         .with_env("AFZ_CONFIG", config_path.display().to_string());

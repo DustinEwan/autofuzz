@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 
 use afz_protocol::{
     Call, Capability, CoverageMap, DiscoverReq, FaultSignature, Handshake, InvokeReq, Loss,
-    Materialization, Outcome, PrepareReq, ReproducerReq, TargetDescriptor, ValueTree,
+    Materialization, Outcome, PluginConfig, PrepareReq, ReproducerReq, StartError, TargetDescriptor,
+    Timeouts, ValueTree,
 };
 
 use crate::config::{ConfigError, LoadedConfig, Strategy};
@@ -36,7 +37,7 @@ use crate::oracles::{self, Finding, Oracles};
 use crate::report::render_markdown;
 use crate::report::scanresult::*;
 use crate::rng::Rng;
-use crate::rpc::client::{spawn_discovered, Launch, PluginClient};
+use crate::rpc::client::{spawn_discovered, ClientError, PluginClient};
 use crate::schedule::{Plan, Scheduler};
 use crate::supervise::{Completed, Job, RunReport, Supervisor, DISABLE_AFTER, DISCOVERY_TIMEOUT};
 
@@ -68,9 +69,6 @@ fn shrink_budget(elapsed: Duration, wall_clock: Duration) -> Duration {
         .min(MINIMIZE_BUDGET)
 }
 
-/// How long one minimization call may take over the wire. The plugin enforces the invocation
-/// deadline; this is the transport bound on top of it.
-const MINIMIZE_SLACK: Duration = Duration::from_secs(10);
 /// How long one `coverageMap` call may take. The plugin answers from the table it already holds,
 /// so this only has to cover writing a few thousand entries over a pipe; it is asked after every
 /// batch, and a worker that cannot answer would cost this much per batch.
@@ -221,6 +219,12 @@ pub enum ScanError {
     NotReady {
         detail: String,
     },
+    /// The plugin answered the handshake with a document the `afz/1` handshake does not describe:
+    /// it claimed a protocol revision it does not implement. Alive and answering, so neither a
+    /// refused scan nor a lost plugin, and the fix is a different harness build.
+    Profile {
+        detail: String,
+    },
 }
 
 impl fmt::Display for ScanError {
@@ -248,6 +252,7 @@ impl fmt::Display for ScanError {
                 f,
                 "the harness reports the target environment is not ready: {detail}"
             ),
+            ScanError::Profile { detail } => write!(f, "{detail}"),
         }
     }
 }
@@ -338,8 +343,22 @@ pub fn run(
 
     let started_at = SystemTime::now();
     let setup_at = Instant::now();
-    let probe = PluginClient::spawn(&launch)?;
-    let handshake = setup(probe.handshake())?;
+    // The handshake is the first request and `Plugin::start` sends it, and the whole answer came
+    // back with it, so a probe that exists has been introduced and already told this profile what
+    // it is. `Refused` is its own outcome: the plugin is running and declined, which is a different
+    // fix from a plugin that never came up.
+    let probe = match PluginClient::spawn(&launch) {
+        Ok(probe) => probe,
+        Err(ClientError::Start(StartError::Refused(error))) => {
+            return Err(ScanError::Refused {
+                code: error.code,
+                message: error.message,
+            })
+        }
+        Err(ClientError::Start(StartError::Lost(loss))) => return Err(ScanError::Plugin(loss)),
+        Err(ClientError::Profile(detail)) => return Err(ScanError::Profile { detail }),
+    };
+    let handshake = probe.handshake().clone();
     let mut discovery = setup(probe.discover(&request, DISCOVERY_TIMEOUT))?;
     // A harness that declares `readiness` vouches for the environment its targets live
     // in. Ask before any worker spawns: a service nobody started would otherwise file
@@ -572,7 +591,7 @@ struct Scanner {
 
 /// The plugin connections minimization runs against, with the targets each has prepared.
 struct Minimizer {
-    launch: Launch,
+    launch: PluginConfig,
     /// The inventory every connection this pool grows is given at spawn. `prepare` resolves a
     /// `targetId` only against a `discover` that ran in that same process, so a connection that
     /// never discovered answers every shrink trial with an RPC error, which the scan files as a
@@ -668,7 +687,7 @@ impl Minimizer {
 fn run_trial(
     client: &mut PluginClient,
     prepared: &mut BTreeSet<String>,
-    launch: &Launch,
+    launch: &PluginConfig,
     discovery: &DiscoverReq,
     target_id: &str,
     values: &[ValueTree],
@@ -696,20 +715,24 @@ fn run_trial(
             prepared.insert(target_id.to_string());
         }
     }
+    // The configured invocation deadline is the plugin's budget and goes on the wire unchanged;
+    // the engine's own wait is derived from it by `Timeouts::host_wait`, so a trial that overruns
+    // is cut by the plugin and a plugin that will not stop is cut by the transport - the same rule
+    // the guided workers run on.
     let request = InvokeReq {
         invocation_id: 0,
         target_id: target_id.to_string(),
         values: values.to_vec(),
-        deadline_ms: deadline.as_millis() as u64,
+        deadline_ms: deadline.as_millis().try_into().unwrap_or(u64::MAX),
         collect_coverage: false,
     };
-    client.invoke_or_lose(&request, deadline + MINIMIZE_SLACK)
+    client.invoke_or_lose(&request, Timeouts::host_wait(deadline))
 }
 
 impl Scanner {
     fn open(
         options: &Options,
-        launch: Launch,
+        launch: PluginConfig,
         handshake: Handshake,
         discovery: afz_protocol::Discovery,
         discovery_request: DiscoverReq,
@@ -1557,9 +1580,7 @@ impl Scanner {
             .minimizer
             .pool
             .iter()
-            .flat_map(|client| {
-                std::mem::take(&mut *client.stderr_lines.lock().expect("stderr lock"))
-            })
+            .flat_map(|client| std::mem::take(&mut *client.stderr_lines().lock().expect("stderr lock")))
             .collect();
         let worker_stderr = self.supervisor.take_stderr();
         let mut reported: BTreeSet<&str> = BTreeSet::new();
@@ -1569,6 +1590,20 @@ impl Scanner {
                 continue;
             }
             self.log.push(format!("plugin said: {text}"));
+        }
+        // A refusal the plugin could not attach to a request (spec §4) belongs to the connection
+        // and answers no call, so no finding would ever name it. Nothing else carries it, so the
+        // scan log does; discarding it would leave a bad connection with no account at all.
+        let mut faults: BTreeSet<String> = self
+            .minimizer
+            .pool
+            .iter()
+            .filter_map(|client| client.connection_fault())
+            .map(|fault| format!("probe: {} {}", fault.code, fault.message))
+            .collect();
+        faults.extend(self.supervisor.connection_faults());
+        for fault in faults {
+            self.log.push(format!("plugin connection fault: {fault}"));
         }
         let finished_at = SystemTime::now();
         let document = self.document(started_at, finished_at);

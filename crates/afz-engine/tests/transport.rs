@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use afz_engine::rpc::client::{Launch, PluginClient};
+use afz_engine::rpc::client::{ClientError, PluginClient};
 use afz_protocol::*;
 
 /// The fake plugin is a binary of `afz-xtask`, so this crate's tests cannot use
@@ -34,7 +34,7 @@ fn fakeplugin_path() -> PathBuf {
 }
 
 fn fake(script: Option<&str>) -> PluginClient {
-    let mut launch = Launch::new([fakeplugin_path().display().to_string()]);
+    let mut launch = PluginConfig::new([fakeplugin_path().display().to_string()]);
     if let Some(script) = script {
         launch = launch.with_env("AFZ_FAKE_SCRIPT", script);
     }
@@ -54,7 +54,7 @@ fn invoke_req(index: u64, target: &str) -> InvokeReq {
 #[test]
 fn handshake_discover_and_invoke_over_real_pipes() {
     let client = fake(None);
-    let handshake = client.handshake().payload().expect("handshake");
+    let handshake = client.handshake().clone();
     assert_eq!(handshake.protocol_version, PROTOCOL_VERSION);
     assert_eq!(handshake.name, "afz-fakeplugin");
     assert!(handshake.capabilities.contains(&Capability::Coverage));
@@ -271,7 +271,8 @@ fn plugin_stderr_is_captured_from_the_child() {
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         {
-            let lines = client.stderr_lines.lock().expect("stderr lock");
+            let buffer = client.stderr_lines();
+            let lines = buffer.lock().expect("stderr lock");
             if lines.iter().any(|l| l.contains("target said hello")) {
                 break;
             }
@@ -283,13 +284,17 @@ fn plugin_stderr_is_captured_from_the_child() {
 
 #[test]
 fn spawn_failure_is_a_loss_not_a_panic() {
-    let launch = Launch::new(["/nonexistent/afz-plugin-that-does-not-exist"]);
+    let launch = PluginConfig::new(["/nonexistent/afz-plugin-that-does-not-exist"]);
     let err = PluginClient::spawn(&launch).unwrap_err();
-    assert!(matches!(err, Loss::Spawn { .. }), "got {err:?}");
+    // `StartError::Lost` is the arm with no process behind it. The other arm, `Refused`, is a
+    // plugin that answered the handshake and declined, and a missing program is not that.
+    assert!(
+        matches!(err, ClientError::Start(StartError::Lost(Loss::Spawn { .. }))),
+        "got {err:?}"
+    );
     assert!(
         err.to_string().contains("afz-plugin-that-does-not-exist"),
-        "detail was {}",
-        err
+        "detail was {err}"
     );
 }
 

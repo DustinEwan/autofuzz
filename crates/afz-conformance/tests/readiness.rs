@@ -7,8 +7,7 @@
 use std::path::PathBuf;
 
 use afz_conformance::{self as conformance, Check};
-use afz_engine::rpc::client::Launch;
-use afz_protocol::PROTOCOL_VERSION;
+use afz_protocol::{PluginConfig, PROTOCOL_VERSION};
 
 fn fakeplugin_path() -> PathBuf {
     // cargo places a test executable under `<target>/<profile>/deps/` or under
@@ -44,7 +43,7 @@ fn declaring_script(ready: Option<&str>) -> String {
 
 fn check(script: &str) -> Check {
     Check::new(
-        Launch::new([fakeplugin_path().display().to_string()]).with_env("AFZ_FAKE_SCRIPT", script),
+        PluginConfig::new([fakeplugin_path().display().to_string()]).with_env("AFZ_FAKE_SCRIPT", script),
         ".",
     )
 }

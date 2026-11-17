@@ -14,7 +14,7 @@
 use std::path::PathBuf;
 
 use afz_conformance::{self as conformance, Check};
-use afz_engine::rpc::client::Launch;
+use afz_protocol::PluginConfig;
 
 /// The fake plugin is a binary of this crate's sibling package, so `CARGO_BIN_EXE_…` cannot reach
 /// it.
@@ -41,9 +41,9 @@ fn fakeplugin_path() -> PathBuf {
 
 fn check(script: Option<&str>) -> Check {
     let launch = match script {
-        Some(script) => Launch::new([fakeplugin_path().display().to_string()])
+        Some(script) => PluginConfig::new([fakeplugin_path().display().to_string()])
             .with_env("AFZ_FAKE_SCRIPT", script),
-        None => Launch::new([fakeplugin_path().display().to_string()]),
+        None => PluginConfig::new([fakeplugin_path().display().to_string()]),
     };
     Check::new(launch, ".")
 }

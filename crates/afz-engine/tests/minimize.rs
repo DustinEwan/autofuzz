@@ -14,14 +14,14 @@ use std::process::Command;
 use std::time::Duration;
 
 use afz_engine::minimize::{minimize, FaultMatch};
-use afz_engine::rpc::client::{sentence, Launch, PluginClient};
-use afz_protocol::{DiscoverReq, InvokeReq, Outcome, ReproducerReq, ValueTree};
+use afz_engine::rpc::client::{sentence, PluginClient};
+use afz_protocol::{DiscoverReq, InvokeReq, Outcome, PluginConfig, ReproducerReq, ValueTree};
 
 fn target_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/targets/minimize")
 }
 
-fn launch() -> Launch {
+fn launch() -> PluginConfig {
     afz_engine::harnesses::launch("js-ts")
         .expect("install the js-ts harness first: afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git")
         .with_cwd(target_root().display().to_string())
@@ -31,7 +31,7 @@ fn launch() -> Launch {
 /// whatever `node` happens to be on the PATH.
 fn plugin_program() -> String {
     launch()
-        .argv
+        .command
         .first()
         .expect("the recorded launch has a program")
         .clone()

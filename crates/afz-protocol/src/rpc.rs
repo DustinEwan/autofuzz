@@ -18,6 +18,10 @@ pub use plugin_rpc::{
     ErrorObject, Failure, JsonRpcVersion, Loss, MessageError, MethodName, Request, Response,
     Success, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, PLUGIN_ERROR, UNUSABLE_RESULT,
 };
+/// The stdio-process transport, re-exported so a crate that speaks the autofuzz profile has one
+/// import path for the mechanism: `afz_protocol::PluginConfig`, not a second dependency on
+/// `plugin_rpc`.
+pub use plugin_rpc::process::{Plugin, PluginConfig, StartError, Timeouts};
 
 /// The eight methods a harness plugin may answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]

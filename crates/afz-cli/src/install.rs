@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use afz_conformance::harness;
 use afz_engine::git::git;
 use afz_engine::harnesses::{self, HarnessManifest, InstalledConformance, InstalledHarness};
-use afz_engine::rpc::client::{Launch, PluginClient};
-use afz_protocol::Call;
+use afz_engine::rpc::client::{ClientError, PluginClient};
+use afz_protocol::{PluginConfig, StartError};
 
 use crate::probe;
 
@@ -185,22 +185,24 @@ fn install(
             // Nothing to render, so validate what can be checked without a project: the
             // handshake, with the same protocol-version rule `probe-plugin` prints.
             None => {
-                let client = PluginClient::spawn(
-                    &Launch::new(argv.clone()).with_cwd(checkout.display().to_string()),
-                )
-                .map_err(|reason| format!("cannot start harness \"{name}\": {reason}"))?;
-                let handshake = match client.handshake() {
-                    Call::Result(handshake) => handshake,
-                    Call::Refusal(error) => {
+                let config =
+                    PluginConfig::new(argv.clone()).with_cwd(checkout.display().to_string());
+                let client = match PluginClient::spawn(&config) {
+                    Ok(client) => client,
+                    // A refusal is the harness declining to be this plugin - a manifest or a build
+                    // problem - and not the machine failing to start a process. A handshake the
+                    // profile cannot read is the third case: alive, answering, not `afz/1`.
+                    Err(ClientError::Start(StartError::Refused(error))) => {
                         return Err(format!(
-                            "handshake with \"{name}\" refused ({}): {}",
+                            "harness \"{name}\" refused the handshake ({}): {}",
                             error.code, error.message
                         ))
                     }
-                    Call::Lost(loss) => {
-                        return Err(format!("handshake with \"{name}\" failed: {loss}"))
+                    Err(error) => {
+                        return Err(format!("cannot start harness \"{name}\": {error}"))
                     }
                 };
+                let handshake = client.handshake().clone();
                 probe::check_protocol(&handshake)?;
                 if handshake.name != *name {
                     return Err(format!(

@@ -17,15 +17,15 @@ use std::time::Duration;
 
 use afz_engine::config::OraclesConfig;
 use afz_engine::oracles::{Finding, Oracles};
-use afz_engine::rpc::client::{Launch, PluginClient};
+use afz_engine::rpc::client::PluginClient;
 use afz_engine::supervise::{Job, Supervisor, DISABLE_AFTER};
-use afz_protocol::{DiscoverReq, Outcome, ValueNode, ValueTree};
+use afz_protocol::{DiscoverReq, Outcome, PluginConfig, ValueNode, ValueTree};
 
 fn target_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/targets/oracles")
 }
 
-fn launch() -> Launch {
+fn launch() -> PluginConfig {
     afz_engine::harnesses::launch("js-ts")
         .expect("install the js-ts harness first: afz install-harness https://github.com/DustinEwan/autofuzz-harness-js-ts.git")
         .with_cwd(target_root().display().to_string())

@@ -11,6 +11,9 @@ afz-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true
+# The engine's transport is the mechanism's `process` module; this crate names that dependency
+# directly rather than reaching it through `afz_protocol`'s re-export.
+plugin-rpc.workspace = true
 thiserror.workspace = true
 rand.workspace = true
 rand_chacha.workspace = true

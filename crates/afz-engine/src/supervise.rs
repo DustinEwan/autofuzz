@@ -1,9 +1,11 @@
 //! Execution supervision: one plugin process per worker, engine-side deadlines, and the
 //! restart accounting that decides when a target is doing more harm than good.
 //!
-//! The engine, not the plugin, enforces `deadlineMs`. A plugin that is still computing at the
-//! deadline cannot be trusted to stop itself, and its answer is useless by then, so the engine
-//! kills that process, restarts it, and records the invocation's coverage as lost.
+//! The engine, not the plugin, owns the wall clock. The plugin is handed a `deadlineMs` strictly
+//! shorter than the time the engine will wait, so a harness that can cut its own call answers
+//! inside the engine's wait; a plugin that is still computing when that wait ends cannot be
+//! trusted to stop itself, and its answer is useless by then, so the engine kills that process,
+//! restarts it, and records the invocation's coverage as lost.
 //!
 //! Results come back out of order because the workers run in parallel. Every [`Completed`]
 //! carries its `invocation_id` and the report is sorted by it, so the scan loop consumes
@@ -15,23 +17,15 @@ use std::time::{Duration, Instant};
 
 use afz_protocol::{
     Call, CoverageEntry, CoverageMap, DiscoverReq, EdgeId, ErrorObject, FaultSignature, InvokeReq,
-    Loss, Outcome, ValueTree,
+    Loss, Outcome, PluginConfig, Timeouts, ValueTree,
 };
 
-use crate::rpc::client::{spawn_discovered, via, Launch, PluginClient};
+use crate::rpc::client::{spawn_discovered, via, PluginClient};
 use crate::scan::PREPARE_TIMEOUT;
 
 /// Attempts that did not run, attributed to one target before the engine disables it: a restart
 /// after a lost process, or a refusal from a live one. The design's number.
 pub const DISABLE_AFTER: u64 = 50;
-
-/// How much longer than the deadline the engine waits before it kills a plugin process. A harness
-/// that can cut a call itself - the wasm harness stops a call at its deadline with an epoch
-/// interrupt - answers a little after the deadline, and killing it at the deadline would throw
-/// away that call's coverage and cost a process restart every time a slow target is hit. A harness
-/// that cannot cut, like the JavaScript one, is killed this far past the deadline instead. The
-/// `deadline` oracle keys on `oracles.deadline.ms` either way, so the finding is the same.
-pub const KILL_GRACE: Duration = Duration::from_millis(250);
 
 /// How long a plugin may take to answer `discover` before its process is treated as broken.
 /// The same allowance `afz probe-plugin` gives, because discovery walks the whole scan tree and
@@ -65,13 +59,16 @@ pub struct Completed {
 }
 
 impl Completed {
-    /// Build the invocation request the plugin sees.
+    /// Build the invocation request the plugin sees. `deadline` is the configured invocation
+    /// deadline, which is this profile's `deadlineMs` and goes on the wire unchanged; the engine's
+    /// own wait is derived from it by [`Timeouts::host_wait`] at the call site - never a second
+    /// number written beside it.
     pub fn request_for(job: &Job, deadline: Duration) -> InvokeReq {
         InvokeReq {
             invocation_id: job.invocation_id,
             target_id: job.target_id.clone(),
             values: job.values.clone(),
-            deadline_ms: deadline.as_millis() as u64,
+            deadline_ms: deadline.as_millis().try_into().unwrap_or(u64::MAX),
             collect_coverage: job.collect_coverage,
         }
     }
@@ -176,7 +173,7 @@ impl Watchdog {
 
 /// The supervisor owns the plugin processes and the wall clock for one run.
 pub struct Supervisor {
-    launch: Launch,
+    launch: PluginConfig,
     discovery: DiscoverReq,
     /// One plugin process per worker. They outlive a batch: the next batch starts against
     /// processes that have already discovered the inventory and prepared their targets, and only
@@ -191,7 +188,7 @@ impl Supervisor {
     /// resolves a `targetId` only against an inventory that process discovered itself, so a
     /// restart has to discover again: the new process knows nothing.
     pub fn new(
-        launch: Launch,
+        launch: PluginConfig,
         workers: usize,
         deadline: Duration,
         disable_after: u64,
@@ -272,6 +269,15 @@ impl Supervisor {
         out
     }
 
+    /// The `id` 0 refusals the pool's plugins reported against the connection itself (spec §4).
+    /// They answer no particular call, so no finding carries them and the scan log has to.
+    pub fn connection_faults(&mut self) -> Vec<String> {
+        self.workers
+            .iter_mut()
+            .flat_map(Worker::connection_faults)
+            .collect()
+    }
+
     pub fn watchdog(&self) -> &Watchdog {
         &self.watchdog
     }
@@ -311,10 +317,10 @@ impl Supervisor {
                         let Some(mut worker) = slot.lock().expect("worker slot lock").take() else { return };
                         loop {
                             // Leave room for one more deadline, so a run stops on its budget
-                            // rather than on the last invocation that happened to start. `KILL_GRACE`
-                            // is deliberately not counted here: it delays a kill, not an answer, and
-                            // counting it would leave a run whose budget is near one deadline with no
-                            // room to attempt anything at all.
+                            // rather than on the last invocation that happened to start. No kill
+                            // grace is counted here because there is no second number to count:
+                            // the plugin's `deadlineMs` is derived from this same wait, so an
+                            // answer that arrives at all arrives before the deadline ends.
                             if started.elapsed() + deadline >= budget {
                                 break;
                             }
@@ -439,7 +445,7 @@ impl Supervisor {
 /// One plugin process, plus the per-target `prepare` state it holds.
 pub struct Worker {
     index: usize,
-    launch: Launch,
+    launch: PluginConfig,
     discovery: DiscoverReq,
     client: Option<PluginClient>,
     prepared: BTreeSet<String>,
@@ -448,10 +454,13 @@ pub struct Worker {
     /// Stderr buffers of the processes this worker has replaced. A plugin's last lines are lost with
     /// its client unless the worker holds on to them.
     stderr_history: Vec<Arc<Mutex<Vec<String>>>>,
+    /// The connection's own faults, as sentences. A restart drops the client that reported one, so
+    /// the reason outlives the process that gave it.
+    faults: Vec<String>,
 }
 
 impl Worker {
-    fn spawn(index: usize, launch: &Launch, discovery: &DiscoverReq) -> Worker {
+    fn spawn(index: usize, launch: &PluginConfig, discovery: &DiscoverReq) -> Worker {
         Worker {
             index,
             launch: launch.clone(),
@@ -461,14 +470,24 @@ impl Worker {
             unbuildable: BTreeSet::new(),
             restarts: 0,
             stderr_history: Vec::new(),
+            faults: Vec::new(),
         }
     }
 
     /// Bring a process up and give it the inventory it needs to answer `prepare`. A plugin that
     /// fails discovery stays up: every `prepare` then reports the plugin's own reason, which is
     /// the diagnostic the scan result should carry rather than a swallowed error here.
-    fn start(index: usize, launch: &Launch, discovery: &DiscoverReq) -> Option<PluginClient> {
-        let (client, lost) = spawn_discovered(launch, discovery).ok()?;
+    fn start(index: usize, launch: &PluginConfig, discovery: &DiscoverReq) -> Option<PluginClient> {
+        let (client, lost) = match spawn_discovered(launch, discovery) {
+            Ok(started) => started,
+            // `Lost` is a process that never came up; `Refused` is a process that is alive and
+            // declined to be a plugin here. There is nothing to invoke either way, but the line
+            // the operator reads has to say which of the two it is.
+            Err(error) => {
+                eprintln!("afz: worker {index} could not start the plugin: {error}");
+                return None;
+            }
+        };
         if let Some(reason) = lost {
             eprintln!("afz: worker {index} discovery failed: {reason}");
         }
@@ -500,7 +519,7 @@ impl Worker {
     pub fn take_stderr(&mut self) -> Vec<String> {
         let mut buffers: Vec<Arc<_>> = self.stderr_history.iter().map(Arc::clone).collect();
         if let Some(client) = self.client.as_ref() {
-            buffers.push(Arc::clone(&client.stderr_lines));
+            buffers.push(client.stderr_lines());
         }
         self.stderr_history.clear();
         buffers
@@ -509,13 +528,31 @@ impl Worker {
             .collect()
     }
 
+    /// The connection faults this worker's processes reported, taken so the scan reports each once.
+    pub fn connection_faults(&mut self) -> Vec<String> {
+        if let Some(client) = self.client.as_ref() {
+            if let Some(fault) = client.connection_fault() {
+                self.faults
+                    .push(format!("worker {}: {} {}", self.index, fault.code, fault.message));
+            }
+        }
+        self.faults.sort();
+        self.faults.dedup();
+        std::mem::take(&mut self.faults)
+    }
+
     /// The process is gone or was never startable; bring up a fresh one and forget what it had
     /// prepared, because the new process has prepared nothing.
     fn restart(&mut self) {
         if let Some(client) = self.client.take() {
-            // The process is gone; its stderr buffer is kept. The drain thread is still reading the
-            // closed pipe, and what the plugin wrote before it died is the only reason the engine has.
-            self.stderr_history.push(Arc::clone(&client.stderr_lines));
+            // The process is gone; its stderr buffer and its connection fault are kept. The drain
+            // thread is still reading the closed pipe, and what the plugin wrote before it died is
+            // the only reason the engine has.
+            self.stderr_history.push(client.stderr_lines());
+            if let Some(fault) = client.connection_fault() {
+                self.faults
+                    .push(format!("worker {}: {} {}", self.index, fault.code, fault.message));
+            }
             client.kill();
         }
         self.client = Worker::start(self.index, &self.launch, &self.discovery);
@@ -596,9 +633,12 @@ impl Worker {
                         }
                     }
                 }
+                // The configured deadline is the plugin's budget, and the engine's wait is derived
+                // from it by `Timeouts::host_wait`, so a harness that cuts its own call answers
+                // before this wait ends and the kill is left for the plugin that will not stop.
                 match client.invoke(
                     &Completed::request_for(&job, deadline),
-                    deadline + KILL_GRACE,
+                    Timeouts::host_wait(deadline),
                 ) {
                     Call::Result(outcome) => Attempt::Answered(outcome),
                     Call::Refusal(error) => Attempt::Refused(error),

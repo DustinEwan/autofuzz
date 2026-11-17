@@ -10,8 +10,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use afz_engine::rpc::client::{spawn_discovered, Launch};
-use afz_protocol::{Call, DiscoverReq, PrepareReq, PrepareResp, ValueTree};
+use afz_engine::rpc::client::spawn_discovered;
+use afz_protocol::{Call, DiscoverReq, PluginConfig, PrepareReq, PrepareResp, ValueTree};
 
 /// The fake plugin is a binary of `afz-xtask`, so this crate's tests cannot use
 /// `CARGO_BIN_EXE_…`, which only covers the current package.
@@ -41,7 +41,7 @@ fn every_connection_the_engine_prepares_on_has_discovered() {
     // `requireDiscover` is the plugin-side statement of the contract: `prepare` and `invoke` are
     // refused until a `discover` has been served on this connection. A helper that only spawned
     // would answer the `prepare` below with an RPC error and fail the `PrepareResp::Ok` match.
-    let launch = Launch::new([fakeplugin_path().display().to_string()])
+    let launch = PluginConfig::new([fakeplugin_path().display().to_string()])
         .with_env("AFZ_FAKE_SCRIPT", r#"{"requireDiscover":true}"#);
     let discovery = DiscoverReq {
         root: ".".to_string(),

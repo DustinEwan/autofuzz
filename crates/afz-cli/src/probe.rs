@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use afz_engine::config::{self, LoadedConfig};
-use afz_engine::rpc::client::{sentence, Launch, PluginClient};
+use afz_engine::rpc::client::{sentence, ClientError, PluginClient};
 use afz_protocol::*;
 
 /// Run the command. With no `--command`, the scan project at `path` names the plugin; with no
@@ -23,8 +23,17 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
         _ => launch_for(argv)?,
     };
 
-    let client = PluginClient::spawn(&launch).map_err(|r| r.to_string())?;
-    let handshake = sentence("handshake", client.handshake())?;
+    // `Plugin::start` already sent the handshake, so a client that exists has been introduced, and
+    // the whole handshake answer came back with it - `handshake` is one request.
+    // A refusal is a plugin that is running and declined, which is a different fix from a plugin
+    // that never came up, so the probe says which of the two it met.
+    let client = PluginClient::spawn(&launch).map_err(|error| match error {
+        ClientError::Start(StartError::Refused(_)) => {
+            format!("{error}; the process is running and declined")
+        }
+        other => other.to_string(),
+    })?;
+    let handshake = client.handshake().clone();
     check_protocol(&handshake)?;
 
     let discovery = sentence(
@@ -69,7 +78,7 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
     }
 
     println!("plugin        {} {}", handshake.name, handshake.version);
-    println!("command       {}", launch.display());
+    println!("command       {}", launch.command.join(" "));
     println!("protocol      {}", handshake.protocol_version);
     println!("target class  {}", handshake.target_class.as_str());
     println!("languages     {}", handshake.languages.join(", "));
@@ -208,9 +217,9 @@ fn not_ready(ready: Option<&ReadyResp>) -> Option<String> {
 /// Resolve the plugin argv given on the command line, or fall back to the repository's fake
 /// plugin. A scan project does not come here: `run` takes the launch from its harness block, so
 /// the plugin that is probed is the plugin that would run the scan.
-fn launch_for(argv: Vec<String>) -> Result<Launch, String> {
+fn launch_for(argv: Vec<String>) -> Result<PluginConfig, String> {
     if !argv.is_empty() {
-        return Ok(Launch::new(argv));
+        return Ok(PluginConfig::new(argv));
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = exe.parent().unwrap_or(Path::new("."));
@@ -220,7 +229,7 @@ fn launch_for(argv: Vec<String>) -> Result<Launch, String> {
         dir.join("release").join("afz-fakeplugin"),
     ] {
         if candidate.is_file() {
-            return Ok(Launch::new([candidate.display().to_string()]));
+            return Ok(PluginConfig::new([candidate.display().to_string()]));
         }
     }
     Err(

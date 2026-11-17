@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use afz_engine::config::{self, LoadedConfig};
-use afz_engine::rpc::client::Launch;
+use afz_protocol::PluginConfig;
 
 const USAGE: &str = "usage: afz-xtask <schema [dir]|fakeplugin|check-harness [--path <dir>] [--command <argv…>] [--targets <n>] [--deadline <ms>] [--json]>";
 
@@ -101,7 +101,7 @@ fn check_harness(argv: &[String]) -> Result<afz_conformance::Report, String> {
 
     let scope = Scope::for_path(path.as_deref())?;
     let launch = match (&command, scope.config.as_ref()) {
-        (Some(argv), _) => Launch::new(argv.clone()),
+        (Some(argv), _) => PluginConfig::new(argv.clone()),
         (None, Some(loaded)) => loaded.launch().map_err(|e| e.to_string())?,
         (None, None) => fakeplugin_launch()?,
     };
@@ -180,7 +180,7 @@ impl Scope {
 
 /// The repository's own fake plugin, which is what a bare `check-harness` checks. The same
 /// three-candidate search `afz probe-plugin` makes: a test binary sits one level below these.
-fn fakeplugin_launch() -> Result<Launch, String> {
+fn fakeplugin_launch() -> Result<PluginConfig, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = exe.parent().unwrap_or(Path::new("."));
     for candidate in [
@@ -189,7 +189,7 @@ fn fakeplugin_launch() -> Result<Launch, String> {
         dir.join("release").join("afz-fakeplugin"),
     ] {
         if candidate.is_file() {
-            return Ok(Launch::new([candidate.display().to_string()]));
+            return Ok(PluginConfig::new([candidate.display().to_string()]));
         }
     }
     Err("no --command given and afz-fakeplugin is not beside this binary; build it with `cargo build --workspace`".to_string())
