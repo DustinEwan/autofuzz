@@ -20,9 +20,10 @@ pub use outcome::{
     EdgeId, FailedOutcome, FaultFrame, FaultSignature, OkOutcome, Outcome, RejectedOutcome,
 };
 pub use rpc::{
-    buffered, buffered_writer, parse_request, parse_response, read_line, write_line, ErrorObject,
-    Failure, JsonRpcVersion, MessageError, Method, MethodName, Request, Response, Success,
-    INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, PLUGIN_ERROR,
+    buffered, buffered_writer, parse_request, parse_response, read_line, write_line, Call,
+    ErrorObject, Failure, JsonRpcVersion, Loss, MessageError, Method, MethodName, Request,
+    Response, Success, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, PLUGIN_ERROR,
+    UNUSABLE_RESULT,
 };
 pub use targets::{
     is_deprecated, schema_dir, Blocker, Capability, CoverageEntry, CoverageMap, Discovery, Effects,

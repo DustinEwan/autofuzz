@@ -142,4 +142,20 @@ impl Outcome {
             },
         })
     }
+
+    /// The outcome the engine substitutes when the plugin answered that it cannot do the work.
+    /// The process is alive, so this is not a lost plugin: `via` says which, and the supervisor
+    /// does not restart for it.
+    pub fn plugin_refused(duration_ms: f64, detail: impl Into<String>) -> Self {
+        Outcome::Failed(FailedOutcome {
+            duration_ms,
+            coverage: None,
+            via: "plugin-refused".to_string(),
+            fault: FaultSignature {
+                class: "PluginRefused".to_string(),
+                message: detail.into(),
+                frames: Vec::new(),
+            },
+        })
+    }
 }

@@ -22,7 +22,7 @@ use afz_conformance::harness;
 use afz_engine::config::Severity;
 use afz_engine::harnesses;
 use afz_engine::report::scanresult::{self, FindingRecord, GitScope, ProgressSample, TargetStat};
-use afz_engine::rpc::client::PluginClient;
+use afz_engine::rpc::client::{sentence, PluginClient};
 use afz_engine::scan::{self, Options, Progress, Seed, MAX_SEEDS};
 use afz_protocol::{
     is_deprecated, CoverageMap, DiscoverReq, Handshake, SkippedTarget, TargetDescriptor,
@@ -539,8 +539,8 @@ async fn until_deadline(deadline: Option<Instant>) {
 /// plugin process when it drops.
 fn probe_blocking(resolved: &Resolved, limit: usize) -> Result<ProbeResult, String> {
     let launch = resolved.loaded.launch().map_err(|e| e.to_string())?;
-    let client = PluginClient::spawn(&launch).map_err(|reason| reason.detail())?;
-    let handshake = client.handshake().map_err(|reason| reason.detail())?;
+    let client = PluginClient::spawn(&launch).map_err(|reason| reason.to_string())?;
+    let handshake = sentence("handshake", client.handshake())?;
     if !SUPPORTED_VERSIONS.contains(&handshake.protocol_version.as_str()) {
         return Err(format!(
             "plugin speaks protocol {}, this engine speaks {}",
@@ -558,8 +558,9 @@ fn probe_blocking(resolved: &Resolved, limit: usize) -> Result<ProbeResult, Stri
         .loaded
         .discovery_scope()
         .map_err(|e| e.to_string())?;
-    let discovery = client
-        .discover(
+    let discovery = sentence(
+        "discover",
+        client.discover(
             &DiscoverReq {
                 root: resolved.scan_root.display().to_string(),
                 include: scope.include,
@@ -567,9 +568,9 @@ fn probe_blocking(resolved: &Resolved, limit: usize) -> Result<ProbeResult, Stri
                 config_path: Some(resolved.loaded.path.display().to_string()),
             },
             Duration::from_secs(120),
-        )
-        .map_err(|reason| reason.detail())?;
-    let coverage = client.coverage_map(Duration::from_secs(30)).ok();
+        ),
+    )?;
+    let coverage = client.coverage_map(Duration::from_secs(30)).payload();
     let discovered = discovery.targets.len() as u64;
     let fuzzable = discovery
         .targets

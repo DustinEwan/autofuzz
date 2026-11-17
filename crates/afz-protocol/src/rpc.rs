@@ -14,9 +14,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 pub use plugin_rpc::{
-    buffered, buffered_writer, parse_request, parse_response, read_line, write_line, ErrorObject,
-    Failure, JsonRpcVersion, MessageError, MethodName, Request, Response, Success, INVALID_REQUEST,
-    METHOD_NOT_FOUND, PARSE_ERROR, PLUGIN_ERROR,
+    buffered, buffered_writer, parse_request, parse_response, read_line, write_line, Call,
+    ErrorObject, Failure, JsonRpcVersion, Loss, MessageError, MethodName, Request, Response,
+    Success, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, PLUGIN_ERROR, UNUSABLE_RESULT,
 };
 
 /// The eight methods a harness plugin may answer.

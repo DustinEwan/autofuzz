@@ -41,6 +41,7 @@ fn a_blocked_symbol_arrives_in_the_shape_the_engine_reads() {
     let client = PluginClient::spawn(&launch()).expect("spawn the js-ts plugin");
     let discovery = client
         .discover(&request, Duration::from_secs(120))
+        .payload()
         .expect("discover the blocked test target");
 
     let fuzzable: Vec<&str> = discovery.targets.iter().map(|t| t.name.as_str()).collect();

@@ -12,6 +12,7 @@ use afz_conformance::harness;
 use afz_engine::git::git;
 use afz_engine::harnesses::{self, HarnessManifest, InstalledConformance, InstalledHarness};
 use afz_engine::rpc::client::{Launch, PluginClient};
+use afz_protocol::Call;
 
 use crate::probe;
 
@@ -187,12 +188,19 @@ fn install(
                 let client = PluginClient::spawn(
                     &Launch::new(argv.clone()).with_cwd(checkout.display().to_string()),
                 )
-                .map_err(|reason| {
-                    format!("cannot start harness \"{name}\": {}", reason.detail())
-                })?;
-                let handshake = client.handshake().map_err(|reason| {
-                    format!("handshake with \"{name}\" failed: {}", reason.detail())
-                })?;
+                .map_err(|reason| format!("cannot start harness \"{name}\": {reason}"))?;
+                let handshake = match client.handshake() {
+                    Call::Result(handshake) => handshake,
+                    Call::Refusal(error) => {
+                        return Err(format!(
+                            "handshake with \"{name}\" refused ({}): {}",
+                            error.code, error.message
+                        ))
+                    }
+                    Call::Lost(loss) => {
+                        return Err(format!("handshake with \"{name}\" failed: {loss}"))
+                    }
+                };
                 probe::check_protocol(&handshake)?;
                 if handshake.name != *name {
                     return Err(format!(

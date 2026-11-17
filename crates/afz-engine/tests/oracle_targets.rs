@@ -48,6 +48,7 @@ fn discover_targets() -> BTreeMap<String, String> {
     let client = PluginClient::spawn(&launch).expect("spawn the js-ts plugin");
     let discovery = client
         .discover(&discovery_req(), Duration::from_secs(120))
+        .payload()
         .expect("discover the oracle targets");
     let mut names: Vec<&str> = discovery.targets.iter().map(|t| t.name.as_str()).collect();
     names.sort_unstable();

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use afz_engine::rpc::client::{spawn_discovered, Launch};
-use afz_protocol::{DiscoverReq, PrepareReq, PrepareResp, ValueTree};
+use afz_protocol::{Call, DiscoverReq, PrepareReq, PrepareResp, ValueTree};
 
 /// The fake plugin is a binary of `afz-xtask`, so this crate's tests cannot use
 /// `CARGO_BIN_EXE_…`, which only covers the current package.
@@ -51,7 +51,7 @@ fn every_connection_the_engine_prepares_on_has_discovered() {
     assert!(
         lost.is_none(),
         "the plugin answered its own inventory: {}",
-        lost.unwrap().detail()
+        lost.unwrap()
     );
     assert!(
         matches!(
@@ -62,7 +62,7 @@ fn every_connection_the_engine_prepares_on_has_discovered() {
                 },
                 Duration::from_secs(30)
             ),
-            Ok(PrepareResp::Ok { .. }),
+            Call::Result(PrepareResp::Ok { .. }),
         ),
         "a connection the engine brought up for `prepare` must be able to answer `prepare`",
     );

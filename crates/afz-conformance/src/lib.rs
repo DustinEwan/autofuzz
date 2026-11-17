@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 
 use afz_engine::generate::generate_arguments;
 use afz_engine::rng::Rng;
-use afz_engine::rpc::client::{Call, Launch, PluginClient};
+use afz_engine::rpc::client::{sentence, Launch, PluginClient};
 use afz_engine::supervise::DISCOVERY_TIMEOUT;
 use afz_protocol::*;
 use schemars::JsonSchema;
@@ -569,10 +569,7 @@ impl Runner {
         if let Some(reason) = client.lost() {
             self.fail(
                 "process-alive",
-                format!(
-                    "the plugin process {} while {phase} was in flight",
-                    reason.detail()
-                ),
+                format!("the plugin process {} while {phase} was in flight", reason),
             );
         }
     }
@@ -585,8 +582,11 @@ impl Runner {
         method: Method,
         params: serde_json::Value,
         timeout: Duration,
-    ) -> Call<serde_json::Value> {
-        client.request::<serde_json::Value>(method, Some(params), timeout)
+    ) -> Result<serde_json::Value, String> {
+        sentence(
+            method.name(),
+            client.request::<serde_json::Value>(method, Some(params), timeout),
+        )
     }
 
     fn report(&mut self) -> Report {
@@ -641,7 +641,7 @@ impl Runner {
         let a = match PluginClient::spawn(&self.check.launch) {
             Ok(client) => client,
             Err(reason) => {
-                self.fail("spawn", reason.detail());
+                self.fail("spawn", reason.to_string());
                 self.skip(RULES.len() - 1);
                 return self.report();
             }
@@ -709,7 +709,7 @@ impl Runner {
         ) {
             Ok(raw) => raw,
             Err(reason) => {
-                self.fail("spawn", reason.detail());
+                self.fail("spawn", reason);
                 self.alive(client, "handshake");
                 self.skip(RULES.len() - 2);
                 return None;
@@ -761,10 +761,7 @@ impl Runner {
             Err(reason) => {
                 self.fail(
                     "discover-schema",
-                    format!(
-                        "discover answered no discovery document: {}",
-                        reason.detail()
-                    ),
+                    format!("discover answered no discovery document: {}", reason),
                 );
                 self.alive(client, "discover");
                 self.skip(RULES.len() - 4);
@@ -844,7 +841,7 @@ impl Runner {
             Err(reason) => {
                 self.fail(
                     "discover-repeatable",
-                    format!("the second discover did not answer: {}", reason.detail()),
+                    format!("the second discover did not answer: {reason}"),
                 );
                 return;
             }
@@ -993,7 +990,7 @@ impl Runner {
                     format!(
                         "\"{}\" prepare answered an RPC error; report {{\"ok\":false,\"reason\":…}} instead of failing the method: {}",
                         target.name,
-                        reason.detail(),
+                        reason,
                     ),
                 );
             }
@@ -1044,7 +1041,7 @@ impl Runner {
                         format!(
                             "\"{}\" invoke answered an RPC error; a target fault is an Outcome, not an RPC error: {}",
                             target.name,
-                            reason.detail(),
+                            reason,
                         ),
                     );
                     break;
@@ -1114,10 +1111,9 @@ impl Runner {
             self.skip(3);
             return;
         }
-        let raw = match client.request::<serde_json::Value>(
-            Method::CoverageMap,
-            None,
-            COVERAGE_TIMEOUT,
+        let raw = match sentence(
+            "coverageMap",
+            client.request::<serde_json::Value>(Method::CoverageMap, None, COVERAGE_TIMEOUT),
         ) {
             Ok(raw) => raw,
             Err(reason) => {
@@ -1125,7 +1121,7 @@ impl Runner {
                     "coverage-map-offered",
                     format!(
                         "the handshake declares \"coverage\" but coverageMap did not answer: {}",
-                        reason.detail()
+                        reason
                     ),
                 );
                 self.skip(2);
@@ -1201,7 +1197,7 @@ impl Runner {
                 "minimize-schema",
                 format!(
                     "the handshake declares \"minimize\" but minimize did not answer: {}",
-                    reason.detail()
+                    reason
                 ),
             ),
         }
@@ -1247,7 +1243,7 @@ impl Runner {
                 "reproducer-schema",
                 format!(
                     "the handshake declares \"reproducer\" but reproducer did not answer: {}",
-                    reason.detail()
+                    reason
                 ),
             ),
         }
@@ -1263,7 +1259,10 @@ impl Runner {
             self.skip(1);
             return;
         }
-        match client.request::<serde_json::Value>(Method::Ready, None, READY_TIMEOUT) {
+        match sentence(
+            "ready",
+            client.request::<serde_json::Value>(Method::Ready, None, READY_TIMEOUT),
+        ) {
             Ok(raw) => {
                 if let Some(detail) = self.schemas.ready_resp.mismatch("ready response", &raw) {
                     self.fail("readiness", detail);
@@ -1282,7 +1281,7 @@ impl Runner {
                 "readiness",
                 format!(
                     "the handshake declares \"readiness\" but ready did not answer: {}",
-                    reason.detail()
+                    reason
                 ),
             ),
         }
@@ -1300,10 +1299,7 @@ impl Runner {
             Err(reason) => {
                 self.fail(
                     "connection-ready",
-                    format!(
-                        "a second plugin process could not be started: {}",
-                        reason.detail()
-                    ),
+                    format!("a second plugin process could not be started: {}", reason),
                 );
                 return;
             }
@@ -1320,7 +1316,7 @@ impl Runner {
                     "discover-ids-stable",
                     format!(
                         "a second plugin process never answered discover: {}",
-                        reason.detail()
+                        reason
                     ),
                 );
                 self.alive(&client, "discover on the second process");
@@ -1353,12 +1349,12 @@ impl Runner {
             target_id: target.id.clone(),
             values: values.clone(),
         };
-        if let Err(reason) = client.prepare(&prepare, PREPARE_TIMEOUT) {
+        if let Err(reason) = sentence("prepare", client.prepare(&prepare, PREPARE_TIMEOUT)) {
             self.fail(
                 "connection-ready",
                 format!(
                     "a connection that only received discover could not prepare: {}",
-                    reason.detail()
+                    reason
                 ),
             );
             self.alive(&client, "prepare on the second process");
@@ -1372,12 +1368,12 @@ impl Runner {
             collect_coverage: false,
         };
         let timeout = Duration::from_millis(self.check.deadline_ms) + KILL_GRACE;
-        if let Err(reason) = client.invoke(&invoke, timeout) {
+        if let Err(reason) = sentence("invoke", client.invoke(&invoke, timeout)) {
             self.fail(
                 "connection-ready",
                 format!(
                     "a connection that only received discover could not invoke: {}",
-                    reason.detail()
+                    reason
                 ),
             );
         }
@@ -1485,7 +1481,6 @@ impl Runner {
         };
         let outcome = self
             .drive_template_call(client, &target.id, &[], false)
-            .map_err(|reason| reason.detail())
             .and_then(outcome_of);
         let echoed = match &outcome {
             Ok(Outcome::Ok(ok)) => ok.value.as_ref().is_some_and(|value| {
@@ -1572,7 +1567,6 @@ impl Runner {
                 let target = self.named_target(discovery, &symbol).ok_or_else(named)?;
                 let outcome = self
                     .drive_template_call(client, &target.id, &input, false)
-                    .map_err(|reason| reason.detail())
                     .and_then(outcome_of)?;
                 let Outcome::Failed(failed) = &outcome else {
                     return Err(format!("\"{symbol}\" answered {} where the template expects failed: the crash fixture did not crash", outcome.kind()));
@@ -1589,7 +1583,6 @@ impl Runner {
                 let target = self.named_target(discovery, &symbol).ok_or_else(named)?;
                 let outcome = self
                     .drive_template_call(client, &target.id, &input, false)
-                    .map_err(|reason| reason.detail())
                     .and_then(outcome_of)?;
                 let Outcome::Rejected(rejected) = &outcome else {
                     return Err(format!("\"{symbol}\" answered {} where the template expects rejected: the guard did not refuse the out-of-range input", outcome.kind()));
@@ -1655,11 +1648,9 @@ impl Runner {
                 };
                 let first = self
                     .drive_template_call(client, &target.id, &inputs[0], true)
-                    .map_err(|reason| reason.detail())
                     .and_then(outcome_of)?;
                 let second = self
                     .drive_template_call(client, &target.id, &inputs[1], true)
-                    .map_err(|reason| reason.detail())
                     .and_then(outcome_of)?;
                 let digest = |outcome: &Outcome| {
                     outcome
@@ -1685,11 +1676,11 @@ impl Runner {
                     .map_err(|reason| {
                         format!(
                             "\"{symbol}\" could not be driven after its stdout write: {}",
-                            reason.detail()
+                            reason
                         )
                     })?;
                 match self.raw(client, Method::Handshake, serde_json::Value::Null, HANDSHAKE_TIMEOUT) {
-                    Err(reason) => Err(format!("the connection stopped answering after \"{symbol}\" wrote to stdout: {} (trap 9)", reason.detail())),
+                    Err(reason) => Err(format!("the connection stopped answering after \"{symbol}\" wrote to stdout: {reason} (trap 9)")),
                     Ok(raw) => match self.schemas.handshake.mismatch("handshake", &raw) {
                         Some(detail) => Err(format!("the handshake after \"{symbol}\" wrote to stdout is malformed, so target output leaked into the protocol channel: {detail} (trap 9)")),
                         None => Ok("the protocol channel survived the target writing to stdout".to_string()),
@@ -1712,7 +1703,7 @@ impl Runner {
                         to_params(&request),
                         Duration::from_millis(self.check.deadline_ms) + MINIMIZE_SLACK,
                     )
-                    .map_err(|reason| format!("reproducer did not answer: {}", reason.detail()))?;
+                    .map_err(|reason| format!("reproducer did not answer: {reason}"))?;
                 let extension = raw
                     .get("extension")
                     .and_then(|value| value.as_str())
@@ -1745,7 +1736,7 @@ impl Runner {
                     // The engine's kill is the contract's accepted second half: the supervisor
                     // survives it, and the main pass already checked `process-alive` before the
                     // template ran. A self-cut keeps the connection, which is the RECOMMENDED cut.
-                    Err(reason) => Ok(format!("the plugin died mid-call at the deadline ({}) and the transport survived; a self-cut with via deadline-cut would keep the connection", reason.detail())),
+                    Err(reason) => Ok(format!("the plugin died mid-call at the deadline ({reason}) and the transport survived; a self-cut with via deadline-cut would keep the connection")),
                     Ok(raw) => {
                         let outcome = outcome_of(raw)?;
                         if outcome.kind() == "failed" && outcome.via() == Some("deadline-cut") {
@@ -1760,7 +1751,6 @@ impl Runner {
                 let target = self.named_target(discovery, &symbol).ok_or_else(named)?;
                 let outcome = self
                     .drive_template_call(client, &target.id, &input, false)
-                    .map_err(|reason| reason.detail())
                     .and_then(outcome_of)?;
                 let Outcome::Ok(ok) = &outcome else {
                     return Err(format!("\"{symbol}\" answered {} where the template expects ok: the call itself must succeed even though its return value has no wire form", outcome.kind()));
@@ -1782,12 +1772,26 @@ impl Runner {
                     values: input.clone(),
                 };
                 let raw = self
-                    .raw(client, Method::Prepare, to_params(&request), PREPARE_TIMEOUT)
-                    .map_err(|reason| format!("prepare for \"{symbol}\" did not answer: {}", reason.detail()))?;
-                if raw.get("ok").and_then(serde_json::Value::as_bool).unwrap_or(false) {
+                    .raw(
+                        client,
+                        Method::Prepare,
+                        to_params(&request),
+                        PREPARE_TIMEOUT,
+                    )
+                    .map_err(|reason| {
+                        format!("prepare for \"{symbol}\" did not answer: {reason}")
+                    })?;
+                if raw
+                    .get("ok")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false)
+                {
                     return Err(format!("prepare accepted \"{symbol}\": the manifest declares it unbuildable, so the harness accepted a symbol it cannot invoke"));
                 }
-                let reason = raw.get("reason").and_then(serde_json::Value::as_str).unwrap_or("");
+                let reason = raw
+                    .get("reason")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("");
                 if reason != "discovery-error" {
                     return Err(format!("prepare skipped \"{symbol}\" with reason \"{reason}\": a symbol the harness cannot build must answer the reason the contract reserves for it, discovery-error"));
                 }
@@ -1855,7 +1859,7 @@ impl Runner {
         target_id: &str,
         values: &[ValueTree],
         collect_coverage: bool,
-    ) -> Call<serde_json::Value> {
+    ) -> Result<serde_json::Value, String> {
         let request = InvokeReq {
             invocation_id: 0,
             target_id: target_id.to_string(),

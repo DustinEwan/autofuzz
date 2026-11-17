@@ -22,8 +22,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use afz_protocol::{
-    Capability, CoverageMap, DiscoverReq, FaultSignature, Handshake, InvokeReq, Materialization,
-    Outcome, PrepareReq, ReproducerReq, TargetDescriptor, ValueTree,
+    Call, Capability, CoverageMap, DiscoverReq, FaultSignature, Handshake, InvokeReq, Loss,
+    Materialization, Outcome, PrepareReq, ReproducerReq, TargetDescriptor, ValueTree,
 };
 
 use crate::config::{ConfigError, LoadedConfig, Strategy};
@@ -36,7 +36,7 @@ use crate::oracles::{self, Finding, Oracles};
 use crate::report::render_markdown;
 use crate::report::scanresult::*;
 use crate::rng::Rng;
-use crate::rpc::client::{spawn_discovered, Launch, LostReason, PluginClient};
+use crate::rpc::client::{spawn_discovered, Launch, PluginClient};
 use crate::schedule::{Plan, Scheduler};
 use crate::supervise::{Completed, Job, RunReport, Supervisor, DISABLE_AFTER, DISCOVERY_TIMEOUT};
 
@@ -194,7 +194,14 @@ pub struct ScanReport {
 #[derive(Debug)]
 pub enum ScanError {
     Config(ConfigError),
-    Plugin(LostReason),
+    /// The plugin gave no answer during setup, before any worker started.
+    Plugin(Loss),
+    /// The plugin answered setup and said it cannot do the work. The process is alive, which is
+    /// the difference the operator acts on, so it is not reported as a lost plugin.
+    Refused {
+        code: i64,
+        message: String,
+    },
     Io(io::Error),
     /// Discovery reported nothing the engine can call. A scan of zero targets is a configuration
     /// mistake more often than it is a fact about the code, so it is reported rather than run.
@@ -220,7 +227,8 @@ impl fmt::Display for ScanError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ScanError::Config(e) => write!(f, "{e}"),
-            ScanError::Plugin(e) => write!(f, "plugin: {}", e.detail()),
+            ScanError::Plugin(e) => write!(f, "plugin: {e}"),
+            ScanError::Refused { code, message } => write!(f, "plugin refused ({code}): {message}"),
             ScanError::Io(e) => write!(f, "{e}"),
             ScanError::NothingFuzzable { skipped } => write!(
                 f,
@@ -252,9 +260,22 @@ impl From<ConfigError> for ScanError {
     }
 }
 
-impl From<LostReason> for ScanError {
-    fn from(e: LostReason) -> Self {
+impl From<Loss> for ScanError {
+    fn from(e: Loss) -> Self {
         ScanError::Plugin(e)
+    }
+}
+
+/// One of the setup calls that run before any worker spawns. A refusal and a loss both end the
+/// scan there, but they say different things about the plugin, so they keep different variants.
+fn setup<T>(call: Call<T>) -> Result<T, ScanError> {
+    match call {
+        Call::Result(value) => Ok(value),
+        Call::Refusal(error) => Err(ScanError::Refused {
+            code: error.code,
+            message: error.message,
+        }),
+        Call::Lost(loss) => Err(ScanError::Plugin(loss)),
     }
 }
 
@@ -318,13 +339,13 @@ pub fn run(
     let started_at = SystemTime::now();
     let setup_at = Instant::now();
     let probe = PluginClient::spawn(&launch)?;
-    let handshake = probe.handshake()?;
-    let mut discovery = probe.discover(&request, DISCOVERY_TIMEOUT)?;
+    let handshake = setup(probe.handshake())?;
+    let mut discovery = setup(probe.discover(&request, DISCOVERY_TIMEOUT))?;
     // A harness that declares `readiness` vouches for the environment its targets live
     // in. Ask before any worker spawns: a service nobody started would otherwise file
     // one deadline finding per target, and the harness's reason is the fixable fact.
     if handshake.capabilities.contains(&Capability::Readiness) {
-        let ready = probe.ready(READY_TIMEOUT)?;
+        let ready = setup(probe.ready(READY_TIMEOUT))?;
         if !ready.ready {
             return Err(ScanError::NotReady {
                 detail: ready
@@ -372,7 +393,9 @@ pub fn run(
             .as_ref()
             .map(|worktree| worktree.path.display().to_string()),
     });
-    let mut scanner = Scanner::open(options, launch, handshake, discovery, request, probe, started_at)?;
+    let mut scanner = Scanner::open(
+        options, launch, handshake, discovery, request, probe, started_at,
+    )?;
     scanner.git_scope = git;
     scanner.log.append(&mut notes);
     scanner.setup_ms = setup_at.elapsed().as_millis();
@@ -612,7 +635,7 @@ impl Minimizer {
         while self.pool.len() < want.min(self.cap) {
             match spawn_discovered(&self.launch, &self.discovery) {
                 Ok((client, Some(reason))) => {
-                    eprintln!("afz: minimizer discovery failed: {}", reason.detail());
+                    eprintln!("afz: minimizer discovery failed: {reason}");
                     self.pool.push(client);
                     self.prepared.push(BTreeSet::new());
                 }
@@ -665,7 +688,11 @@ fn run_trial(
             target_id: target_id.to_string(),
             values: values.to_vec(),
         };
-        if client.prepare(&prepare, PREPARE_TIMEOUT).is_ok() {
+        if client
+            .prepare(&prepare, PREPARE_TIMEOUT)
+            .payload()
+            .is_some()
+        {
             prepared.insert(target_id.to_string());
         }
     }
@@ -808,8 +835,9 @@ impl Scanner {
         if let Err(e) = journal.append(line) {
             if self.journal_error.is_none() {
                 self.journal_error = Some(e.to_string());
-                self.log
-                    .push(format!("journal write failed: {e}; durable records stop here"));
+                self.log.push(format!(
+                    "journal write failed: {e}; durable records stop here"
+                ));
             }
         }
     }
@@ -1150,9 +1178,7 @@ impl Scanner {
             if let Some(restart) = &completed.restart {
                 self.log.push(format!(
                     "invocation {} lost worker {}: {}",
-                    completed.invocation_id,
-                    restart.worker,
-                    restart.reason.detail()
+                    completed.invocation_id, restart.worker, restart.reason
                 ));
             }
             self.ran += 1;
@@ -1297,7 +1323,7 @@ impl Scanner {
             Some(client.reproducer(&req, REPRODUCER_TIMEOUT))
         });
         let repro = match repro_attempt {
-            Some(Ok(resp)) => {
+            Some(Call::Result(resp)) => {
                 if resp.script.is_empty()
                     || resp.script.len() > MAX_REPRO_SCRIPT_BYTES
                     || !valid_extension(&resp.extension)
@@ -1311,11 +1337,16 @@ impl Scanner {
                     })
                 }
             }
-            Some(Err(reason)) => {
+            Some(Call::Refusal(error)) => {
                 self.log.push(format!(
-                    "finding {id} gets no reproducer: {}",
-                    reason.detail()
+                    "finding {id} gets no reproducer: the plugin declined it ({}): {}",
+                    error.code, error.message
                 ));
+                None
+            }
+            Some(Call::Lost(loss)) => {
+                self.log
+                    .push(format!("finding {id} gets no reproducer: {loss}"));
                 None
             }
             None => None,
@@ -1633,8 +1664,7 @@ impl Scanner {
                     self.corpus
                         .entries()
                         .map(|entry| {
-                            serde_json::to_string(&entry.values)
-                                .map_or(0, |text| text.len() as u64)
+                            serde_json::to_string(&entry.values).map_or(0, |text| text.len() as u64)
                         })
                         .sum(),
                 ),

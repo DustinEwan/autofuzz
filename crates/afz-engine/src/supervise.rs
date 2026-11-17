@@ -14,10 +14,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use afz_protocol::{
-    CoverageEntry, CoverageMap, DiscoverReq, EdgeId, FaultSignature, InvokeReq, Outcome, ValueTree,
+    Call, CoverageEntry, CoverageMap, DiscoverReq, EdgeId, ErrorObject, FaultSignature, InvokeReq,
+    Loss, Outcome, ValueTree,
 };
 
-use crate::rpc::client::{spawn_discovered, Launch, LostReason, PluginClient};
+use crate::rpc::client::{spawn_discovered, via, Launch, PluginClient};
 use crate::scan::PREPARE_TIMEOUT;
 
 /// Restarts attributed to one target before the engine disables it. The design's number.
@@ -49,7 +50,7 @@ pub struct Job {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Restart {
     pub worker: usize,
-    pub reason: LostReason,
+    pub reason: Loss,
 }
 
 /// One finished invocation.
@@ -449,7 +450,7 @@ impl Worker {
     fn start(index: usize, launch: &Launch, discovery: &DiscoverReq) -> Option<PluginClient> {
         let (client, lost) = spawn_discovered(launch, discovery).ok()?;
         if let Some(reason) = lost {
-            eprintln!("afz: worker {index} discovery failed: {}", reason.detail());
+            eprintln!("afz: worker {index} discovery failed: {reason}");
         }
         Some(client)
     }
@@ -469,7 +470,7 @@ impl Worker {
         let client = self.client.as_ref()?;
         client
             .coverage_map(timeout)
-            .ok()
+            .payload()
             .filter(|map| !map.entries.is_empty())
     }
 
@@ -528,8 +529,8 @@ impl Worker {
                         },
                         PREPARE_TIMEOUT,
                     ) {
-                        Ok(afz_protocol::PrepareResp::Ok { .. }) => {}
-                        Ok(afz_protocol::PrepareResp::Skip { reason }) => {
+                        Call::Result(afz_protocol::PrepareResp::Ok { .. }) => {}
+                        Call::Result(afz_protocol::PrepareResp::Skip { reason }) => {
                             self.prepared.remove(&job.target_id);
                             return (
                                 Event::Unbuildable {
@@ -542,10 +543,35 @@ impl Worker {
                                 Watch::Nothing,
                             );
                         }
-                        Err(reason) => {
+                        Call::Refusal(error) => {
+                            // The plugin declined this target and is still alive. Restarting it
+                            // costs a process and a full `discover` to get the same answer back,
+                            // so the process is kept and the target is left unprepared, to be
+                            // tried again if the scan reaches it later.
+                            self.prepared.remove(&job.target_id);
+                            return (
+                                Event::Ran(Completed {
+                                    invocation_id: job.invocation_id,
+                                    target_id: job.target_id,
+                                    outcome: engine_fault(
+                                        "plugin-refused",
+                                        "PluginRefused",
+                                        format!(
+                                            "prepare declined: {}: {}",
+                                            error.code, error.message
+                                        ),
+                                    ),
+                                    restart: None,
+                                }),
+                                Watch::Nothing,
+                            );
+                        }
+                        Call::Lost(loss) => {
                             return self.classify_loss(
                                 job,
-                                LostReason::Spawn(format!("prepare: {}", reason.detail())),
+                                Loss::Spawn {
+                                    detail: format!("prepare: {loss}"),
+                                },
                             )
                         }
                     }
@@ -554,8 +580,9 @@ impl Worker {
                     &Completed::request_for(&job, deadline),
                     deadline + KILL_GRACE,
                 ) {
-                    Ok(outcome) => Attempt::Answered(outcome),
-                    Err(reason) => Attempt::Lost(reason),
+                    Call::Result(outcome) => Attempt::Answered(outcome),
+                    Call::Refusal(error) => Attempt::Refused(error),
+                    Call::Lost(loss) => Attempt::Lost(loss),
                 }
             }
         };
@@ -573,27 +600,47 @@ impl Worker {
                     Watch::Answered(target_id),
                 )
             }
-            Attempt::Lost(reason) => self.classify_loss(job, reason),
+            Attempt::Lost(loss) => self.classify_loss(job, loss),
+            // The plugin answered, and what it said was that it cannot do this work. The process
+            // is healthy, so it is kept: restarting it would throw away a warm process to get the
+            // same refusal back.
+            Attempt::Refused(error) => {
+                let target_id = job.target_id;
+                (
+                    Event::Ran(Completed {
+                        invocation_id: job.invocation_id,
+                        target_id: target_id.clone(),
+                        outcome: engine_fault(
+                            "plugin-refused",
+                            "PluginRefused",
+                            format!("{}: {}", error.code, error.message),
+                        ),
+                        restart: None,
+                    }),
+                    Watch::Nothing,
+                )
+            }
             // The process is gone or was never startable. That is a process exit as far as the
             // scan is concerned, and the next invocation gets a fresh process.
-            Attempt::Absent => {
-                self.classify_loss(job, LostReason::Spawn("plugin is not running".to_string()))
-            }
+            Attempt::Absent => self.classify_loss(
+                job,
+                Loss::Spawn {
+                    detail: "plugin is not running".to_string(),
+                },
+            ),
         }
     }
 
     /// Turn a call that got no answer into the finding the design names and restart the process.
     /// Accounting the restart against the target is the caller's, because the watchdog belongs to
     /// the pool and only the caller can hold it while the plugin call is in flight.
-    fn classify_loss(&mut self, job: Job, reason: LostReason) -> (Event, Watch) {
+    fn classify_loss(&mut self, job: Job, reason: Loss) -> (Event, Watch) {
         let outcome = match &reason {
             // The engine waited for the answer until the deadline and none arrived.
-            LostReason::NoAnswer => engine_fault("deadline", "Deadline", reason.detail()),
+            Loss::NoAnswer => engine_fault("deadline", "Deadline", reason.to_string()),
             // The plugin ended itself with a call in flight and left no explanation.
-            LostReason::Exited { .. } => {
-                engine_fault("processExit", "ProcessExit", reason.detail())
-            }
-            other => engine_fault(other.via(), "PluginLost", other.detail()),
+            Loss::Exited { .. } => engine_fault("processExit", "ProcessExit", reason.to_string()),
+            other => engine_fault(via(other), "PluginLost", other.to_string()),
         };
         self.restart();
         let target_id = job.target_id;
@@ -625,7 +672,9 @@ enum Watch {
 /// What one plugin process did with an attempt, before the engine classifies it.
 enum Attempt {
     Answered(Outcome),
-    Lost(LostReason),
+    /// The plugin said it cannot do the work. The process is alive, so this is not a loss.
+    Refused(ErrorObject),
+    Lost(Loss),
     /// The process is gone: it exited between invocations or never started.
     Absent,
 }

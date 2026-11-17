@@ -23,7 +23,7 @@ afz-conformance = { path = "crates/afz-conformance" }
 # The wire mechanism: framing, envelopes, request ids, error codes, and loss. The method
 # vocabulary, the payloads, and the host client stay here; this supplies only the contract both
 # sides of the plugin boundary compile against.
-plugin-rpc = "0.1.0-alpha.1"
+plugin-rpc = "0.1.0-alpha.2"
 
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

@@ -2,7 +2,7 @@
 //!
 //! The rule this file exists to enforce is that a plugin is a hostile, fallible peer. A slow
 //! answer, EOF, a panic, a `process.exit`, and an engine kill are all *results*, never engine
-//! errors: the caller gets a [`LostReason`] it maps onto an `Outcome`, so a scan of a target
+//! errors: the caller gets a [`Loss`] it maps onto an `Outcome`, so a scan of a target
 //! that crashes the plugin still finishes and still reports.
 //!
 //! Ownership matters here. The reaper thread owns the `Child`, because only one place can
@@ -37,71 +37,34 @@ fn exit_signal(status: &ExitStatus) -> Option<i32> {
 
 use afz_protocol::*;
 
-/// Why a call did not get an answer. The supervisor maps these onto outcomes:
-/// `NoAnswer` becomes a `deadline`, an unrequested `Exited` becomes `processExit`, and
-/// anything else becomes `failed` with `via: "plugin-lost"`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LostReason {
-    /// The plugin is alive but did not answer within the timeout.
-    NoAnswer,
-    /// The plugin closed stdout without an explanation.
-    Eof,
-    /// The plugin process exited on its own.
-    Exited {
-        code: Option<i32>,
-        signal: Option<i32>,
-    },
-    /// The engine killed it, because the call crossed its deadline or the scan ended.
-    Killed,
-    /// The engine could not start the process, or the plugin replied unparseably.
-    Spawn(String),
-}
-
-impl LostReason {
-    pub fn detail(&self) -> String {
-        match self {
-            LostReason::NoAnswer => "plugin did not answer before the deadline".to_string(),
-            LostReason::Eof => "plugin closed the pipe".to_string(),
-            LostReason::Exited {
-                code: Some(c),
-                signal: None,
-            } => format!("plugin exited with code {c}"),
-            LostReason::Exited {
-                code: None,
-                signal: Some(s),
-            } => format!("plugin killed by signal {s}"),
-            LostReason::Exited {
-                code: Some(c),
-                signal: Some(s),
-            } => {
-                format!("plugin exited with code {c} after signal {s}")
-            }
-            LostReason::Exited { .. } => "plugin exited".to_string(),
-            LostReason::Killed => "engine killed the plugin".to_string(),
-            LostReason::Spawn(e) => e.clone(),
-        }
-    }
-
-    /// The `via` string a finding should carry for this loss.
-    pub fn via(&self) -> &'static str {
-        match self {
-            LostReason::NoAnswer => "deadline",
-            LostReason::Exited { .. } => "processExit",
-            LostReason::Killed => "plugin-killed",
-            LostReason::Eof | LostReason::Spawn(_) => "plugin-lost",
-        }
-    }
-
-    /// Whether the engine asked for this. A `Killed` loss with a call in flight is a deadline
-    /// or a shutdown; anything else is the plugin's own doing, and the supervisor classifies
-    /// the two differently.
-    pub fn engine_requested(&self) -> bool {
-        matches!(self, LostReason::Killed)
+/// The `via` string a finding carries for a loss the mechanism reported. The engine no longer
+/// keeps its own loss enum - it had written one, veridoc had written a byte-identical one, and
+/// `plugin_rpc::Loss` owns both now - but `via` is this profile's own vocabulary, so the mapping
+/// from the mechanism's reason to the finding's word stays here. `Call` and `Loss` reach this
+/// module through `afz_protocol`, which re-exports the mechanism.
+pub fn via(loss: &Loss) -> &'static str {
+    match loss {
+        Loss::NoAnswer => "deadline",
+        Loss::Exited { .. } => "processExit",
+        Loss::Killed => "plugin-killed",
+        Loss::Eof | Loss::Spawn { .. } | Loss::Profile { .. } => "plugin-lost",
     }
 }
 
-/// Either a decoded answer, or the reason there is none.
-pub type Call<T> = Result<T, LostReason>;
+/// One plugin call as a sentence, for a caller whose error channel is a string rather than a
+/// `Call`. A refusal and a loss both mean there is no payload, and they are different fixes: the
+/// plugin answered that it will not do the work, or the plugin did not answer at all. Reporting the
+/// first as the second is what made a refusal look like a dead process.
+pub fn sentence<T>(method: &str, call: Call<T>) -> Result<T, String> {
+    match call {
+        Call::Result(value) => Ok(value),
+        Call::Refusal(error) => Err(format!(
+            "the plugin refused {method} ({}): {}",
+            error.code, error.message
+        )),
+        Call::Lost(loss) => Err(loss.to_string()),
+    }
+}
 
 /// How the engine launches a plugin: argv, plus the environment and directory it needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,24 +102,16 @@ impl Launch {
 /// The loss reason plus the requests still in flight, under one lock so a waiter is woken
 /// with the reason already recorded.
 struct State {
-    lost: Option<LostReason>,
+    lost: Option<Loss>,
     slots: BTreeMap<u64, mpsc::Sender<Response>>,
 }
 
 impl State {
-    /// Record `reason` unless a more specific one is already recorded, then wake waiters.
-    fn lose(&mut self, reason: LostReason) {
-        let replace = match &self.lost {
-            None => true,
-            // The engine's own kill outranks the exit status that kill produced, and a real
-            // exit status outranks the EOF the reader noticed first.
-            Some(LostReason::Killed) => false,
-            Some(LostReason::Eof) => !matches!(reason, LostReason::Eof),
-            Some(_) => false,
-        };
-        if replace {
-            self.lost = Some(reason);
-        }
+    /// Record `reason` unless one is already recorded, then wake waiters. `Loss::resolve` keeps
+    /// the first cause, so the exit status the engine's own kill produced never replaces the kill,
+    /// and the reader's `Eof` gives way to the exit status the reaper records a moment later.
+    fn lose(&mut self, reason: Loss) {
+        self.lost = Some(Loss::resolve(self.lost.take(), reason));
         self.slots.clear();
     }
 }
@@ -175,11 +130,13 @@ pub struct PluginClient {
 }
 
 impl PluginClient {
-    /// Start the plugin. A spawn failure is reported as `LostReason::Spawn`, not as an error,
+    /// Start the plugin. A spawn failure is reported as `Loss::Spawn`, not as an error,
     /// so the supervisor counts it like any other plugin loss.
-    pub fn spawn(launch: &Launch) -> Result<PluginClient, LostReason> {
+    pub fn spawn(launch: &Launch) -> Result<PluginClient, Loss> {
         let Some(program) = launch.argv.first() else {
-            return Err(LostReason::Spawn("empty harness.command".to_string()));
+            return Err(Loss::Spawn {
+                detail: "empty harness.command".to_string(),
+            });
         };
         let mut cmd = Command::new(program);
         cmd.args(launch.argv.iter().skip(1))
@@ -192,7 +149,11 @@ impl PluginClient {
         }
         let mut child = match cmd.spawn() {
             Ok(child) => child,
-            Err(e) => return Err(LostReason::Spawn(format!("{}: {e}", launch.display()))),
+            Err(e) => {
+                return Err(Loss::Spawn {
+                    detail: format!("{}: {e}", launch.display()),
+                })
+            }
         };
         let stdin = child.stdin.take().expect("stdin is piped");
         let stdout = child.stdout.take().expect("stdout is piped");
@@ -234,19 +195,16 @@ impl PluginClient {
     }
 
     /// The recorded loss, if the process is gone. Requests made after this fail immediately.
-    pub fn lost(&self) -> Option<LostReason> {
+    pub fn lost(&self) -> Option<Loss> {
         self.state.lock().expect("state lock").lost.clone()
     }
 
     /// Kill the plugin now and wait for the exit. Any call in flight resolves as
-    /// `LostReason::Killed`.
+    /// `Loss::Killed`.
     pub fn kill(&self) {
         // Record the request first, so a call in flight is attributed to the engine's kill
         // rather than to the exit status the kill produces.
-        self.state
-            .lock()
-            .expect("state lock")
-            .lose(LostReason::Killed);
+        self.state.lock().expect("state lock").lose(Loss::Killed);
         let (ack_tx, ack_rx) = mpsc::channel();
         // A full or closed channel means the reaper already finished: the process is gone.
         if self.kill.send(ack_tx).is_ok() {
@@ -270,7 +228,7 @@ impl PluginClient {
         {
             let mut state = self.state.lock().expect("state lock");
             if let Some(reason) = state.lost.clone() {
-                return Err(reason);
+                return Call::Lost(reason);
             }
             state.slots.insert(id, tx);
         }
@@ -290,10 +248,10 @@ impl PluginClient {
             // reader's earlier `closed the pipe`.
             let reason = self
                 .await_exit_reason(Duration::from_millis(250))
-                .unwrap_or_else(|| {
-                    LostReason::Spawn(format!("pipe to {} closed: {e}", self.launch.display()))
+                .unwrap_or_else(|| Loss::Spawn {
+                    detail: format!("pipe to {} closed: {e}", self.launch.display()),
                 });
-            return Err(reason);
+            return Call::Lost(reason);
         }
 
         // One receive, not a poll loop: the deadline is the wait, and `recv_timeout` already
@@ -305,32 +263,22 @@ impl PluginClient {
                 self.drop_slot(id);
                 // A recorded loss is more specific than "slow": the plugin died while we
                 // waited, and the supervisor should classify the death, not the timeout.
-                return Err(self.lost().unwrap_or(LostReason::NoAnswer));
+                return Call::Lost(self.lost().unwrap_or(Loss::NoAnswer));
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 self.drop_slot(id);
-                return Err(self
-                    .await_exit_reason(Duration::from_millis(250))
-                    .unwrap_or(LostReason::Eof));
+                return Call::Lost(
+                    self.await_exit_reason(Duration::from_millis(250))
+                        .unwrap_or(Loss::Eof),
+                );
             }
         };
 
-        match response {
-            Response::Success(s) => serde_json::from_value(s.result).map_err(|e| {
-                LostReason::Spawn(format!(
-                    "{} replied malformed json to {}: {e}",
-                    self.launch.display(),
-                    method.name()
-                ))
-            }),
-            Response::Failure(f) => Err(LostReason::Spawn(format!(
-                "{} failed {} ({}): {}",
-                self.launch.display(),
-                method.name(),
-                f.error.code,
-                f.error.message
-            ))),
-        }
+        // The mechanism reads the payload into the profile's type and keeps a refusal out of the
+        // loss channel. Before this, a plugin that answered `{"error": ...}` was reported the same
+        // way as one that could not be started, and the supervisor restarted a process that had
+        // answered in milliseconds.
+        response.into_call::<T>()
     }
 
     fn drop_slot(&self, id: u64) {
@@ -339,12 +287,12 @@ impl PluginClient {
 
     /// The reaper records the exit status a poll interval after the reader notices a closed
     /// pipe. Wait that long for the specific reason before settling for a generic one.
-    fn await_exit_reason(&self, grace: Duration) -> Option<LostReason> {
+    fn await_exit_reason(&self, grace: Duration) -> Option<Loss> {
         let until = Instant::now() + grace;
         loop {
             match self.lost() {
                 // EOF is the reader's placeholder; the reaper's exit status is the truth.
-                Some(LostReason::Eof) if Instant::now() < until => {
+                Some(Loss::Eof) if Instant::now() < until => {
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 reason => return reason,
@@ -382,12 +330,17 @@ impl PluginClient {
         )
     }
 
-    /// One invocation with the default mapping: any loss becomes `failed` with
-    /// `via: "plugin-lost"`, which is what a caller that does not supervise wants.
+    /// One invocation with the default mapping: a payload is returned as-is, a refusal becomes
+    /// `failed` with `via: "plugin-refused"` carrying the plugin's own message, and a loss becomes
+    /// `failed` with `via: "plugin-lost"`. That is what a caller that does not supervise wants.
     pub fn invoke_or_lose(&self, req: &InvokeReq, timeout: Duration) -> Outcome {
         match self.invoke(req, timeout) {
-            Ok(outcome) => outcome,
-            Err(reason) => Outcome::plugin_lost(req.deadline_ms as f64, reason.detail()),
+            Call::Result(outcome) => outcome,
+            Call::Refusal(error) => Outcome::plugin_refused(
+                req.deadline_ms as f64,
+                format!("{}: {}", error.code, error.message),
+            ),
+            Call::Lost(loss) => Outcome::plugin_lost(req.deadline_ms as f64, loss.to_string()),
         }
     }
 
@@ -424,19 +377,27 @@ impl PluginClient {
 /// carries an inventory from one process to another.
 ///
 /// The `Err` arm is the one case that leaves no process: the plugin could not be started at all.
-/// A plugin that starts and then fails `discover` comes back in the `Ok` arm with the discovery
-/// loss beside it and the client still usable, the way `Worker::start` keeps such a process: every
-/// `prepare` then reports the plugin's own reason, which is the diagnostic a scan result should
-/// carry rather than a spawn error that hides it.
+/// A plugin that starts and then fails `discover` comes back in the `Ok` arm with the reason beside
+/// it and the client still usable, the way `Worker::start` keeps such a process: every `prepare`
+/// then reports the plugin's own reason, which is the diagnostic a scan result should carry rather
+/// than a spawn error that hides it.
 pub fn spawn_discovered(
     launch: &Launch,
     discovery: &DiscoverReq,
-) -> Result<(PluginClient, Option<LostReason>), LostReason> {
+) -> Result<(PluginClient, Option<String>), Loss> {
     let client = PluginClient::spawn(launch)?;
-    let lost = client
-        .discover(discovery, crate::supervise::DISCOVERY_TIMEOUT)
-        .err();
-    Ok((client, lost))
+    let failed = match client.discover(discovery, crate::supervise::DISCOVERY_TIMEOUT) {
+        Call::Result(_) => None,
+        // A refusal says the plugin declined to inventory itself; a loss says it could not answer.
+        // Both leave the process up, and `prepare` reports the same reason again later, so this is
+        // the wording for the scan log and not a decision.
+        Call::Refusal(error) => Some(format!(
+            "declined discover ({}): {}",
+            error.code, error.message
+        )),
+        Call::Lost(loss) => Some(loss.to_string()),
+    };
+    Ok((client, failed))
 }
 
 /// A plugin client is mostly OS handles, so `Debug` reports what identifies it and nothing else.
@@ -481,7 +442,7 @@ fn spawn_reader(stdout: ChildStdout, state: Arc<Mutex<State>>) {
                 }
             }
             // A closed pipe is how a plugin dies when no exit status is readable yet.
-            state.lock().expect("state lock").lose(LostReason::Eof);
+            state.lock().expect("state lock").lose(Loss::Eof);
         })
         .expect("spawn reader");
 }
@@ -513,11 +474,11 @@ fn spawn_reaper(
                 }
             };
             let reason = match status {
-                Ok(status) => LostReason::Exited {
+                Ok(status) => Loss::Exited {
                     code: status.code(),
                     signal: exit_signal(&status),
                 },
-                Err(_) => LostReason::Eof,
+                Err(_) => Loss::Eof,
             };
             state.lock().expect("state lock").lose(reason);
             let _ = done_tx.send(());

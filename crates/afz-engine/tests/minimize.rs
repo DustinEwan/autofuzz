@@ -14,7 +14,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use afz_engine::minimize::{minimize, FaultMatch};
-use afz_engine::rpc::client::{Launch, PluginClient};
+use afz_engine::rpc::client::{sentence, Launch, PluginClient};
 use afz_protocol::{DiscoverReq, InvokeReq, Outcome, ReproducerReq, ValueTree};
 
 fn target_root() -> PathBuf {
@@ -70,6 +70,7 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
             },
             Duration::from_secs(120),
         )
+        .payload()
         .expect("discover the minimize target");
     let target = discovery
         .targets
@@ -94,6 +95,7 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
             },
             Duration::from_secs(30),
         )
+        .payload()
         .expect("prepare the target");
     assert!(
         matches!(prepared, afz_protocol::PrepareResp::Ok { .. }),
@@ -101,8 +103,9 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
     );
 
     let invoke = |args: &[ValueTree]| -> Outcome {
-        client
-            .invoke(
+        sentence(
+            "invoke",
+            client.invoke(
                 &InvokeReq {
                     invocation_id: 1,
                     target_id: target.id.clone(),
@@ -111,8 +114,9 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
                     collect_coverage: false,
                 },
                 Duration::from_secs(30),
-            )
-            .unwrap_or_else(|reason| Outcome::plugin_lost(0.0, reason.detail()))
+            ),
+        )
+        .unwrap_or_else(|reason| Outcome::plugin_lost(0.0, reason))
     };
 
     let original = invoke(&values);
@@ -171,6 +175,7 @@ fn the_planted_input_minimizes_below_200_bytes_and_still_reproduces() {
             },
             Duration::from_secs(10),
         )
+        .payload()
         .expect("the js-ts plugin renders a reproducer");
     assert_eq!(
         resp.extension, "mjs",

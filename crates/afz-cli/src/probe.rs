@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use afz_engine::config::{self, LoadedConfig};
-use afz_engine::rpc::client::{Launch, PluginClient};
+use afz_engine::rpc::client::{sentence, Launch, PluginClient};
 use afz_protocol::*;
 
 /// Run the command. With no `--command`, the scan project at `path` names the plugin; with no
@@ -23,12 +23,13 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
         _ => launch_for(argv)?,
     };
 
-    let client = PluginClient::spawn(&launch).map_err(|r| r.detail())?;
-    let handshake = client.handshake().map_err(|r| r.detail())?;
+    let client = PluginClient::spawn(&launch).map_err(|r| r.to_string())?;
+    let handshake = sentence("handshake", client.handshake())?;
     check_protocol(&handshake)?;
 
-    let discovery = client
-        .discover(
+    let discovery = sentence(
+        "discover",
+        client.discover(
             &DiscoverReq {
                 root: scope.root.display().to_string(),
                 include: scope.include,
@@ -39,15 +40,16 @@ pub fn run(argv: Vec<String>, path: Option<String>, json: bool) -> Result<(), St
                     .map(|loaded| loaded.path.display().to_string()),
             },
             std::time::Duration::from_secs(120),
-        )
-        .map_err(|r| r.detail())?;
-    let coverage = client.coverage_map(std::time::Duration::from_secs(30)).ok();
+        ),
+    )?;
+    let coverage = client
+        .coverage_map(std::time::Duration::from_secs(30))
+        .payload();
     let ready = if handshake.capabilities.contains(&Capability::Readiness) {
-        Some(
-            client
-                .ready(std::time::Duration::from_secs(5))
-                .map_err(|r| r.detail())?,
-        )
+        Some(sentence(
+            "ready",
+            client.ready(std::time::Duration::from_secs(5)),
+        )?)
     } else {
         None
     };

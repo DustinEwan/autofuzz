@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use afz_engine::rpc::client::{Launch, LostReason, PluginClient};
+use afz_engine::rpc::client::{Launch, PluginClient};
 use afz_protocol::*;
 
 /// The fake plugin is a binary of `afz-xtask`, so this crate's tests cannot use
@@ -54,7 +54,7 @@ fn invoke_req(index: u64, target: &str) -> InvokeReq {
 #[test]
 fn handshake_discover_and_invoke_over_real_pipes() {
     let client = fake(None);
-    let handshake = client.handshake().expect("handshake");
+    let handshake = client.handshake().payload().expect("handshake");
     assert_eq!(handshake.protocol_version, PROTOCOL_VERSION);
     assert_eq!(handshake.name, "afz-fakeplugin");
     assert!(handshake.capabilities.contains(&Capability::Coverage));
@@ -67,6 +67,7 @@ fn handshake_discover_and_invoke_over_real_pipes() {
             },
             Duration::from_secs(30),
         )
+        .payload()
         .expect("discover");
     assert_eq!(
         discovery.targets.len(),
@@ -81,6 +82,7 @@ fn handshake_discover_and_invoke_over_real_pipes() {
 
     let outcome = client
         .invoke(&invoke_req(1, "afz:t:0001"), Duration::from_secs(5))
+        .payload()
         .expect("invoke");
     assert_eq!(outcome.kind(), "ok");
     assert_eq!(
@@ -97,6 +99,7 @@ fn handshake_discover_and_invoke_over_real_pipes() {
             },
             Duration::from_secs(5),
         )
+        .payload()
         .expect("prepare");
     assert!(prepared.ok());
     let skipped = client
@@ -107,6 +110,7 @@ fn handshake_discover_and_invoke_over_real_pipes() {
             },
             Duration::from_secs(5),
         )
+        .payload()
         .expect("prepare");
     assert_eq!(
         skipped,
@@ -129,6 +133,7 @@ fn handshake_discover_and_invoke_over_real_pipes() {
             },
             Duration::from_secs(5),
         )
+        .payload()
         .expect("minimize");
     assert_eq!(
         minimized.values.len(),
@@ -138,6 +143,7 @@ fn handshake_discover_and_invoke_over_real_pipes() {
 
     let map = client
         .coverage_map(Duration::from_secs(5))
+        .payload()
         .expect("coverageMap");
     assert_eq!(
         map.entries.len(),
@@ -155,6 +161,7 @@ fn invocation_ids_are_attributable_across_calls() {
     for i in 0..5 {
         let outcome = client
             .invoke(&invoke_req(i, "afz:t:0001"), Duration::from_secs(5))
+            .payload()
             .expect("invoke");
         // The fake plugin's coverage edge is a function of its own invocation counter, which
         // tracks the engine's request order one-for-one.
@@ -183,7 +190,7 @@ fn plugin_exit_becomes_plugin_lost_not_an_error() {
     );
     assert_eq!(
         client.lost(),
-        Some(LostReason::Exited {
+        Some(Loss::Exited {
             code: Some(1),
             signal: None
         })
@@ -196,19 +203,19 @@ fn engine_kill_is_attributable_to_the_engine() {
     // supervisor can call the invocation a deadline rather than a crash.
     let client = fake(Some(r#"[{"at":1,"sleepMs":5000}]"#));
     let slow = client.invoke(&invoke_req(1, "afz:t:0001"), Duration::from_millis(200));
-    assert_eq!(slow, Err(LostReason::NoAnswer));
+    assert_eq!(slow, Call::Lost(Loss::NoAnswer));
     let started = std::time::Instant::now();
     client.kill();
     assert!(
         started.elapsed() < Duration::from_secs(5),
         "kill waited for the sleeping plugin"
     );
-    assert_eq!(client.lost(), Some(LostReason::Killed));
-    assert!(client.lost().unwrap().engine_requested());
+    assert_eq!(client.lost(), Some(Loss::Killed));
+    assert!(client.lost().unwrap().host_requested());
     // A later call fails fast with the recorded reason instead of hanging.
     assert_eq!(
         client.invoke(&invoke_req(2, "afz:t:0001"), Duration::from_secs(5)),
-        Err(LostReason::Killed)
+        Call::Lost(Loss::Killed)
     );
 }
 
@@ -217,7 +224,7 @@ fn slow_answer_is_no_answer_not_a_hang() {
     let client = fake(Some(r#"[{"at":1,"sleepMs":1500}]"#));
     let started = std::time::Instant::now();
     let slow = client.invoke(&invoke_req(1, "afz:t:0001"), Duration::from_millis(150));
-    assert_eq!(slow, Err(LostReason::NoAnswer));
+    assert_eq!(slow, Call::Lost(Loss::NoAnswer));
     assert!(
         started.elapsed() < Duration::from_millis(1200),
         "the call outlived its own deadline"
@@ -225,23 +232,27 @@ fn slow_answer_is_no_answer_not_a_hang() {
     // The plugin recovers and answers the next call, so the worker keeps working.
     let next = client
         .invoke(&invoke_req(2, "afz:t:0001"), Duration::from_secs(5))
+        .payload()
         .expect("next invoke");
     assert_eq!(next.kind(), "ok");
     drop(client);
 }
 
 #[test]
-fn rpc_error_is_reported_as_a_failure_with_the_plugin_message() {
+fn rpc_error_is_a_refusal_that_keeps_the_connection() {
     let client = fake(Some(r#"[{"at":1,"rpcError":"target not found"}]"#));
-    let err = client
+    let refusal = client
         .invoke(&invoke_req(1, "afz:t:0001"), Duration::from_secs(5))
-        .unwrap_err();
-    let LostReason::Spawn(message) = err else {
-        panic!("expected a plugin error, got {err:?}")
-    };
+        .refusal()
+        .expect("the plugin answered an error frame");
+    assert_eq!(
+        refusal.code, PLUGIN_ERROR,
+        "the fake refuses with the plugin error code"
+    );
     assert!(
-        message.contains("target not found"),
-        "message was {message}"
+        refusal.message.contains("target not found"),
+        "message was {}",
+        refusal.message
     );
     assert_eq!(
         client.lost(),
@@ -255,6 +266,7 @@ fn plugin_stderr_is_captured_from_the_child() {
     let client = fake(Some(r#"[{"at":1,"stderr":"target said hello"}]"#));
     client
         .invoke(&invoke_req(1, "afz:t:0001"), Duration::from_secs(5))
+        .payload()
         .expect("invoke");
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
@@ -273,11 +285,11 @@ fn plugin_stderr_is_captured_from_the_child() {
 fn spawn_failure_is_a_loss_not_a_panic() {
     let launch = Launch::new(["/nonexistent/afz-plugin-that-does-not-exist"]);
     let err = PluginClient::spawn(&launch).unwrap_err();
-    assert!(matches!(err, LostReason::Spawn(_)), "got {err:?}");
+    assert!(matches!(err, Loss::Spawn { .. }), "got {err:?}");
     assert!(
-        err.detail().contains("afz-plugin-that-does-not-exist"),
+        err.to_string().contains("afz-plugin-that-does-not-exist"),
         "detail was {}",
-        err.detail()
+        err
     );
 }
 
@@ -291,6 +303,7 @@ fn dropping_the_client_leaves_no_plugin_behind() {
     );
     client
         .invoke(&invoke_req(1, "afz:t:0001"), Duration::from_secs(5))
+        .payload()
         .expect("invoke");
     drop(client);
     // `/proc/<pid>` disappears once the reaper has waited the child, so this also proves the

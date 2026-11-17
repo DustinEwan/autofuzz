@@ -133,6 +133,7 @@ For the real scan, raise the budget to what the user asked for (`--budget invoca
 | `harness '<name>' is not installed` | Run the §3 install line for that harness |
 | `probe-plugin` prints zero targets | Your include globs match nothing; re-read the repo layout |
 | `plugin-lost` in a scan | `afz harnesses` — the plugin command failed to start; the harness's own README names its toolchain requirements |
+| `plugin-refused` in a scan | The harness answered a method with an RPC error instead of a result; the plugin's own message is the finding's fault text, and the process stayed up |
 | A scan exits 1 | Read the last lines of stderr; the engine names what it could not do |
 | Findings appear | That is the product. Report `report.md`; do not "fix" the target without being asked |
 

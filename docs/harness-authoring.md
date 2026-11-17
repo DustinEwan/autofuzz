@@ -195,9 +195,10 @@ response. Use `failed` when the target tried to accept the input and broke: an u
 a panic, or a 500. `ok` and `rejected` are both valid results from the target's point of view;
 `failed` is not. The engine never reads your exceptions, because it does not know them.
 
-Never answer `invoke` with an RPC error to report a fault. An error frame looks like a dead plugin to
-the engine: it files the invocation as `plugin-lost` and restarts the process. Put the fault in the
-`Outcome` instead.
+Never answer `invoke` with an RPC error to report a fault. An error frame is a refusal, not a
+result: the engine files the invocation as `failed` with `via: "plugin-refused"` carrying your
+message, keeps the process, and does not restart it, because a plugin that answers in milliseconds
+is a working plugin. Put the fault in the `Outcome` instead.
 
 ## 5. Add coverage
 
