@@ -5,8 +5,16 @@
 //! Script format: a JSON array of directives, passed as `AFZ_FAKE_SCRIPT` (inline JSON) or
 //! `AFZ_FAKE_SCRIPT_FILE` (path). Directives apply in array order; `at` is the 1-based
 //! invocation index, and `for` optionally restricts a directive to one target id.
+//!
+//! The object form carries whole-script keys beside `directives`: `raw` answers a named method
+//! with the script's own bytes, `discoverSecond` answers the second `discover` on a connection,
+//! `refusePrepare` and `dropCoverageMap` refuse a method, and `secondInstance` makes the second of
+//! two plugin processes answer differently. Each one exists so a profile rule has the failure it
+//! is written to catch, and can be shown catching it.
 
+use std::collections::BTreeMap;
 use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use afz_protocol::*;
 use schemars::JsonSchema;
@@ -64,6 +72,39 @@ pub struct Script {
     /// Answers `ready` with this document instead of the always-ready default, for tests
     /// that need a plugin reporting its environment is down.
     pub ready: Option<ReadyResp>,
+    /// Answers these methods with this document verbatim, keyed by the method's wire name.
+    ///
+    /// Every other answer this plugin gives is built from an `afz_protocol` type, so it satisfies
+    /// its committed schema by construction and a rule written to catch an off-schema answer has
+    /// nothing to catch. This is the one place a script writes bytes the plugin does not type.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub raw: BTreeMap<String, serde_json::Value>,
+    /// Answers the second and later `discover` on this connection with this inventory, modelling
+    /// the plugin whose enumeration depends on something outside the request.
+    pub discover_second: Option<Discovery>,
+    /// Answers `prepare` with this JSON-RPC error, modelling the plugin that reports a target in
+    /// its inventory and then cannot materialize it.
+    pub refuse_prepare: Option<String>,
+    /// Answers `coverageMap` with this JSON-RPC error instead of the table, modelling the plugin
+    /// that declares the `coverage` capability and does not honor the method.
+    pub drop_coverage_map: Option<String>,
+    /// Makes the instance that finds `marker` already present answer differently. Two plugin
+    /// processes started from one launch share an environment, so a file is the only thing that
+    /// tells them apart, which is what the rules that compare them need.
+    pub second_instance: Option<SecondInstance>,
+}
+
+/// How the second plugin process to start differs from the first.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", default)]
+pub struct SecondInstance {
+    /// Path whose presence says an instance has already started. The instance that finds it absent
+    /// creates it and answers as the first.
+    pub marker: PathBuf,
+    /// Report this many targets fewer than the first instance reports.
+    pub drop_targets: Option<usize>,
+    /// Refuse `prepare` and `invoke` with this message.
+    pub refuse: Option<String>,
 }
 
 impl Script {
@@ -84,11 +125,7 @@ impl Script {
             Err(struct_err) => match serde_json::from_str::<Vec<Directive>>(&text) {
                 Ok(directives) => Script {
                     directives,
-                    discovery: None,
-                    handshake: None,
-                    require_discover: None,
-                    swallow_parse_error: None,
-                    ready: None,
+                    ..Script::default()
                 },
                 Err(_) => {
                     eprintln!("{PLUGIN_NAME}: ignoring malformed script: {struct_err}");
@@ -125,6 +162,40 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
     // against the inventory this same process discovered, so `prepare` before `discover` is a
     // refusal rather than an answer.
     let mut discovered = false;
+    // `discover` calls served on this connection, so a script can answer a later one differently.
+    let mut discovers = 0u64;
+    // Whether an instance of this plugin has already started, for the rules that compare two of
+    // them. The marker says so, and the marker is named after the process that started the
+    // instances, so a later run finds none and cannot be told it is not the first.
+    let second = script
+        .second_instance
+        .as_ref()
+        .map(|si| {
+            let marker = instance_marker(&si.marker);
+            let started_before = marker.is_file();
+            if !started_before {
+                if let Some(parent) = marker.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(&marker, b"");
+            }
+            started_before
+        })
+        .unwrap_or(false);
+    let fewer = script
+        .second_instance
+        .as_ref()
+        .filter(|_| second)
+        .and_then(|si| si.drop_targets)
+        .unwrap_or(0);
+    let second_refusal = second
+        .then(|| {
+            script
+                .second_instance
+                .as_ref()
+                .and_then(|si| si.refuse.clone())
+        })
+        .flatten();
 
     loop {
         let line = match read_line(&mut reader, &mut buf) {
@@ -165,36 +236,86 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
             INVALID_REQUEST,
             "discover has not run on this connection",
         );
-        let resp = match method {
-            Method::Handshake => {
-                Response::result(req.id, script.handshake.clone().unwrap_or_else(handshake))
-            }
-            Method::Discover => {
-                discovered = true;
-                Response::result(req.id, script.discovery.clone().unwrap_or_else(inventory))
-            }
-            Method::Prepare if gated => refused,
-            Method::Invoke if gated => refused,
-            Method::Prepare => Response::result(req.id, prepare_resp(&req)),
-            Method::CoverageMap => Response::result(req.id, coverage_map()),
-            Method::Invoke => {
-                invocations += 1;
-                invoke_resp(req.id, &req, &script, invocations)
-            }
-            Method::Minimize => Response::result(req.id, minimize_resp(&req)),
-            Method::Reproducer => Response::result(req.id, reproducer_resp()),
-            Method::Ready => Response::result(
-                req.id,
-                script.ready.clone().unwrap_or(ReadyResp {
-                    ready: true,
-                    detail: None,
-                }),
-            ),
+        // A script that names a method here gets those bytes back as the result, so a rule about
+        // an off-schema answer has an off-schema answer to catch; the typed arms below cannot
+        // produce one, because their values are built from the types the schemas were drawn from.
+        let resp = match script.raw.get(req.method.as_str()) {
+            Some(value) => Response::result(req.id, value.clone()),
+            None => match method {
+                Method::Handshake => {
+                    Response::result(req.id, script.handshake.clone().unwrap_or_else(handshake))
+                }
+                Method::Discover => {
+                    discovered = true;
+                    discovers += 1;
+                    let scripted = if discovers > 1 {
+                        script
+                            .discover_second
+                            .clone()
+                            .or_else(|| script.discovery.clone())
+                    } else {
+                        script.discovery.clone()
+                    };
+                    let mut answered = scripted.unwrap_or_else(inventory);
+                    answered.targets.truncate(answered.targets.len().saturating_sub(fewer));
+                    Response::result(req.id, answered)
+                }
+                Method::Prepare if gated => refused,
+                Method::Invoke if gated => refused,
+                Method::Prepare if script.refuse_prepare.is_some() => Response::refusal(
+                    req.id,
+                    INVALID_REQUEST,
+                    script.refuse_prepare.as_deref().unwrap_or_default(),
+                ),
+                Method::Prepare if second_refusal.is_some() => Response::refusal(
+                    req.id,
+                    INVALID_REQUEST,
+                    second_refusal.as_deref().unwrap_or_default(),
+                ),
+                Method::Prepare => Response::result(req.id, prepare_resp(&req)),
+                Method::CoverageMap if script.drop_coverage_map.is_some() => Response::refusal(
+                    req.id,
+                    PLUGIN_ERROR,
+                    script.drop_coverage_map.as_deref().unwrap_or_default(),
+                ),
+                Method::CoverageMap => Response::result(req.id, coverage_map()),
+                Method::Invoke if second_refusal.is_some() => Response::refusal(
+                    req.id,
+                    INVALID_REQUEST,
+                    second_refusal.as_deref().unwrap_or_default(),
+                ),
+                Method::Invoke => {
+                    invocations += 1;
+                    invoke_resp(req.id, &req, &script, invocations)
+                }
+                Method::Minimize => Response::result(req.id, minimize_resp(&req)),
+                Method::Reproducer => Response::result(req.id, reproducer_resp()),
+                Method::Ready => Response::result(
+                    req.id,
+                    script.ready.clone().unwrap_or(ReadyResp {
+                        ready: true,
+                        detail: None,
+                    }),
+                ),
+            },
         };
         if write_line(&mut write, &resp).is_err() {
             return;
         }
     }
+}
+
+/// `marker` with the id of the process that started this plugin appended, so the instances one run
+/// starts share a marker and a later run, started by a different process, finds none. Without a
+/// parent process id every run shares the marker, and the key that reads it is used on Linux only.
+#[cfg(unix)]
+fn instance_marker(marker: &Path) -> PathBuf {
+    marker.with_extension(format!("run{}", std::os::unix::process::parent_id()))
+}
+
+#[cfg(not(unix))]
+fn instance_marker(marker: &Path) -> PathBuf {
+    marker.to_path_buf()
 }
 
 fn handshake() -> Handshake {
