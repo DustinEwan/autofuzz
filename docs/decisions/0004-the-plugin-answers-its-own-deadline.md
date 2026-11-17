@@ -2,6 +2,9 @@
 
 Status: accepted. 2026-11-11.
 Amends: `docs/architecture.md` "execution", which gains `deadlineCuts`.
+Amended 2026-11-17: the 250 ms grace moved to `plugin_rpc::process::Timeouts::host_wait` when the
+plugin transport moved into the `plugin-rpc` crate. The decision below is unchanged; only the
+constant's name and home are.
 
 ## Context
 
@@ -23,9 +26,11 @@ counts answers that arrived after the deadline, and a harness that cuts answers 
 
 ## Decision
 
-1. The engine waits `deadlineMs + KILL_GRACE` before it kills a plugin process. `KILL_GRACE` is
-   250 ms (`supervise.rs`). A harness that can cut answers inside the grace and keeps its process; a
-   harness that cannot is killed at the end of it.
+1. The engine waits 250 ms beyond `deadlineMs` before it kills a plugin process. That margin is
+   `plugin_rpc::process::Timeouts::host_wait`, the mechanism's own constant, so the deadline and the
+   wait are one decision written once and `supervise.rs` derives the wait at the invoke site instead
+   of keeping a grace of its own. A harness that can cut answers inside the grace and keeps its
+   process; a harness that cannot is killed at the end of it.
 2. The reason a process was lost decides the reported `via`: `deadline` when the engine stopped
    waiting, `processExit` when the plugin ended itself with a call in flight, the loss reason
    otherwise. The `deadline` oracle keys on `oracles.deadline.ms` and on `via: "deadline"`, so the
@@ -46,7 +51,7 @@ counts answers that arrived after the deadline, and a harness that cuts answers 
   which is 73% of the worker-seconds in that 30-second run. The same scan at a 50 ms deadline
   completed 23,963 invocations. A reader can now tell that the deadline, not the machine, set the
   search's breadth.
-- The deadline is not counted against the batch budget's `KILL_GRACE`: the grace delays a kill, not
+- The deadline is not counted against the batch budget's grace: the grace delays a kill, not
   an answer, and counting it would leave a run whose budget is near one deadline with no room to
   attempt anything.
 - The engine trusts a plugin's own duration measurement where the deadline oracle reads it. That is
