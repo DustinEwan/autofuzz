@@ -34,6 +34,13 @@ pub fn run(dir: &Path, targets: usize, deadline: Option<u64>) -> Result<Vec<Suit
     let root = std::env::current_dir()
         .map_err(|e| format!("the working directory is unreadable: {e}"))?;
     let target = target(&root, &manifest)?;
+    // The same `build` steps `afz validate-harness` runs without `--out`, for the same reason: a
+    // pass has to be a pass on the plugin that exists now, and a report written against a stale
+    // binary is worse than no report. The build's stdout goes to stderr, because this program's
+    // stdout belongs to whoever started it.
+    for argv in &manifest.build {
+        harness::run_stage("build", &manifest.name, &root, argv, true)?;
+    }
     let manifest_deadline = manifest.conformance.as_ref().and_then(|c| c.deadline_ms);
     let deadline_ms = deadline
         .or(manifest_deadline)
