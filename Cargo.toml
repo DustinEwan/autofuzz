@@ -25,7 +25,7 @@ afz-conformance = { path = "crates/afz-conformance" }
 # the handshake-first rule, and the kill. The method vocabulary, the payloads, and the profile's
 # client stay here; this supplies only the contract both sides of the plugin boundary compile
 # against.
-plugin-rpc = "0.1.0-alpha.5"
+plugin-rpc = "0.1.0-alpha.7"
 
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
