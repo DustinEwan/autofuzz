@@ -1024,9 +1024,9 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "plugin-rpc"
-version = "0.1.0-alpha.7"
+version = "0.1.0-alpha.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdac60b01864711cd84032c8a265bbec0f073bc91d0a7dd5429c85976271323e"
+checksum = "76f08cc521949e139c9d82abd2dd6cd362cc040143bcb0fdc39989ebb05608d4"
 dependencies = [
  "schemars",
  "serde",

@@ -25,7 +25,9 @@ afz-conformance = { path = "crates/afz-conformance" }
 # the handshake-first rule, and the kill. The method vocabulary, the payloads, and the profile's
 # client stay here; this supplies only the contract both sides of the plugin boundary compile
 # against.
-plugin-rpc = "0.1.0-alpha.7"
+# The pin is the revision `.github/workflows/ci.yml` installs as `prpc-core`: the suite program and
+# the runner exchange the same verdict file, so the two must agree on its shape.
+plugin-rpc = "0.1.0-alpha.11"
 
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
