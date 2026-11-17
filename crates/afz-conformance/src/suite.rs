@@ -31,8 +31,8 @@ pub fn run(dir: &Path, targets: usize, deadline: Option<u64>) -> Result<Vec<Suit
     // its paths exactly as that checkout wrote them, so they resolve beside the checkout and not
     // beside the copy: `"command": ["build/afz-cpp", "--stdio"]` names the binary the author
     // just built there.
-    let root = std::env::current_dir()
-        .map_err(|e| format!("the working directory is unreadable: {e}"))?;
+    let root =
+        std::env::current_dir().map_err(|e| format!("the working directory is unreadable: {e}"))?;
     let target = target(&root, &manifest)?;
     // The same `build` steps `afz validate-harness` runs without `--out`, for the same reason: a
     // pass has to be a pass on the plugin that exists now, and a report written against a stale
