@@ -27,6 +27,7 @@ dependencies = [
  "afz-engine",
  "afz-protocol",
  "jsonschema",
+ "plugin-rpc",
  "schemars",
  "serde",
  "serde_json",

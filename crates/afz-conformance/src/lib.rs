@@ -32,6 +32,7 @@ use serde::Serialize;
 
 pub mod harness;
 pub mod lifecycle;
+pub mod suite;
 pub mod template;
 
 /// The engine's `PREPARE_TIMEOUT` is `pub(crate)` (`crates/afz-engine/src/scan.rs:79`); the same

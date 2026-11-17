@@ -1,0 +1,233 @@
+{
+  "mechanism": "prpc/1",
+  "protocolVersion": "afz/1",
+  "manifest": "afz-harness.json",
+  "methods": {
+    "discover": {
+      "params": "docs/schema/afz-1/discover-req.json",
+      "result": "docs/schema/afz-1/discovery.json"
+    },
+    "prepare": {
+      "params": "docs/schema/afz-1/prepare-req.json",
+      "result": "docs/schema/afz-1/prepare-resp.json"
+    },
+    "invoke": {
+      "params": "docs/schema/afz-1/invoke-req.json",
+      "result": "docs/schema/afz-1/outcome.json",
+      "deadlineField": "deadlineMs"
+    },
+    "coverageMap": {
+      "result": "docs/schema/afz-1/coverage-map.json",
+      "requiresCapability": "coverage"
+    },
+    "minimize": {
+      "params": "docs/schema/afz-1/minimize-req.json",
+      "result": "docs/schema/afz-1/minimize-resp.json",
+      "requiresCapability": "minimize",
+      "deadlineField": "budgetMs"
+    },
+    "reproducer": {
+      "params": "docs/schema/afz-1/reproducer-req.json",
+      "result": "docs/schema/afz-1/reproducer-resp.json",
+      "requiresCapability": "reproducer"
+    },
+    "ready": {
+      "result": "docs/schema/afz-1/ready-resp.json",
+      "requiresCapability": "readiness"
+    }
+  },
+  "capabilities": {
+    "coverage": {
+      "ifAbsent": "the scheduler takes novelty from the outcome tuple instead of edges, no coverageMap is asked for, and the scan writes no coverage.json"
+    },
+    "reproducer": {
+      "ifAbsent": "a finding carries no script, and the finding's inputs/ JSON stays the replayable artifact"
+    },
+    "stateful": {
+      "ifAbsent": "only entry points whose whole parameter graph is constructible from generated values are fuzzed"
+    },
+    "minimize": {
+      "ifAbsent": "the engine shrinks a finding itself, by removing arguments and reducing structure, and never calls minimize"
+    },
+    "sideEffects": {
+      "ifAbsent": "the side-effect policy does not apply, because the engine takes an invocation to change no external state"
+    },
+    "concurrent": {
+      "ifAbsent": "the engine runs one plugin instance for the whole scan"
+    },
+    "readiness": {
+      "ifAbsent": "the engine never calls ready, because the environment is the tree discovery already read and there is nothing to prove"
+    }
+  },
+  "loss": {
+    "mapping": {
+      "spawn": "no plugin process is running: the invocation is filed as a PluginLost finding with via \"plugin-lost\"",
+      "eof": "the plugin closed its stdout with a call in flight: a PluginLost finding with via \"plugin-lost\", and the worker restarts",
+      "exited": "the plugin ended itself with a call in flight: a ProcessExit finding with via \"processExit\", and the worker restarts",
+      "killed": "the engine ended the plugin: a PluginLost finding with via \"plugin-killed\", attributed to the engine rather than to the target",
+      "noAnswer": "the deadline passed with the request waiting: a Deadline finding with via \"deadline\", and the worker restarts",
+      "unusable-result": "the handshake was not a document afz/1 reads: the plugin is reported lost with via \"plugin-lost\", a scan aborts with a profile error, and afz install-harness records nothing"
+    },
+    "added": ["unusable-result"]
+  },
+  "conformance": {
+    "suite": ["afz", "validate-harness"],
+    "deadlineMs": 1000,
+    "rules": [
+      {
+        "id": "discover-schema",
+        "expectation": "discover answers a discovery document that is an instance of the committed discovery schema.",
+        "defect": {
+          "unverified": "the reference plugin's scripted inventory is deserialized into afz_protocol::Discovery and re-serialized from it (crates/xtask/src/fake.rs:52), and docs/schema/afz-1/discovery.json sets no pattern, minLength or additionalProperties bound that a typed value of that struct can break, so no script answers discover with a document the committed schema rejects."
+        }
+      },
+      {
+        "id": "target-ids",
+        "expectation": "Every target discover reports carries a non-empty id, and no id is reported twice.",
+        "dependsOn": ["discover-schema"],
+        "defect": {
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"discovery\":{\"targets\":[{\"id\":\"afz:t:0001\",\"targetClass\":\"design-time\",\"origin\":{\"file\":\"src/fake.ts\",\"line\":3,\"module\":\"src/fake.ts\"},\"name\":\"plain\",\"parameters\":[{\"name\":\"amount\",\"type\":{\"kind\":\"scalar\",\"scalar\":\"number\"},\"required\":true}],\"returns\":{\"kind\":\"scalar\",\"scalar\":\"number\"},\"effects\":{},\"guardSites\":[],\"materialization\":\"constructible\"},{\"id\":\"afz:t:0001\",\"targetClass\":\"design-time\",\"origin\":{\"file\":\"src/fake.ts\",\"line\":3,\"module\":\"src/fake.ts\"},\"name\":\"plain\",\"parameters\":[{\"name\":\"amount\",\"type\":{\"kind\":\"scalar\",\"scalar\":\"number\"},\"required\":true}],\"returns\":{\"kind\":\"scalar\",\"scalar\":\"number\"},\"effects\":{},\"guardSites\":[],\"materialization\":\"constructible\"}],\"skipped\":[]}}"],
+          "expectViolation": ["target-ids"]
+        }
+      },
+      {
+        "id": "skipped-complete",
+        "expectation": "Every target discover reports that is not constructible is also listed in skipped, so the inventory's counts add up.",
+        "dependsOn": ["discover-schema"],
+        "defect": {
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"discovery\":{\"targets\":[{\"id\":\"afz:t:0001\",\"targetClass\":\"design-time\",\"origin\":{\"file\":\"src/fake.ts\",\"line\":3,\"module\":\"src/fake.ts\"},\"name\":\"plain\",\"parameters\":[{\"name\":\"amount\",\"type\":{\"kind\":\"scalar\",\"scalar\":\"number\"},\"required\":true}],\"returns\":{\"kind\":\"scalar\",\"scalar\":\"number\"},\"effects\":{},\"guardSites\":[],\"materialization\":\"fixture-required\"}],\"skipped\":[]}}"],
+          "expectViolation": ["skipped-complete"]
+        }
+      },
+      {
+        "id": "discover-repeatable",
+        "expectation": "A second discover with the same request on the same connection answers the same set of target ids as the first.",
+        "dependsOn": ["discover-schema"],
+        "defect": {
+          "unverified": "the reference plugin answers every discover from one static Script.discovery value (crates/xtask/src/fake.rs:52) and no directive is keyed to a discover call, so no script makes the second call on a connection answer a different target id set than the first."
+        }
+      },
+      {
+        "id": "discover-ids-stable",
+        "expectation": "A second plugin process answers its own discover with the same set of target ids the first process answered.",
+        "dependsOn": ["discover-schema"],
+        "defect": {
+          "unverified": "both plugin processes are spawned from the same Check.launch with the same environment (crates/afz-conformance/src/lib.rs:1290) and the fake's inventory is one value rather than a function of the process, so no script makes one process answer a different target id set than the other."
+        }
+      },
+      {
+        "id": "readiness",
+        "expectation": "A plugin that declares readiness answers ready, and answers it ready once the host has started the service the harness manifest declares; a not-ready answer carries the plugin's own reason.",
+        "defect": {
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"handshake\":{\"protocolVersion\":\"afz/1\",\"name\":\"afz-fakeplugin\",\"version\":\"0.0.0\",\"targetClass\":\"design-time\",\"capabilities\":[\"readiness\"],\"languages\":[\"fake\"]},\"ready\":{\"ready\":false,\"detail\":\"no service is listening\"}}"],
+          "expectViolation": ["readiness"]
+        }
+      },
+      {
+        "id": "connection-ready",
+        "expectation": "A plugin process that was only introduced and sent discover still answers prepare and invoke for a target id its own discover named.",
+        "dependsOn": ["discover-schema"],
+        "defect": {
+          "unverified": "the only refusal the reference plugin can raise for prepare or invoke is requireDiscover, which never fires because the suite sends discover on the second process first (crates/afz-conformance/src/lib.rs:1299, pinned by crates/xtask/tests/conformance.rs:388), and directives are keyed to a per-process invocation index and a target id, both of which the second process shares with the first, so no script makes only the second process refuse."
+        }
+      },
+      {
+        "id": "prepare-answers",
+        "expectation": "prepare answers {\"ok\":true,\"materialized\":…} or {\"ok\":false,\"reason\":…}; a target the plugin cannot build is a skip answer, never a JSON-RPC error.",
+        "dependsOn": ["discover-schema"],
+        "defect": {
+          "unverified": "requireDiscover is the fake's only prepare refusal and the suite discovers on every connection before it prepares, while rpcError is read only when answering invoke (crates/xtask/src/fake.rs:43), so no script answers prepare with a JSON-RPC error."
+        }
+      },
+      {
+        "id": "prepare-schema",
+        "expectation": "Every prepare response is an instance of the committed prepare-resp schema.",
+        "dependsOn": ["discover-schema"],
+        "defect": {
+          "unverified": "prepare_resp builds a typed afz_protocol::PrepareResp from the request (crates/xtask/src/fake.rs:424) and docs/schema/afz-1/prepare-resp.json accepts exactly the two shapes that type serializes to, so no script answers prepare with a shape the committed schema rejects."
+        }
+      },
+      {
+        "id": "invoke-answers",
+        "expectation": "invoke answers an outcome; a target fault travels as an outcome, never as a JSON-RPC error.",
+        "dependsOn": ["prepare-answers"],
+        "defect": {
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"directives\":[{\"at\":2,\"rpcError\":\"the plugin refused the call\"}]}"],
+          "expectViolation": ["invoke-answers"]
+        }
+      },
+      {
+        "id": "invoke-schema",
+        "expectation": "Every invoke response is an instance of the committed outcome schema.",
+        "dependsOn": ["prepare-answers"],
+        "defect": {
+          "unverified": "Directive.outcome is deserialized into afz_protocol::Outcome and re-serialized from it (crates/xtask/src/fake.rs:36), and docs/schema/afz-1/outcome.json is looser than that type, with no additionalProperties bound, no pattern, and no minimum on durationMs, so no script answers invoke with a document the schema rejects."
+        }
+      },
+      {
+        "id": "outcome-duration",
+        "expectation": "Every outcome carries durationMs as a number the deadline oracle can read.",
+        "dependsOn": ["prepare-answers"],
+        "defect": {
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"directives\":[{\"outcome\":{\"kind\":\"ok\",\"durationMs\":-1.0}}]}"],
+          "expectViolation": ["outcome-duration"]
+        }
+      },
+      {
+        "id": "coverage-declared",
+        "expectation": "A plugin that declares coverage answers every ok to a collectCoverage request with a coverage digest.",
+        "dependsOn": ["prepare-answers"],
+        "defect": {
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"handshake\":{\"protocolVersion\":\"afz/1\",\"name\":\"afz-fakeplugin\",\"version\":\"0.1.0\",\"targetClass\":\"design-time\",\"capabilities\":[\"coverage\"],\"languages\":[\"fake\"],\"discoverRequiresExecution\":false},\"directives\":[{\"dropCoverage\":true}]}"],
+          "expectViolation": ["coverage-declared"]
+        }
+      },
+      {
+        "id": "coverage-map-offered",
+        "expectation": "A plugin that declares coverage answers coverageMap with at least one entry once it has been invoked.",
+        "defect": {
+          "unverified": "the fake answers coverageMap from a fixed 64-entry table no directive governs (crates/xtask/src/fake.rs:447), and the only selector that could silence the method is exit, which ends the process and so reports process-alive beside this rule."
+        }
+      },
+      {
+        "id": "coverage-map-schema",
+        "expectation": "coverageMap answers a document that is an instance of the committed coverage-map schema.",
+        "dependsOn": ["coverage-map-offered"],
+        "defect": {
+          "unverified": "coverage_map builds a typed afz_protocol::CoverageMap (crates/xtask/src/fake.rs:447) and no script key governs the method, so no script answers coverageMap with a document the committed schema rejects."
+        }
+      },
+      {
+        "id": "coverage-edges-known",
+        "expectation": "Every edge id an outcome's digest names is named by an entry of coverageMap.",
+        "dependsOn": ["coverage-map-offered", "coverage-map-schema"],
+        "defect": {
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"directives\":[{\"coverage\":[999]}]}"],
+          "expectViolation": ["coverage-edges-known"]
+        }
+      },
+      {
+        "id": "minimize-schema",
+        "expectation": "A plugin that declares minimize answers a minimize request with a response that is an instance of the committed minimize-resp schema.",
+        "defect": {
+          "unverified": "minimize_resp answers every request from a typed afz_protocol::MinimizeResp built out of the request itself (crates/xtask/src/fake.rs:460), and no directive or top-level script key governs minimize, so no script makes a declared minimize capability answer wrongly or not at all."
+        }
+      },
+      {
+        "id": "reproducer-schema",
+        "expectation": "A plugin that declares reproducer answers a reproducer request for a discovered target with a response that is an instance of the committed reproducer-resp schema.",
+        "dependsOn": ["discover-schema"],
+        "defect": {
+          "unverified": "reproducer_resp answers every request with one typed afz_protocol::ReproducerResp constant (crates/xtask/src/fake.rs:479), and no directive or top-level script key governs reproducer, so no script makes a declared reproducer capability answer wrongly or not at all."
+        }
+      }
+    ]
+  }
+}
