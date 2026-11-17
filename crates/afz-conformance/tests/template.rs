@@ -313,3 +313,31 @@ fn a_quiet_validator_does_not_upgrade_a_plugin_claim() {
         "the fixture validator says not-applicable for crash-unguarded and the plugin says pass: crash-unguarded: not-applicable"
     );
 }
+
+/// The fixture validator compiles and runs the project's own tool, so the plugin's per-call
+/// deadline is not its budget. The C++ harness's validator needs about 1.4 s on a warm machine,
+/// more on a loaded runner, against a manifest `deadlineMs` of 2500; sharing that number killed it
+/// in CI. It runs under `VALIDATOR_CEILING_MS`, and a validator slower than any plugin deadline
+/// still reports.
+#[test]
+fn a_validator_slower_than_the_plugin_deadline_still_reports() {
+    let dir = std::env::temp_dir().join(format!("afz-validator-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("the validator's working directory");
+    let report = afz_conformance::template::run_validator(
+        &[
+            std::path::PathBuf::from("sh"),
+            std::path::PathBuf::from("-c"),
+            std::path::PathBuf::from("sleep 3; printf '{\"version\":1,\"properties\":[]}'"),
+        ],
+        &dir,
+        afz_conformance::template::VALIDATOR_CEILING_MS,
+    );
+    fs::remove_dir_all(&dir).ok();
+    assert_eq!(
+        report
+            .expect("a validator that outlives the plugin deadline is not over its own ceiling")
+            .version,
+        1,
+        "the report the validator printed is the report the suite compares"
+    );
+}

@@ -246,15 +246,25 @@ pub fn load_manifest(path: &Path) -> Result<Manifest, String> {
     Ok(manifest)
 }
 
+/// The wall-clock ceiling on a project's own fixture validator. The validator compiles and runs the
+/// project's tool, the same class of work as the manifest's `install` and `build` steps, so the
+/// plugin's per-call `deadlineMs` is the wrong budget for it: a harness that needs eight seconds to
+/// build a probe would have to raise the deadline that governs every plugin call to keep its
+/// validator alive, and a shared number is what makes a conformance run fail for runner speed
+/// rather than for a plugin's behaviour. This ceiling only stops a hung validator from hanging the
+/// suite.
+pub const VALIDATOR_CEILING_MS: u64 = 30_000;
+
 /// Run the project's own fixture validator: one JSON `TemplateReport` on stdout, exit 0 even
-/// when a property fails, non-zero only when the validator itself could not run. `deadline_ms`
-/// is its wall-clock limit. The product drivers (`afz validate-harness`, `afz install-harness`)
-/// share this one runner, so a harness repository's CI assertion on the validator section of a
-/// report sees exactly what an install sees.
+/// when a property fails, non-zero only when the validator itself could not run. `ceiling_ms` is
+/// its wall-clock limit, and callers pass [`VALIDATOR_CEILING_MS`] rather than the plugin deadline.
+/// The product drivers (`afz validate-harness`, `afz install-harness`) share this one runner, so a
+/// harness repository's CI assertion on the validator section of a report sees exactly what an
+/// install sees.
 pub fn run_validator(
     argv: &[PathBuf],
     dir: &Path,
-    deadline_ms: u64,
+    ceiling_ms: u64,
 ) -> Result<TemplateReport, String> {
     let joined = argv
         .iter()
@@ -280,7 +290,7 @@ pub fn run_validator(
         let mut buf = Vec::new();
         std::io::Read::read_to_end(&mut stderr, &mut buf).map(|_| buf)
     });
-    let limit = Duration::from_millis(deadline_ms);
+    let limit = Duration::from_millis(ceiling_ms);
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -290,7 +300,7 @@ pub fn run_validator(
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(format!(
-                        "fixture-validator: {joined} overran its {deadline_ms} ms limit"
+                        "fixture-validator: {joined} overran its {ceiling_ms} ms limit"
                     ));
                 }
                 std::thread::sleep(Duration::from_millis(10));

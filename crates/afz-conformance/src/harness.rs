@@ -214,7 +214,13 @@ fn drive_inner(
                 .into_iter()
                 .map(PathBuf::from)
                 .collect::<Vec<_>>();
-            check.validator = Some(crate::template::run_validator(&argv, out, deadline_ms)?);
+            // The validator builds and runs the project's own tool, so it gets the validator
+            // ceiling rather than the plugin's per-call deadline (`template::VALIDATOR_CEILING_MS`).
+            check.validator = Some(crate::template::run_validator(
+                &argv,
+                out,
+                crate::template::VALIDATOR_CEILING_MS,
+            )?);
         }
         check.template = Some(manifest);
     }
