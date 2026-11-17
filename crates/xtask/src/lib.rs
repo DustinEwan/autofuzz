@@ -7,4 +7,5 @@
 //! drive the same behavior in-process if it ever needs to.
 
 pub mod fake;
+pub mod fixture;
 pub mod schema;

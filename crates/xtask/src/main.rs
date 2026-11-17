@@ -1,13 +1,15 @@
 //! Repository tasks. `afz-xtask schema` regenerates `docs/schema/`; `afz-xtask fakeplugin` runs
 //! the scripted plugin on stdio, which is convenient when debugging the protocol by hand;
 //! `afz-xtask check-harness` drives a harness plugin through the conformance suite.
+//! `afz-xtask fake-fixture --out <dir>` renders the conformance fixture the scripted plugin is
+//! validated against, because validating a plugin means rendering a project for it to walk.
 
 use std::path::{Path, PathBuf};
 
 use afz_engine::config::{self, LoadedConfig};
 use afz_protocol::PluginConfig;
 
-const USAGE: &str = "usage: afz-xtask <schema [dir]|fakeplugin|check-harness [--path <dir>] [--command <argv…>] [--targets <n>] [--deadline <ms>] [--json]>";
+const USAGE: &str = "usage: afz-xtask <schema [dir]|fakeplugin|fake-fixture --out <dir>|check-harness [--path <dir>] [--command <argv…>] [--targets <n>] [--deadline <ms>] [--json]>";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -42,6 +44,26 @@ fn main() {
                 afz_protocol::buffered(stdin.lock()),
                 std::io::BufWriter::new(stdout.lock()),
             );
+        }
+        "fake-fixture" => {
+            // Both `afz validate-harness` and the mechanism's runner render a harness's fixture
+            // through the emitter its manifest names, so the plugin this repository validates
+            // itself against needs an emitter of its own.
+            let argv: Vec<String> = std::env::args().skip(2).collect();
+            let dir = match argv.as_slice() {
+                [flag, dir] if flag == "--out" => PathBuf::from(dir),
+                _ => {
+                    eprintln!("{USAGE}");
+                    std::process::exit(2);
+                }
+            };
+            match afz_xtask::fixture::write_fixture(&dir) {
+                Ok(dir) => println!("{}", dir.display()),
+                Err(e) => {
+                    eprintln!("afz-xtask: {e}");
+                    std::process::exit(1);
+                }
+            }
         }
         "check-harness" => {
             let argv: Vec<String> = std::env::args().skip(2).collect();
