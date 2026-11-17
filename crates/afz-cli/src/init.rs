@@ -922,7 +922,7 @@ mod tests {
             .expect("the schemas are exported beside the manifest");
         assert_eq!(
             schemas.count(),
-            22,
+            20,
             "the whole embedded set for the chosen revision"
         );
         assert!(dir.join("schema/handshake.json").exists());

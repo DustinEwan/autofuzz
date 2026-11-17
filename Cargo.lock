@@ -68,10 +68,10 @@ dependencies = [
 name = "afz-protocol"
 version = "0.1.0"
 dependencies = [
+ "plugin-rpc",
  "schemars",
  "serde",
  "serde_json",
- "thiserror",
 ]
 
 [[package]]
@@ -1019,6 +1019,18 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "plugin-rpc"
+version = "0.1.0-alpha.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57697ea5fab4d6a5a68bb7cbdf7507e2198043a7fca5ed8f89ec57e11e7cf905"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "ppv-lite86"

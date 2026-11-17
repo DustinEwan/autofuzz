@@ -741,15 +741,15 @@ fn rpc_frames_round_trip() {
     assert_eq!(json["method"], "invoke");
 
     round_trip(&Request::empty(8, Method::Handshake));
-    round_trip(&Response::ok(7, Outcome::Ok(OkOutcome::default())));
-    round_trip(&Response::err(7, METHOD_NOT_FOUND, "no such method"));
+    round_trip(&Response::result(7, Outcome::Ok(OkOutcome::default())));
+    round_trip(&Response::refusal(7, METHOD_NOT_FOUND, "no such method"));
 
-    let ok = Response::ok(3, ValueTree::bool(true));
+    let ok = Response::result(3, ValueTree::bool(true));
     let line = serde_json::to_string(&ok).unwrap();
     let back = parse_response(&line).unwrap();
     assert_eq!(back, ok);
     assert_eq!(back.id(), 3);
-    let err = Response::err(4, PLUGIN_ERROR, "boom");
+    let err = Response::refusal(4, PLUGIN_ERROR, "boom");
     let line = serde_json::to_string(&err).unwrap();
     let back = parse_response(&line).unwrap();
     assert_eq!(back, err);
@@ -787,7 +787,7 @@ fn framing_reads_and_writes_one_message_per_line() {
     write_line(&mut out, &Request::empty(1, Method::Handshake)).unwrap();
     write_line(
         &mut out,
-        &Response::ok(
+        &Response::result(
             1,
             Handshake {
                 protocol_version: PROTOCOL_VERSION.into(),

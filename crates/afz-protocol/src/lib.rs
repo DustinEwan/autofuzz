@@ -21,8 +21,8 @@ pub use outcome::{
 };
 pub use rpc::{
     buffered, buffered_writer, parse_request, parse_response, read_line, write_line, ErrorObject,
-    Failure, FrameError, JsonRpcVersion, Method, Request, Response, Success, INVALID_REQUEST,
-    METHOD_NOT_FOUND, PARSE_ERROR, PLUGIN_ERROR,
+    Failure, JsonRpcVersion, MessageError, Method, MethodName, Request, Response, Success,
+    INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR, PLUGIN_ERROR,
 };
 pub use targets::{
     is_deprecated, schema_dir, Blocker, Capability, CoverageEntry, CoverageMap, Discovery, Effects,

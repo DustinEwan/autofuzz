@@ -2,6 +2,13 @@
 //! compiles against. `cargo run -p afz-xtask -- schema` is the single entry point, so the
 //! output path lives in one place. One directory per protocol revision: a published set is
 //! frozen, a new revision adds a directory, and nothing edits the old one.
+//!
+//! The envelope is not emitted here. The `request.json` and `response.json` this generator used to
+//! write described the pluginrpc mechanism, which the engine compiles against rather than defines,
+//! and the mechanism publishes the normative pair under `spec/schema/prpc-1/` at
+//! <https://github.com/DustinEwan/pluginrpc>. A pair generated from the Rust types would be weaker
+//! than that one: the derives cannot say that exactly one of `result` or `error` is present, nor
+//! that id 0 is reserved, so a generated envelope would accept frames the engine itself refuses.
 
 use std::path::Path;
 
@@ -62,18 +69,6 @@ pub fn write_schemas(dir: &Path) -> Result<Vec<String>, String> {
         &mut written,
         "coverage-map",
         &schema_for!(afz_protocol::CoverageMap),
-    )?;
-    emit(
-        dir,
-        &mut written,
-        "request",
-        &schema_for!(afz_protocol::Request),
-    )?;
-    emit(
-        dir,
-        &mut written,
-        "response",
-        &schema_for!(afz_protocol::Response),
     )?;
     emit(
         dir,

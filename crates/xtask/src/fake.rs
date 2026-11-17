@@ -141,7 +141,7 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
                 if !script.swallow_parse_error.unwrap_or(false) {
                     let _ = write_line(
                         &mut write,
-                        &Response::err(0, PARSE_ERROR, "malformed request"),
+                        &Response::uncorrelated(PARSE_ERROR, "malformed request"),
                     );
                 }
                 continue;
@@ -150,7 +150,7 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
         let Some(method) = Method::from_wire(&req.method) else {
             let _ = write_line(
                 &mut write,
-                &Response::err(
+                &Response::refusal(
                     req.id,
                     METHOD_NOT_FOUND,
                     format!("unknown method {}", req.method),
@@ -160,30 +160,30 @@ pub fn serve<R: std::io::Read, W: Write>(read: R, mut write: W) {
         };
 
         let gated = script.require_discover.unwrap_or(false) && !discovered;
-        let refused = Response::err(
+        let refused = Response::refusal(
             req.id,
             INVALID_REQUEST,
             "discover has not run on this connection",
         );
         let resp = match method {
             Method::Handshake => {
-                Response::ok(req.id, script.handshake.clone().unwrap_or_else(handshake))
+                Response::result(req.id, script.handshake.clone().unwrap_or_else(handshake))
             }
             Method::Discover => {
                 discovered = true;
-                Response::ok(req.id, script.discovery.clone().unwrap_or_else(inventory))
+                Response::result(req.id, script.discovery.clone().unwrap_or_else(inventory))
             }
             Method::Prepare if gated => refused,
             Method::Invoke if gated => refused,
-            Method::Prepare => Response::ok(req.id, prepare_resp(&req)),
-            Method::CoverageMap => Response::ok(req.id, coverage_map()),
+            Method::Prepare => Response::result(req.id, prepare_resp(&req)),
+            Method::CoverageMap => Response::result(req.id, coverage_map()),
             Method::Invoke => {
                 invocations += 1;
                 invoke_resp(req.id, &req, &script, invocations)
             }
-            Method::Minimize => Response::ok(req.id, minimize_resp(&req)),
-            Method::Reproducer => Response::ok(req.id, reproducer_resp()),
-            Method::Ready => Response::ok(
+            Method::Minimize => Response::result(req.id, minimize_resp(&req)),
+            Method::Reproducer => Response::result(req.id, reproducer_resp()),
+            Method::Ready => Response::result(
                 req.id,
                 script.ready.clone().unwrap_or(ReadyResp {
                     ready: true,
@@ -488,10 +488,10 @@ fn reproducer_resp() -> ReproducerResp {
 fn invoke_resp(id: u64, req: &Request, script: &Script, index: u64) -> Response {
     let Ok(req) = serde_json::from_value::<InvokeReq>(req.params.clone().unwrap_or_default())
     else {
-        return Response::err(id, INVALID_REQUEST, "malformed invoke params");
+        return Response::refusal(id, INVALID_REQUEST, "malformed invoke params");
     };
     let Some(d) = script.directive_for(index, &req.target_id) else {
-        return Response::ok(id, default_ok(index, &req, None));
+        return Response::result(id, default_ok(index, &req, None));
     };
 
     if let Some(msg) = &d.stderr {
@@ -507,7 +507,7 @@ fn invoke_resp(id: u64, req: &Request, script: &Script, index: u64) -> Response 
         std::process::exit(code);
     }
     if let Some(message) = &d.rpc_error {
-        return Response::err(id, PLUGIN_ERROR, message.clone());
+        return Response::refusal(id, PLUGIN_ERROR, message.clone());
     }
     let slept = started.elapsed().as_secs_f64() * 1000.0;
     let timed = |outcome: Outcome| -> Outcome {
@@ -549,7 +549,7 @@ fn invoke_resp(id: u64, req: &Request, script: &Script, index: u64) -> Response 
             Outcome::Failed(o) => o.coverage = None,
         }
     }
-    Response::ok(id, timed(outcome))
+    Response::result(id, timed(outcome))
 }
 
 /// How many distinct edges a digest can carry, which is also how many the coverage map names.

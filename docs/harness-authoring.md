@@ -331,6 +331,9 @@ Run `afz validate-harness` first. Then copy the patterns from the recommended ha
 
 - **A wire-vocabulary test.** Compare every literal your plugin sends or reads against
   `docs/schema/afz-1/*.json` and the method definitions in [`architecture.md`](architecture.md#the-methods).
+  The envelope those payloads travel in belongs to the pluginrpc mechanism rather than to autofuzz,
+  so its normative schemas are under `spec/schema/prpc-1/` in
+  [the pluginrpc repository](https://github.com/DustinEwan/pluginrpc), not in `docs/schema/`.
   The js-ts and python harnesses each have one.
 - **A fixture directory.** Put a small source tree and an `autofuzz.json` inside the package. Tests
   reference it by path and look up targets by name, never by the content-derived id.
@@ -391,10 +394,16 @@ or `-32600`.
 
 ### Literals and error codes
 
+The rules for `jsonrpc`, `id`, `params`, and the four error codes belong to the pluginrpc mechanism
+(`prpc/1`), which autofuzz compiles against; that specification is normative for them. The rest of
+the values below are the `afz/1` profile's own.
+
 - `protocolVersion` is `"afz/1"`. The engine accepts any revision in `SUPPORTED_VERSIONS`. This build
   carries only `afz/1`.
 - `jsonrpc` is `"2.0"`.
-- `id` is a `u64` assigned per plugin process, starting at 1. Echo it on error frames too.
+- `id` is a `u64` assigned per plugin process, starting at 1 and never above `2^53 - 1`, so a plugin
+  written in JavaScript reads it exactly. `id` 0 is reserved: a plugin echoes it on a refusal whose
+  request id it could not determine. Echo the id on error frames too.
 - `params` is omitted, not `null`, for `handshake`, `coverageMap`, and `ready`.
 - Error codes: `-32700` parse error, `-32600` invalid request, `-32601` method not found, `-32000`
   plugin error.

@@ -64,8 +64,16 @@ mod tests {
         files.sort();
         assert_eq!(
             files.len(),
-            22,
+            20,
             "every committed schema exports, got {files:?}"
+        );
+        // The envelope is the mechanism's and not the profile's: `afz export-schema` writes the
+        // payloads a plugin answers with, and pluginrpc publishes the envelope pair.
+        assert!(
+            !files
+                .iter()
+                .any(|f| f == "request.json" || f == "response.json"),
+            "the profile's set carries the mechanism's envelope: {files:?}"
         );
         assert!(files.contains(&"handshake.json".to_string()));
         let handshake: serde_json::Value =

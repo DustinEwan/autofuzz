@@ -35,8 +35,10 @@ that kind.
 The engine owns the loop, the corpus, scheduling, deadlines, oracles, minimization, and the result.
 A plugin owns discovery, argument construction, invocation, and classification.
 
-The boundary is a process boundary. The plugin runs as a child process and speaks JSON-RPC over
-stdio. That gives the engine three things:
+The boundary is a process boundary. The plugin runs as a child process and speaks the pluginrpc
+mechanism (`prpc/1`), which is one JSON message per line over stdio
+([the mechanism and its envelope schemas](https://github.com/DustinEwan/pluginrpc)). That gives the
+engine three things:
 
 - A plugin can be written in any language that can read a line from stdin.
 - A target that hangs or corrupts memory kills its own plugin process, not the scan.

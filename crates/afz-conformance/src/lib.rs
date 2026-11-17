@@ -271,14 +271,6 @@ pub const SCHEMA_SETS: &[(&str, &[(&str, &str)])] = &[(
             include_str!("../../../docs/schema/afz-1/reproducer-resp.json"),
         ),
         (
-            "request.json",
-            include_str!("../../../docs/schema/afz-1/request.json"),
-        ),
-        (
-            "response.json",
-            include_str!("../../../docs/schema/afz-1/response.json"),
-        ),
-        (
             "scan-result.json",
             include_str!("../../../docs/schema/afz-1/scan-result.json"),
         ),
