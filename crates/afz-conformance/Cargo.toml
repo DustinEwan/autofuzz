@@ -13,6 +13,9 @@ afz-engine.workspace = true
 afz-protocol.workspace = true
 # Every plugin response is validated as an instance of the committed schema before deserialization.
 jsonschema = { version = "0.61.1", default-features = false }
+# The suite program reads the profile spec and the plugin manifest the mechanism wrote, and
+# writes the verdicts it reads back (pluginrpc `spec/spec.md` §12 item 6).
+plugin-rpc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # The report types carry a JSON Schema so the `afz_validate_harness` MCP tool can describe the

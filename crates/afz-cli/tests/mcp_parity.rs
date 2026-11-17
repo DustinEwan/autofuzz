@@ -56,6 +56,11 @@ const EXEMPT: &[(&str, &str, &str)] = &[
         "a tool result is always structured JSON",
     ),
     (
+        "validate-harness",
+        "out",
+        "the suite-program role is invoked by the pluginrpc mechanism, which is the only reader of the directory it writes",
+    ),
+    (
         "harnesses",
         "json",
         "a tool result is always structured JSON",

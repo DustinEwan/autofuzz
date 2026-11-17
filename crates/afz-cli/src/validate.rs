@@ -13,8 +13,11 @@
 //! three cannot drift: an install validates the plugin it is about to record through the exact
 //! code path an author reaches with `afz validate-harness`.
 
+use std::path::PathBuf;
+
 use afz_conformance::harness::{drive, resolve};
 use afz_conformance::render;
+use afz_conformance::suite;
 
 /// `afz validate-harness [harness]`.
 pub fn run(
@@ -22,11 +25,25 @@ pub fn run(
     targets: Option<usize>,
     deadline: Option<u64>,
     json: bool,
+    out: Option<PathBuf>,
 ) -> Result<(), String> {
+    let targets = targets.unwrap_or(8);
+    if let Some(dir) = out {
+        // The mechanism reads `verdicts.json` and decides conformance from it, so this writes the
+        // file, keeps stdout clean, and exits zero. A suite error returns `Err` and writes no
+        // file, which is how §12 item 5 keeps the suite's own failure off the plugin.
+        let verdicts = suite::run(&dir, targets, deadline)?;
+        eprintln!(
+            "wrote {} verdicts to {}",
+            verdicts.len(),
+            dir.join("verdicts.json").display()
+        );
+        return Ok(());
+    }
     let target = resolve(harness, json)?;
-    let out = std::env::temp_dir().join(format!("afz-conformance-{}", std::process::id()));
+    let staged = std::env::temp_dir().join(format!("afz-conformance-{}", std::process::id()));
     let deadline = deadline.or(target.conformance.deadline_ms).unwrap_or(1000);
-    let report = drive(&target, &out, targets.unwrap_or(8), deadline)?;
+    let report = drive(&target, &staged, targets, deadline)?;
     if json {
         println!(
             "{}",

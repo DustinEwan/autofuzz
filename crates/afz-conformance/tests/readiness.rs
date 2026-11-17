@@ -43,7 +43,8 @@ fn declaring_script(ready: Option<&str>) -> String {
 
 fn check(script: &str) -> Check {
     Check::new(
-        PluginConfig::new([fakeplugin_path().display().to_string()]).with_env("AFZ_FAKE_SCRIPT", script),
+        PluginConfig::new([fakeplugin_path().display().to_string()])
+            .with_env("AFZ_FAKE_SCRIPT", script),
         ".",
     )
 }
@@ -86,16 +87,22 @@ fn a_declared_capability_that_answers_ready_passes() {
 #[test]
 fn an_undeclared_capability_is_not_applicable() {
     // The default fake handshake does not declare readiness, so the suite must not call
-    // `ready` and must not fail the plugin for it; the rule is counted not-applicable.
+    // `ready` and must not fail the plugin for it; the rule is reported not-applicable, naming
+    // the capability that stopped it.
     let report = conformance::run(&check(""));
     assert!(
         !report.failed("readiness"),
         "a plugin that never declared readiness must not be failed for it: {:?}",
         report.violations
     );
+    let skipped = report
+        .not_applicable
+        .iter()
+        .find(|n| n.rule == "readiness")
+        .expect("readiness must be reported not-applicable, never as a pass");
     assert!(
-        report.not_applicable >= 1,
-        "the readiness rule must be counted not-applicable: {}",
-        report.not_applicable
+        skipped.reason.contains("readiness"),
+        "the reason must name the gate that stopped the rule: {}",
+        skipped.reason
     );
 }

@@ -40,6 +40,13 @@ afz probe-plugin --path <scan project>
 your `build` command, renders a small scan project with your emitter, and drives the plugin through
 every rule. It prints one line per rule and exits 1 when the suite reports a violation.
 
+The rules themselves are declared in `afz-1.profile.json`, at the root of this repository: the
+methods with the schema of each request and response, which capability gates which method, what
+each loss reason becomes in a report, and every rule with the scripted defect that proves it can
+fire, or a sentence saying none exists. The pluginrpc mechanism reads that file, so
+`prpc-core --suite` runs the six wire rules and these profile rules against a plugin with none of
+this repository's code in between.
+
 `probe-plugin` starts the plugin against a real scan project and prints the targets it discovers.
 Use it to check what the engine will see before you run a scan.
 

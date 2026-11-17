@@ -86,6 +86,10 @@ enum Command {
         /// Print the machine-readable report instead of the table.
         #[arg(long)]
         json: bool,
+        /// Run as the pluginrpc mechanism's suite program: read the profile spec and the plugin
+        /// manifest the mechanism wrote into this directory, and write `verdicts.json` there.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Install a harness plugin from a git repository, and validate it.
     InstallHarness {
@@ -149,7 +153,8 @@ fn main() {
             targets,
             deadline,
             json,
-        } => validate::run(harness.as_deref(), targets, deadline, json),
+            out,
+        } => validate::run(harness.as_deref(), targets, deadline, json, out),
         Command::InstallHarness {
             url,
             reference,

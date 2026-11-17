@@ -101,9 +101,15 @@ drives the suite against the plugin that the manifest names. It never runs `inst
 | `--targets <n>` | Number of discovered targets that `prepare` and `invoke` run on. Default 8. |
 | `--deadline <ms>` | `deadlineMs` for every driven invocation. Defaults to the manifest's `conformance.deadlineMs`, then 1000. |
 | `--json` | Print the machine-readable report instead of the table. |
+| `--out <dir>` | Run as the pluginrpc mechanism's suite program: read the profile spec and the plugin manifest the mechanism wrote into that directory, and write `verdicts.json` there. |
 
 Validation takes no `--command` and no `--path`. The manifest carries the plugin command, and the
 emitter carries the scan project.
+
+In `--out` mode the rules are the profile spec's, not this build's: the command writes exactly one
+verdict per rule the spec declares, each with the reason a rule could not run. A suite error — a
+fixture the emitter could not render, a manifest with no emitter — writes no file and exits 1, so
+the mechanism charges that failure to this command and not to the plugin.
 
 ### `afz install-harness`
 

@@ -102,6 +102,15 @@ pub struct Note {
     pub detail: String,
 }
 
+/// One rule the suite could not run, with the gate or the earlier failure that stopped it. The
+/// mechanism requires the reason to name the gate, so a skipped rule stays auditable instead of
+/// becoming a count (pluginrpc `spec/spec.md` §12 item 3).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct NotApplicable {
+    pub rule: &'static str,
+    pub reason: String,
+}
+
 /// What one run of the suite found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct Report {
@@ -116,10 +125,10 @@ pub struct Report {
     pub driven: usize,
     pub violations: Vec<Violation>,
     pub notes: Vec<Note>,
-    /// Rules that could not be evaluated, because the plugin does not declare the capability they
-    /// need or an earlier rule ended the run. Kept out of `passed()` so the summary never claims a
-    /// rule was checked that was not.
-    pub not_applicable: usize,
+    /// Rules the suite could not run, each naming the capability it lacked or the earlier rule
+    /// that ended the run. Kept out of `passed()` so the summary never claims a rule was checked
+    /// that was not, and named per rule so a suite program can report each one to the mechanism.
+    pub not_applicable: Vec<NotApplicable>,
     /// The template section, present only when the run was template-driven.
     pub template: Option<template::TemplateReport>,
     /// The project's own fixture-side verdicts, absent when it ships no validator.
@@ -132,7 +141,7 @@ impl Report {
         RULES
             .len()
             .saturating_sub(self.violations.len())
-            .saturating_sub(self.not_applicable)
+            .saturating_sub(self.not_applicable.len())
     }
 
     /// The ids of every rule this plugin violated, for a test that asserts on the exact set.
@@ -389,14 +398,11 @@ pub fn render(report: &Report) -> String {
     }
     if report.violations.is_empty() {
         out.push_str(&format!("ok  {} rules passed\n", report.passed()));
-        if report.not_applicable > 0 {
-            out.push_str(&format!(
-                "      {} rule(s) not applicable to this plugin\n",
-                report.not_applicable
-            ));
-        }
     } else {
         out.push_str(&format!("{} rule(s) violated\n", report.violations.len()));
+    }
+    for rule in &report.not_applicable {
+        out.push_str(&format!("n/a   {}: {}\n", rule.rule, rule.reason));
     }
     if let Some(section) = &report.template {
         out.push_str(&format!(
@@ -505,7 +511,7 @@ struct Runner {
     schemas: Schemas,
     violations: Vec<Violation>,
     notes: Vec<Note>,
-    not_applicable: usize,
+    not_applicable: Vec<NotApplicable>,
     plugin: String,
     protocol_version: String,
     targets: usize,
@@ -532,7 +538,7 @@ impl Runner {
             schemas: Schemas::load(),
             violations: Vec::new(),
             notes: Vec::new(),
-            not_applicable: 0,
+            not_applicable: Vec::new(),
             plugin: String::new(),
             protocol_version: String::new(),
             targets: 0,
@@ -561,8 +567,37 @@ impl Runner {
         });
     }
 
-    fn skip(&mut self, count: usize) {
-        self.not_applicable += count;
+    /// Record that `rules` could not run, with what stopped them. A rule the run already decided
+    /// is never recorded twice, so a violation found earlier is not softened into a rule that
+    /// merely did not run.
+    fn skip(&mut self, rules: &[&'static str], reason: impl Into<String>) {
+        let reason = reason.into();
+        for rule in rules {
+            if self.decided(rule) {
+                continue;
+            }
+            self.not_applicable.push(NotApplicable {
+                rule,
+                reason: reason.clone(),
+            });
+        }
+    }
+
+    /// Every rule except `answered`: the exits where the plugin never got past a phase, so
+    /// `answered` names the rules the run did reach a verdict on.
+    fn skip_rest(&mut self, answered: &[&'static str], reason: impl Into<String>) {
+        let rest: Vec<&'static str> = RULES
+            .iter()
+            .copied()
+            .filter(|rule| !answered.contains(rule))
+            .collect();
+        self.skip(&rest, reason);
+    }
+
+    /// Whether the run has already given `rule` a verdict, of either kind.
+    fn decided(&self, rule: &str) -> bool {
+        self.violations.iter().any(|v| v.rule == rule)
+            || self.not_applicable.iter().any(|n| n.rule == rule)
     }
 
     /// `process-alive`: a phase that finished on a process the transport has since given up on.
@@ -599,7 +634,7 @@ impl Runner {
             driven: self.driven,
             violations: std::mem::take(&mut self.violations),
             notes: std::mem::take(&mut self.notes),
-            not_applicable: self.not_applicable,
+            not_applicable: std::mem::take(&mut self.not_applicable),
             template: self.template.take(),
             validator: self.validator.take(),
         }
@@ -619,8 +654,11 @@ impl Runner {
                 match lifecycle::Service::start(spec, std::path::Path::new(&self.check.root)) {
                     Ok(service) => Some(service),
                     Err(detail) => {
+                        self.skip_rest(
+                            &[],
+                            format!("the conformance service did not start: {detail}"),
+                        );
                         self.fail("lifecycle-service", detail);
-                        self.skip(RULES.len());
                         return self.report();
                     }
                 }
@@ -644,8 +682,12 @@ impl Runner {
             // `Lost` never came up; `Refused` is running and declined. Both end the run here, and
             // the report says which, because only one of them is a machine problem.
             Err(reason) => {
-                self.fail("spawn", reason.to_string());
-                self.skip(RULES.len() - 1);
+                let detail = reason.to_string();
+                self.skip_rest(
+                    &["spawn"],
+                    format!("the plugin process did not start: {detail}"),
+                );
+                self.fail("spawn", detail);
                 return self.report();
             }
         };
@@ -721,7 +763,10 @@ impl Runner {
                         ),
                     ),
                 }
-                self.skip(RULES.len() - 3);
+                self.skip_rest(
+                    &["spawn", "protocol-version", "handshake-schema"],
+                    "the handshake is not a document this build reads",
+                );
                 return None;
             }
         };
@@ -757,7 +802,15 @@ impl Runner {
                     format!("discover answered no discovery document: {}", reason),
                 );
                 self.alive(client, "discover");
-                self.skip(RULES.len() - 4);
+                self.skip_rest(
+                    &[
+                        "spawn",
+                        "protocol-version",
+                        "handshake-schema",
+                        "discover-schema",
+                    ],
+                    "discover answered no discovery document",
+                );
                 return None;
             }
         };
@@ -775,7 +828,15 @@ impl Runner {
                         ),
                     ),
                 }
-                self.skip(RULES.len() - 4);
+                self.skip_rest(
+                    &[
+                        "spawn",
+                        "protocol-version",
+                        "handshake-schema",
+                        "discover-schema",
+                    ],
+                    "the discovery document is not the shape the committed schema describes",
+                );
                 return None;
             }
         };
@@ -1101,7 +1162,14 @@ impl Runner {
     /// `coverage-map-offered`, `coverage-edges-known`, `coverage-map-schema`.
     fn coverage(&mut self, client: &PluginClient, collect_coverage: bool) {
         if !collect_coverage {
-            self.skip(3);
+            self.skip(
+                &[
+                    "coverage-map-offered",
+                    "coverage-edges-known",
+                    "coverage-map-schema",
+                ],
+                "the handshake does not declare \"coverage\"",
+            );
             return;
         }
         let raw = match sentence(
@@ -1117,7 +1185,10 @@ impl Runner {
                         reason
                     ),
                 );
-                self.skip(2);
+                self.skip(
+                    &["coverage-edges-known", "coverage-map-schema"],
+                    "coverageMap answered nothing",
+                );
                 return;
             }
         };
@@ -1131,7 +1202,10 @@ impl Runner {
                     "coverage-map-schema",
                     format!("coverageMap answered something unreadable: {error}"),
                 );
-                self.skip(1);
+                self.skip(
+                    &["coverage-edges-known"],
+                    "coverageMap answered a coverage map this build cannot read",
+                );
                 return;
             }
         };
@@ -1162,7 +1236,10 @@ impl Runner {
     /// a note: the handshake already told the engine the method works.
     fn minimize(&mut self, client: &PluginClient, handshake: &Handshake) {
         if !handshake.capabilities.contains(&Capability::Minimize) {
-            self.skip(1);
+            self.skip(
+                &["minimize-schema"],
+                "the handshake does not declare \"minimize\"",
+            );
             return;
         }
         let request = MinimizeReq {
@@ -1210,11 +1287,17 @@ impl Runner {
         target: Option<&TargetDescriptor>,
     ) {
         if !handshake.capabilities.contains(&Capability::Reproducer) {
-            self.skip(1);
+            self.skip(
+                &["reproducer-schema"],
+                "the handshake does not declare \"reproducer\"",
+            );
             return;
         }
         let Some(target) = target else {
-            self.skip(1);
+            self.skip(
+                &["reproducer-schema"],
+                "discovery named no target to render a reproducer for",
+            );
             return;
         };
         let request = ReproducerReq {
@@ -1249,7 +1332,10 @@ impl Runner {
     /// not-ready answer here is the plugin misreporting the fixture it just declared.
     fn readiness(&mut self, client: &PluginClient, handshake: &Handshake) {
         if !handshake.capabilities.contains(&Capability::Readiness) {
-            self.skip(1);
+            self.skip(
+                &["readiness"],
+                "the handshake does not declare \"readiness\"",
+            );
             return;
         }
         match sentence(
@@ -1416,7 +1502,10 @@ impl Runner {
                     "unknown-method-id",
                     format!("the framing probe could not start the plugin: {detail}"),
                 );
-                self.skip(1);
+                self.skip(
+                    &["framing-intact"],
+                    "the framing probe could not start the plugin",
+                );
                 return;
             }
         }
