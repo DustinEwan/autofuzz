@@ -52,6 +52,14 @@ contain, so `prpc-core` says so once when it runs them against your plugin and l
 as the profile states them. Whether a rule can fail is this repository's proof; what your run
 answers is whether your plugin passes the rule.
 
+The two commands start the plugin differently, and a harness can pass one and fail the other.
+`validate-harness` starts it with `AFZ_ROOT` on the fixture it rendered. `prpc-core` starts it in your
+checkout with no scan project at all, because the six wire rules are about the connection and the
+handshake, which come before any project exists (mechanism spec §6). A plugin that opens the project
+while it is starting therefore passes `validate-harness` and fails `prpc-core`'s `spawn` rule with
+`the plugin gave no usable handshake`. Answer `handshake` first, and read the project on the first
+request that needs it.
+
 `probe-plugin` starts the plugin against a real scan project and prints the targets it discovers.
 Use it to check what the engine will see before you run a scan.
 
