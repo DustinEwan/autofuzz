@@ -44,16 +44,16 @@
       "ifAbsent": "a finding carries no script, and the finding's inputs/ JSON stays the replayable artifact"
     },
     "stateful": {
-      "ifAbsent": "only entry points whose whole parameter graph is constructible from generated values are fuzzed"
+      "ifAbsent": "the plugin says it cannot build receiver state, so it reports the targets that need one as skipped; the engine records this capability in the report and changes no behaviour of its own on it"
     },
     "minimize": {
-      "ifAbsent": "the engine shrinks a finding itself, by removing arguments and reducing structure, and never calls minimize"
+      "ifAbsent": "the engine shrinks a finding itself, by removing arguments and reducing structure; this build calls minimize from the conformance suite only, present or absent, and never from a scan"
     },
     "sideEffects": {
-      "ifAbsent": "the side-effect policy does not apply, because the engine takes an invocation to change no external state"
+      "ifAbsent": "the engine records this capability in the report and changes no behaviour of its own on it: this build has no side-effect policy"
     },
     "concurrent": {
-      "ifAbsent": "the engine runs one plugin instance for the whole scan"
+      "ifAbsent": "the engine records this capability in the report and changes no behaviour of its own on it"
     },
     "readiness": {
       "ifAbsent": "the engine never calls ready, because the environment is the tree discovery already read and there is nothing to prove"
