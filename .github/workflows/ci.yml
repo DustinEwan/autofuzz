@@ -41,15 +41,16 @@ jobs:
           ./target/release/afz harnesses | grep -q '^afz-fakeplugin '
 
       # The mechanism's own runner, installed from the published crate rather than built here,
-      # checks the wire contract this repository's fake plugin must honour: framing, request ids,
-      # the handshake envelope, and loss. Nothing of this repository sits between the plugin and
-      # the report, which is the point: those six lines are what any `prpc/1` host will read.
-      # The profile's own 18 rules run in `cargo test -p afz-conformance` below.
-      - name: Core wire conformance (prpc-core)
+      # checks this repository's fake plugin: the six wire rules, then the rules of
+      # `afz-1.profile.json` through `afz validate-harness --out`. Nothing of this repository sits
+      # between the plugin and the wire report, which is the point: those six lines are what any
+      # `prpc/1` host will read. The manifest names the emitter the suite renders its fixture
+      # with, exactly as a harness repository's manifest does.
+      - name: Conformance (prpc-core)
         run: |
           cargo install plugin-rpc --bin prpc-core --version 0.1.0-alpha.8 --locked
-          printf '{"name":"afz-fakeplugin","command":["%s/target/release/afz-fakeplugin"]}\n' "$PWD" > /tmp/afz-harness.json
-          prpc-core afz-1.profile.json /tmp/afz-harness.json
+          printf '{"name":"afz-fakeplugin","command":["%s/target/release/afz-fakeplugin"],"conformance":{"emitter":["%s/target/release/afz-xtask","fake-fixture"],"deadlineMs":1000}}\n' "$PWD" "$PWD" > /tmp/afz-harness.json
+          prpc-core afz-1.profile.json /tmp/afz-harness.json --suite
 
       # The gate: any clippy warning in any target, including tests, fails the job.
       - name: Clippy
