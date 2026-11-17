@@ -26,7 +26,14 @@ pub fn run(dir: &Path, targets: usize, deadline: Option<u64>) -> Result<Vec<Suit
     let manifest_path = dir.join("manifest.json");
     let manifest = Manifest::load(&manifest_path)
         .map_err(|e| format!("{} is unreadable: {e}", manifest_path.display()))?;
-    let target = target(dir, &manifest)?;
+    // §12 item 6 starts this program in the mechanism's own working directory, which is the
+    // harness checkout the author ran the runner from. The manifest the mechanism copied holds
+    // its paths exactly as that checkout wrote them, so they resolve beside the checkout and not
+    // beside the copy: `"command": ["build/afz-cpp", "--stdio"]` names the binary the author
+    // just built there.
+    let root = std::env::current_dir()
+        .map_err(|e| format!("the working directory is unreadable: {e}"))?;
+    let target = target(&root, &manifest)?;
     let manifest_deadline = manifest.conformance.as_ref().and_then(|c| c.deadline_ms);
     let deadline_ms = deadline
         .or(manifest_deadline)
@@ -44,11 +51,10 @@ pub fn run(dir: &Path, targets: usize, deadline: Option<u64>) -> Result<Vec<Suit
     Ok(verdicts)
 }
 
-/// The plugin the manifest names, rooted at the directory the mechanism wrote. The emitter and
-/// the plugin argv resolve beside that directory, the way [`harness::resolve`] resolves them
-/// beside a harness checkout, so a manifest written with relative paths still names the plugin
-/// the author built.
-fn target(dir: &Path, manifest: &Manifest) -> Result<Target, String> {
+/// The plugin the manifest names, rooted at the harness checkout. The emitter and the plugin
+/// argv are the strings that checkout wrote, resolved beside it the way [`harness::resolve`]
+/// resolves them beside the directory it was given.
+fn target(root: &Path, manifest: &Manifest) -> Result<Target, String> {
     let missing = || {
         format!(
             "the manifest for \"{}\" names no conformance emitter, so there is no fixture to drive it against",
@@ -62,8 +68,8 @@ fn target(dir: &Path, manifest: &Manifest) -> Result<Target, String> {
         .filter(|e| !e.is_empty())
         .ok_or_else(missing)?;
     Ok(Target {
-        argv: harnesses::resolve_argv(dir, &manifest.command),
-        root: dir.to_path_buf(),
+        argv: harnesses::resolve_argv(root, &manifest.command),
+        root: root.to_path_buf(),
         conformance: InstalledConformance {
             emitter: emitter.into_iter().map(PathBuf::from).collect(),
             deadline_ms: conformance.deadline_ms,
