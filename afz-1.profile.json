@@ -78,7 +78,9 @@
         "id": "discover-schema",
         "expectation": "discover answers a discovery document that is an instance of the committed discovery schema.",
         "defect": {
-          "unverified": "the reference plugin's scripted inventory is deserialized into afz_protocol::Discovery and re-serialized from it (crates/xtask/src/fake.rs:52), and docs/schema/afz-1/discovery.json sets no pattern, minLength or additionalProperties bound that a typed value of that struct can break, so no script answers discover with a document the committed schema rejects."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"raw\":{\"discover\":{\"targets\":[]}}}"],
+          "expectViolation": ["discover-schema"]
         }
       },
       {
@@ -106,7 +108,9 @@
         "expectation": "A second discover with the same request on the same connection answers the same set of target ids as the first.",
         "dependsOn": ["discover-schema"],
         "defect": {
-          "unverified": "the reference plugin answers every discover from one static Script.discovery value (crates/xtask/src/fake.rs:52) and no directive is keyed to a discover call, so no script makes the second call on a connection answer a different target id set than the first."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"discoverSecond\":{\"targets\":[],\"skipped\":[]}}"],
+          "expectViolation": ["discover-repeatable"]
         }
       },
       {
@@ -114,7 +118,9 @@
         "expectation": "A second plugin process answers its own discover with the same set of target ids the first process answered.",
         "dependsOn": ["discover-schema"],
         "defect": {
-          "unverified": "both plugin processes are spawned from the same Check.launch with the same environment (crates/afz-conformance/src/lib.rs:1290) and the fake's inventory is one value rather than a function of the process, so no script makes one process answer a different target id set than the other."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"secondInstance\":{\"marker\":\"/tmp/afz-fake-ids\",\"dropTargets\":1}}"],
+          "expectViolation": ["discover-ids-stable"]
         }
       },
       {
@@ -131,7 +137,9 @@
         "expectation": "A plugin process that was only introduced and sent discover still answers prepare and invoke for a target id its own discover named.",
         "dependsOn": ["discover-schema"],
         "defect": {
-          "unverified": "the only refusal the reference plugin can raise for prepare or invoke is requireDiscover, which never fires because the suite sends discover on the second process first (crates/afz-conformance/src/lib.rs:1299, pinned by crates/xtask/tests/conformance.rs:388), and directives are keyed to a per-process invocation index and a target id, both of which the second process shares with the first, so no script makes only the second process refuse."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"secondInstance\":{\"marker\":\"/tmp/afz-fake-ready\",\"refuse\":\"the second instance cannot reach the service\"}}"],
+          "expectViolation": ["connection-ready"]
         }
       },
       {
@@ -139,7 +147,9 @@
         "expectation": "prepare answers {\"ok\":true,\"materialized\":…} or {\"ok\":false,\"reason\":…}; a target the plugin cannot build is a skip answer, never a JSON-RPC error.",
         "dependsOn": ["discover-schema"],
         "defect": {
-          "unverified": "requireDiscover is the fake's only prepare refusal and the suite discovers on every connection before it prepares, while rpcError is read only when answering invoke (crates/xtask/src/fake.rs:43), so no script answers prepare with a JSON-RPC error."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"refusePrepare\":\"the target is gone from the checkout\"}"],
+          "expectViolation": ["prepare-answers"]
         }
       },
       {
@@ -147,7 +157,9 @@
         "expectation": "Every prepare response is an instance of the committed prepare-resp schema.",
         "dependsOn": ["discover-schema"],
         "defect": {
-          "unverified": "prepare_resp builds a typed afz_protocol::PrepareResp from the request (crates/xtask/src/fake.rs:424) and docs/schema/afz-1/prepare-resp.json accepts exactly the two shapes that type serializes to, so no script answers prepare with a shape the committed schema rejects."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"raw\":{\"prepare\":{\"ok\":true}}}"],
+          "expectViolation": ["prepare-schema"]
         }
       },
       {
@@ -165,7 +177,9 @@
         "expectation": "Every invoke response is an instance of the committed outcome schema.",
         "dependsOn": ["prepare-answers"],
         "defect": {
-          "unverified": "Directive.outcome is deserialized into afz_protocol::Outcome and re-serialized from it (crates/xtask/src/fake.rs:36), and docs/schema/afz-1/outcome.json is looser than that type, with no additionalProperties bound, no pattern, and no minimum on durationMs, so no script answers invoke with a document the schema rejects."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"raw\":{\"invoke\":{\"kind\":\"not-an-outcome\"}}}"],
+          "expectViolation": ["invoke-schema"]
         }
       },
       {
@@ -192,7 +206,9 @@
         "id": "coverage-map-offered",
         "expectation": "A plugin that declares coverage answers coverageMap with at least one entry once it has been invoked.",
         "defect": {
-          "unverified": "the fake answers coverageMap from a fixed 64-entry table no directive governs (crates/xtask/src/fake.rs:447), and the only selector that could silence the method is exit, which ends the process and so reports process-alive beside this rule."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"dropCoverageMap\":\"this build has no coverage map\"}"],
+          "expectViolation": ["coverage-map-offered"]
         }
       },
       {
@@ -200,7 +216,9 @@
         "expectation": "coverageMap answers a document that is an instance of the committed coverage-map schema.",
         "dependsOn": ["coverage-map-offered"],
         "defect": {
-          "unverified": "coverage_map builds a typed afz_protocol::CoverageMap (crates/xtask/src/fake.rs:447) and no script key governs the method, so no script answers coverageMap with a document the committed schema rejects."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"raw\":{\"coverageMap\":{\"entries\":\"none\"}}}"],
+          "expectViolation": ["coverage-map-schema"]
         }
       },
       {
@@ -217,7 +235,9 @@
         "id": "minimize-schema",
         "expectation": "A plugin that declares minimize answers a minimize request with a response that is an instance of the committed minimize-resp schema.",
         "defect": {
-          "unverified": "minimize_resp answers every request from a typed afz_protocol::MinimizeResp built out of the request itself (crates/xtask/src/fake.rs:460), and no directive or top-level script key governs minimize, so no script makes a declared minimize capability answer wrongly or not at all."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"raw\":{\"minimize\":{\"values\":[]}}}"],
+          "expectViolation": ["minimize-schema"]
         }
       },
       {
@@ -225,7 +245,9 @@
         "expectation": "A plugin that declares reproducer answers a reproducer request for a discovered target with a response that is an instance of the committed reproducer-resp schema.",
         "dependsOn": ["discover-schema"],
         "defect": {
-          "unverified": "reproducer_resp answers every request with one typed afz_protocol::ReproducerResp constant (crates/xtask/src/fake.rs:479), and no directive or top-level script key governs reproducer, so no script makes a declared reproducer capability answer wrongly or not at all."
+          "run": ["target/release/afz-fakeplugin"],
+          "env": ["AFZ_FAKE_SCRIPT={\"raw\":{\"reproducer\":{\"script\":\"console.log(1)\"}}}"],
+          "expectViolation": ["reproducer-schema"]
         }
       }
     ]
