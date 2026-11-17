@@ -21,7 +21,8 @@ use afz_protocol::{
 use crate::rpc::client::{spawn_discovered, via, Launch, PluginClient};
 use crate::scan::PREPARE_TIMEOUT;
 
-/// Restarts attributed to one target before the engine disables it. The design's number.
+/// Attempts that did not run, attributed to one target before the engine disables it: a restart
+/// after a lost process, or a refusal from a live one. The design's number.
 pub const DISABLE_AFTER: u64 = 50;
 
 /// How much longer than the deadline the engine waits before it kills a plugin process. A harness
@@ -147,6 +148,17 @@ impl Watchdog {
     /// crossed the disable threshold.
     pub fn note_restart(&mut self, target_id: &str) -> bool {
         self.restarts += 1;
+        let count = self.consecutive.entry(target_id.to_string()).or_insert(0);
+        *count += 1;
+        *count >= self.disable_after && self.disabled.insert(target_id.to_string())
+    }
+
+    /// Record an attempt that produced no result because the plugin declined the work. It counts
+    /// toward the same disable rule as a restart, because the protection that rule buys is "stop
+    /// invoking a target that never runs", and a plugin that refuses every call needs it as much
+    /// as a plugin that dies on every call. It is not a restart, so it does not raise the run's
+    /// restart count. Returns `true` when this crossed the disable threshold.
+    pub fn note_refusal(&mut self, target_id: &str) -> bool {
         let count = self.consecutive.entry(target_id.to_string()).or_insert(0);
         *count += 1;
         *count >= self.disable_after && self.disabled.insert(target_id.to_string())
@@ -319,6 +331,14 @@ impl Supervisor {
                                         if guard.note_restart(&target) {
                                             eprintln!(
                                                 "afz: target {target} disabled after {} consecutive restarts",
+                                                guard.streak(&target)
+                                            );
+                                        }
+                                    }
+                                    Watch::Refused(target) => {
+                                        if guard.note_refusal(&target) {
+                                            eprintln!(
+                                                "afz: target {target} disabled after {} consecutive refusals",
                                                 guard.streak(&target)
                                             );
                                         }
@@ -552,7 +572,7 @@ impl Worker {
                             return (
                                 Event::Ran(Completed {
                                     invocation_id: job.invocation_id,
-                                    target_id: job.target_id,
+                                    target_id: job.target_id.clone(),
                                     outcome: engine_fault(
                                         "plugin-refused",
                                         "PluginRefused",
@@ -563,7 +583,7 @@ impl Worker {
                                     ),
                                     restart: None,
                                 }),
-                                Watch::Nothing,
+                                Watch::Refused(job.target_id),
                             );
                         }
                         Call::Lost(loss) => {
@@ -617,7 +637,7 @@ impl Worker {
                         ),
                         restart: None,
                     }),
-                    Watch::Nothing,
+                    Watch::Refused(target_id),
                 )
             }
             // The process is gone or was never startable. That is a process exit as far as the
@@ -665,6 +685,9 @@ enum Watch {
     Answered(String),
     /// The process was lost and restarted while this target was running.
     Restarted(String),
+    /// The plugin declined the work while this target was running. No restart happened, but the
+    /// target still did not run.
+    Refused(String),
     /// Nothing happened that the watchdog counts.
     Nothing,
 }

@@ -246,6 +246,50 @@ fn fifty_consecutive_restarts_disable_that_target_and_leave_the_others_running()
 }
 
 #[test]
+fn fifty_consecutive_refusals_disable_that_target_without_a_single_restart() {
+    // The fake plugin answers with a JSON-RPC error frame for one target. That is a refusal, not
+    // a dead process: the engine keeps the process, files no restart, and still stops invoking a
+    // target that never runs.
+    let script = r#"[{"rpcError":"target not found","for":"afz:t:0003","at":1,"to":100000}]"#;
+    let mut supervisor = supervisor(script, 1, 2_000);
+    let report = supervisor.run(
+        mixed(&[("afz:t:0003", DISABLE_AFTER + 12), ("afz:t:0001", 5)]),
+        Duration::from_millis(60_000),
+    );
+
+    assert_eq!(
+        report.disabled,
+        vec!["afz:t:0003".to_string()],
+        "a target the plugin refuses forever is disabled the way one that crashes forever is"
+    );
+    assert_eq!(
+        report.restarts, 0,
+        "a plugin that answers in milliseconds was never restarted"
+    );
+    let refused: Vec<&Completed> = report
+        .completed
+        .iter()
+        .filter(|c| c.target_id == "afz:t:0003")
+        .collect();
+    assert!(
+        !refused.is_empty() && refused.iter().all(|c| c.restart.is_none()),
+        "a refusal records no restart"
+    );
+    assert!(
+        refused
+            .iter()
+            .all(|c| c.outcome.via() == Some("plugin-refused")),
+        "the finding says the plugin refused, not that it died"
+    );
+    let good: Vec<&Completed> = report
+        .completed
+        .iter()
+        .filter(|c| c.target_id == "afz:t:0001")
+        .collect();
+    assert_eq!(good.len(), 5, "the healthy target keeps running");
+}
+
+#[test]
 fn a_target_the_plugin_refuses_to_build_is_reported_once_and_never_invoked() {
     // The fake plugin's sixth inventory entry has an unconstructible parameter.
     let mut supervisor = supervisor("[]", 1, 2_000);

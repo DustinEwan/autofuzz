@@ -445,7 +445,8 @@ The engine opens three kinds of connection:
 
 `discover` goes to every connection, because no method carries an inventory from one process to
 another. A lost process is restarted, re-discovered, and its prepared set is cleared. Fifty
-consecutive restarts attributed to one target disable that target for the rest of the scan.
+consecutive attempts that did not run - a restart after a lost process, or a refusal from a process
+that answered - disable that target for the rest of the scan.
 
 | Method | Timeout |
 | --- | --- |
