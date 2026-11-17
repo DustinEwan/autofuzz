@@ -48,6 +48,11 @@ jobs:
       # with, exactly as a harness repository's manifest does.
       - name: Conformance (prpc-core)
         run: |
+          set -eu
+          # The profile names the suite program as `afz`, so the binary this job built must be
+          # reachable by that name: a runner that cannot start it reports a suite error and runs
+          # no profile rule at all, which is why the six wire rules passing is not evidence here.
+          export PATH="$PWD/target/release:$PATH"
           cargo install plugin-rpc --bin prpc-core --version 0.1.0-alpha.11 --locked
           printf '{"name":"afz-fakeplugin","command":["%s/target/release/afz-fakeplugin"],"conformance":{"emitter":["%s/target/release/afz-xtask","fake-fixture"],"deadlineMs":1000}}\n' "$PWD" "$PWD" > /tmp/afz-harness.json
           prpc-core afz-1.profile.json /tmp/afz-harness.json --suite
